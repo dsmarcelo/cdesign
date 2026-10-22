@@ -28,16 +28,22 @@
   .c.done{opacity:.45}
   .c button{padding:2px 8px;margin-top:6px;margin-right:4px;font-size:11px}
   .st{font-size:10px;text-transform:uppercase;color:var(--acc)}
+  .c.queued .st,.c.sent .st{color:var(--mut)}
+  button.go{background:var(--acc);border-color:var(--acc)} button:disabled{opacity:.4;cursor:default}
+  #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#fafafa;color:#111;padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:80vw}
+  #toast.on{opacity:1}
 </style>
 <header>
   <b>cdesign</b>
   <button id="w" title="Preview width">Full</button>
   <button id="theme" title="Toggle light/dark preview">Light</button>
   <button id="mode">Comment (C)</button>
+  <button id="send" class="go" disabled>Send to agent</button>
 </header>
 <aside class="l" id="files"></aside>
 <main><iframe id="fr"></iframe></main>
 <aside class="r" id="cm"></aside>
+<div id="toast"></div>
 <script>
 const $ = (s) => document.querySelector(s);
 let cur = location.hash.slice(1) || null, on = false;
@@ -100,6 +106,9 @@ const sync = () => { send({ cd: "mode", on }); send({ cd: "pins" }); };
 
 async function comments() {
   const l = await (await fetch("/__cd/comments")).json();
+  const drafts = l.filter((c) => c.status === "draft").length;
+  $("#send").disabled = !drafts;
+  $("#send").textContent = drafts ? `Send to agent (${drafts})` : "Send to agent";
   $("#cm").innerHTML = l.length ? "" : '<small style="color:var(--mut)">No comments yet. Toggle Comment and click an element.</small>';
   for (const c of l) {
     const d = document.createElement("div");
@@ -115,6 +124,15 @@ async function comments() {
     $("#cm").appendChild(d);
   }
 }
+
+const PROMPT = "Run `cdesign review` and apply the comments I sent in the cdesign viewer.";
+function toast(t) { $("#toast").textContent = t; $("#toast").classList.add("on"); setTimeout(() => $("#toast").classList.remove("on"), 4000); }
+$("#send").onclick = async () => {
+  const { queued } = await (await fetch("/__cd/send", { method: "POST" })).json();
+  let copied = false;
+  try { await navigator.clipboard.writeText(PROMPT); copied = true; } catch {}
+  toast(`${queued} comment(s) sent. ` + (copied ? "Prompt copied: paste it in your agent." : "Tell your agent: " + PROMPT));
+};
 
 const theme = () => { try { return localStorage.getItem("cd-theme"); } catch { return null; } };
 const current = () => theme() || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");

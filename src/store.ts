@@ -9,7 +9,7 @@ export type Comment = {
   selector: string;
   snippet: string;
   text: string;
-  status: "open" | "sent" | "done";
+  status: "draft" | "queued" | "sent" | "done"; // draft -> queued (Send in viewer) -> sent (agent ran review) -> done
   createdAt: string;
 };
 
@@ -18,7 +18,9 @@ const path = (root: string) => join(dataDir(root), "comments.json");
 
 export function readComments(root: string): Comment[] {
   try {
-    return JSON.parse(readFileSync(path(root), "utf8"));
+    const l = JSON.parse(readFileSync(path(root), "utf8")) as Comment[];
+    for (const c of l) if ((c.status as string) === "open") c.status = "draft"; // older files
+    return l;
   } catch {
     return [];
   }

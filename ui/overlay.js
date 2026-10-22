@@ -7,6 +7,7 @@
   .__cd-hl{outline:2px solid #2563eb!important;outline-offset:1px;cursor:crosshair!important}
   .__cd-pin{position:absolute;z-index:2147483646;width:22px;height:22px;border-radius:50%;background:#2563eb;color:#fff;
     font:600 11px/22px system-ui;text-align:center;transform:translate(-50%,-50%);box-shadow:0 1px 4px #0005;pointer-events:none}
+  .__cd-pin.q{background:#71717a}
   .__cd-pop{box-sizing:border-box;position:absolute;z-index:2147483647;width:300px;background:#18181b;color:#fafafa;border-radius:12px;padding:10px;
     font:13px system-ui;box-shadow:0 8px 30px #0006}
   .__cd-pop small{display:block;color:#a1a1aa;margin-bottom:6px;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -59,7 +60,7 @@
     pop.style.left = Math.max(8, Math.min(x, innerWidth - 308)) + "px";
     pop.style.top = y + 12 + "px";
     const id = el.getAttribute("data-cd-id");
-    pop.innerHTML = `<small></small><textarea placeholder="Comment for the agent…"></textarea><div><button class="x">Cancel</button><button class="go">Send</button></div>`;
+    pop.innerHTML = `<small></small><textarea placeholder="Comment (sent to the agent with Send)…"></textarea><div><button class="x">Cancel</button><button class="go">Add</button></div>`;
     const uses = usesOf(el);
     pop.querySelector("small").textContent = `${fileOf(el)}:${id}${uses.length ? " · in " + uses[0] : ""} · ${selectorOf(el)}`;
     document.body.appendChild(pop);
@@ -93,7 +94,7 @@
       els.forEach((el) => {
       const r = el.getBoundingClientRect();
       const pin = document.createElement("div");
-      pin.className = "__cd-pin";
+      pin.className = "__cd-pin" + (c.status === "draft" ? "" : " q");
       pin.textContent = n;
       pin.style.left = r.right + scrollX - 4 + "px";
       pin.style.top = r.top + scrollY + 4 + "px";

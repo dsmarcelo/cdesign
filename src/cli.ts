@@ -105,7 +105,20 @@ switch (cmd) {
     printContext(root);
     console.log(`=== LOOP ===
 Write/edit prototypes as .html files in ${root} (the viewer live-reloads).
-Then run \`cdesign wait\` (blocks until the user comments on an element), apply the change, run \`cdesign resolve <id>\`, and wait again.`);
+The user reviews in the viewer, comments on elements, then presses Send. When they tell you to (for example "apply the comments"), run \`cdesign review\`, apply every comment, then \`cdesign resolve <id...>\`.`);
+    break;
+  }
+  case "review": {
+    const root = resolve(".");
+    const batch = readComments(root).filter((c) => c.status === "queued" || c.status === "sent");
+    if (!batch.length) {
+      console.log("No comments sent. The user sends a batch with the Send button in the viewer; ask them to do that, then run `cdesign review` again.");
+      break;
+    }
+    const ids = new Set(batch.map((c) => c.id));
+    update(root, (l) => l.forEach((c) => ids.has(c.id) && (c.status = "sent")));
+    console.log(`${batch.length} comment(s) from the user. Apply all of them, then run: cdesign resolve ${batch.map((c) => c.id).join(" ")}\n`);
+    console.log(batch.map(fmt).join("\n"));
     break;
   }
   case "wait": {
@@ -113,12 +126,12 @@ Then run \`cdesign wait\` (blocks until the user comments on an element), apply 
     const root = resolve(rest[0] ?? ".");
     const start = Date.now();
     for (;;) {
-      const open = readComments(root).filter((c) => c.status === "open");
-      if (open.length) {
-        const ids = new Set(open.map((c) => c.id));
+      const queued = readComments(root).filter((c) => c.status === "queued");
+      if (queued.length) {
+        const ids = new Set(queued.map((c) => c.id));
         update(root, (l) => l.forEach((c) => ids.has(c.id) && (c.status = "sent")));
-        console.log(open.map(fmt).join("\n"));
-        console.log(`When done: cdesign resolve ${open.map((c) => c.id).join(" ")}`);
+        console.log(queued.map(fmt).join("\n"));
+        console.log(`When done: cdesign resolve ${queued.map((c) => c.id).join(" ")}`);
         break;
       }
       if (timeout && Date.now() - start > timeout) { console.log("no new comments (timeout)"); break; }
@@ -240,7 +253,8 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
   default:
     console.log(`cdesign <command>
   open [dir] [--port n] [--no-browser]  start viewer, print skills + project context
-  wait [--timeout s]                    block until an element comment arrives, print it
+  review                                print the comments the user sent from the viewer
+  wait [--timeout s]                    block until the user sends comments (optional)
   resolve <id...>                       mark comments done
   comments [--all]                      list pending comments
   init [dir]                            scaffold design/ (design-system.md, tokens, _head, pages, components)

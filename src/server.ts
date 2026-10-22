@@ -91,12 +91,19 @@ export function serve(root: string, port = 0) {
           selector: b.selector ?? "",
           snippet,
           text: b.text.trim(),
-          status: "open",
+          status: "draft",
           createdAt: new Date().toISOString(),
         };
         update(root, (l) => l.push(c));
         push("comments");
         return json(c, 201);
+      }
+
+      if (p === "/__cd/send" && req.method === "POST") {
+        let n = 0;
+        update(root, (l) => l.forEach((c) => c.status === "draft" && ((c.status = "queued"), n++)));
+        push("comments");
+        return json({ queued: n });
       }
 
       const m = p.match(/^\/__cd\/comments\/([^/]+)\/(done|open|delete)$/);
@@ -105,7 +112,7 @@ export function serve(root: string, port = 0) {
           const i = l.findIndex((c) => c.id === m[1]);
           if (i < 0) return;
           if (m[2] === "delete") l.splice(i, 1);
-          else l[i].status = m[2] as Comment["status"];
+          else l[i].status = m[2] === "open" ? "draft" : "done";
         });
         push("comments");
         return json({ ok: true });

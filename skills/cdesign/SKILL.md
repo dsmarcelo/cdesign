@@ -1,6 +1,6 @@
 ---
 name: cdesign
-description: How to prototype in the cdesign viewer: design/ structure, <c-*> components, element comments, wait/resolve loop.
+description: How to prototype in the cdesign viewer: design/ structure, <c-*> components, element comments, review/resolve.
 ---
 
 # Working with cdesign
@@ -30,4 +30,6 @@ Prototypes are references: another agent will later build the real code (React, 
 ## Comments
 - The viewer stamps each element with `data-cd-id="line:col"` (its start tag in its file). Never write `data-cd-id`, `data-cd-file` or `data-cd-use` yourself.
 - A comment gives: file, element id, source of the element, the request, and (if inside a component) `used in` = the instance(s). Edit the component file to change all instances, the instance line to change one. Line numbers shift as you edit: re-read before each edit.
-- Loop: edit -> `cdesign wait` -> apply -> `cdesign resolve <id>` -> `cdesign wait`. Stop when the user is done.
+- The user adds comments in the viewer, then presses Send to deliver them as one batch. Nothing reaches you before that.
+- When the user asks you to apply the comments (or says they sent them): run `cdesign review`, apply every comment in the batch, then `cdesign resolve <id...>` with all the ids it printed. If it says nothing was sent, ask the user to press Send.
+- Optional: `cdesign wait` blocks until a batch is sent, if you want to stay in a loop.

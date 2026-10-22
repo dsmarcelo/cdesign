@@ -6,7 +6,7 @@ A lightweight viewer for HTML prototypes, built for coding agents. The agent wri
 
 - **Viewer:** `cdesign open` serves your project's `.html` files with live reload, a folder tree, and a comment mode.
 - **Element ids:** the server stamps every element with `data-cd-id="line:col"` at serve time. Your files are never modified.
-- **Comments to the agent:** a comment carries the file, element id, selector, the element's source and your text. The agent receives it through `cdesign wait`.
+- **Comments to the agent:** a comment carries the file, element id, selector, the element's source and your text. Comments stay drafts until you press **Send to agent**, which delivers them all as one batch.
 - **Skills on demand:** `cdesign open` prints the usage skill and the project context, so nothing is installed per project.
 
 ## Install
@@ -27,12 +27,13 @@ cdesign init     # once: scaffold design/
 cdesign open     # start the viewer and print skills + context for the agent
 ```
 
-Tell your agent to run `cdesign open`. Then in the viewer, press `C`, click an element and press Ctrl+Enter to send.
+Tell your agent to run `cdesign open`. Then in the viewer, press `C`, click elements and add comments (Ctrl+Enter). When you are done, press **Send to agent**: it queues the batch and copies a prompt. Paste it in the agent, which runs `cdesign review`.
 
 | Command | What it does |
 |---|---|
 | `open [dir] [--port n] [--no-browser]` | Start the viewer in the background; print skills and project context |
-| `wait [--timeout s]` | Block until a comment arrives, then print it |
+| `review` | Print the batch the user sent from the viewer (run when asked to apply comments) |
+| `wait [--timeout s]` | Optional: block until a batch is sent, then print it |
 | `resolve <id...>` | Mark comments done |
 | `comments [--all]` | List pending comments |
 | `init [dir]` | Scaffold the `design/` structure |
@@ -42,7 +43,7 @@ Tell your agent to run `cdesign open`. Then in the viewer, press `C`, click an e
 | `context [dir]` | Print design system, tokens, components and pages |
 | `serve [dir]` | Run the viewer in the foreground |
 
-The agent loop is: edit the file, run `cdesign wait`, apply the comment, run `cdesign resolve <id>`, then `cdesign wait` again.
+Comment flow: `draft` (in the viewer) → `queued` (Send) → `sent` (agent ran `cdesign review`) → `done` (`cdesign resolve`). The agent is never interrupted: it reads the batch when you tell it to.
 
 ## Project structure
 
