@@ -103,7 +103,7 @@ cdesign tokens export css -o src/styles/tokens.css                 # plain CSS v
 
 ## Light and dark
 
-The viewer header has a Light/Dark button. It sets `data-theme` on the previewed page (remembered across reloads, and it starts from your system theme), so the dark values from `tokens.json` can be reviewed in place.
+The viewer header has a Light/Dark button, and a button at each end hides or shows the file list (left) and the comments panel (right); both choices are remembered. It sets `data-theme` on the previewed page (remembered across reloads, and it starts from your system theme), so the dark values from `tokens.json` can be reviewed in place.
 
 ## Components
 

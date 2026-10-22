@@ -5,13 +5,16 @@
 <style>
   :root{color-scheme:dark;--bg:#111113;--panel:#18181b;--line:#27272a;--mut:#a1a1aa;--acc:#2563eb}
   *{box-sizing:border-box}
-  body{margin:0;height:100vh;display:grid;grid-template-columns:230px 1fr 300px;grid-template-rows:44px 1fr;background:var(--bg);color:#fafafa;font:13px system-ui}
+  body{margin:0;height:100vh;display:grid;grid-template-columns:var(--lw,230px) 1fr var(--rw,300px);grid-template-rows:44px 1fr;background:var(--bg);color:#fafafa;font:13px system-ui}
   header{grid-column:1/4;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--line)}
   header b{margin-right:auto}
   #agent{font-size:12px;color:var(--mut);margin-right:8px} #agent::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:#52525b;margin-right:6px} #agent.on{color:#fafafa} #agent.on::before{background:#22c55e}
   button{background:var(--panel);color:inherit;border:1px solid var(--line);border-radius:8px;padding:5px 10px;font:inherit;cursor:pointer}
   button.on{background:var(--acc);border-color:var(--acc)}
   aside{overflow:auto;padding:8px;background:var(--panel)}
+  aside.l{grid-area:2/1} main{grid-area:2/2} aside.r{grid-area:2/3}
+  body.hl{--lw:0px} body.hr{--rw:0px} body.hl aside.l,body.hr aside.r{display:none}
+  header button.ic{padding:5px 7px;line-height:0} header button.ic svg{width:16px;height:16px}
   aside.l{border-right:1px solid var(--line)} aside.r{border-left:1px solid var(--line)}
   details{margin:0}
   summary{list-style:none;cursor:pointer;padding:6px 8px;border-radius:6px;color:#fafafa;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;user-select:none}
@@ -35,12 +38,14 @@
   #toast.on{opacity:1}
 </style>
 <header>
+  <button id="tl" class="ic on" title="Hide/show files"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M6 3v10"/></svg></button>
   <b>cdesign</b>
   <span id="agent" title="Is an agent running `cdesign wait`?"></span>
   <button id="w" title="Preview width">Full</button>
   <button id="theme" title="Toggle light/dark preview">Light</button>
   <button id="mode">Comment (C)</button>
   <button id="send" class="go" disabled>Send to agent</button>
+  <button id="tr" class="ic on" title="Hide/show comments"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M10 3v10"/></svg></button>
 </header>
 <aside class="l" id="files"></aside>
 <main><iframe id="fr"></iframe></main>
@@ -143,6 +148,16 @@ $("#send").onclick = async () => {
   await agent();
   toast(agentOn ? `${queued} comment(s) sent to the listening agent.` : `${queued} comment(s) queued, no agent is listening. ` + (copied ? "Prompt copied: paste it in your agent." : "Tell your agent: " + PROMPT));
 };
+
+const hidden = (k) => { try { return localStorage.getItem(k) === "1"; } catch { return false; } };
+function panel(btn, cls, key, toggleIt) {
+  if (toggleIt) { try { localStorage.setItem(key, hidden(key) ? "0" : "1"); } catch {} }
+  document.body.classList.toggle(cls, hidden(key));
+  $(btn).classList.toggle("on", !hidden(key));
+}
+$("#tl").onclick = () => panel("#tl", "hl", "cd-hide-l", true);
+$("#tr").onclick = () => panel("#tr", "hr", "cd-hide-r", true);
+panel("#tl", "hl", "cd-hide-l"); panel("#tr", "hr", "cd-hide-r");
 
 const theme = () => { try { return localStorage.getItem("cd-theme"); } catch { return null; } };
 const current = () => theme() || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
