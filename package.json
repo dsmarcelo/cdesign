@@ -1,0 +1,10 @@
+{
+  "name": "cdesign",
+  "version": "0.1.0",
+  "description": "Lightweight HTML prototype viewer with element-level comments for coding agents",
+  "type": "module",
+  "bin": { "cdesign": "src/cli.ts" },
+  "dependencies": {
+    "parse5": "^8.0.1"
+  }
+}
