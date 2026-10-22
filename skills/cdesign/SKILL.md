@@ -31,5 +31,6 @@ Prototypes are references: another agent will later build the real code (React, 
 - The viewer stamps each element with `data-cd-id="line:col"` (its start tag in its file). Never write `data-cd-id`, `data-cd-file` or `data-cd-use` yourself.
 - A comment gives: file, element id, source of the element, the request, and (if inside a component) `used in` = the instance(s). Edit the component file to change all instances, the instance line to change one. Line numbers shift as you edit: re-read before each edit.
 - The user adds comments in the viewer, then presses Send to deliver them as one batch. Nothing reaches you before that.
-- When the user asks you to apply the comments (or says they sent them): run `cdesign review`, apply every comment in the batch, then `cdesign resolve <id...>` with all the ids it printed. If it says nothing was sent, ask the user to press Send.
-- Optional: `cdesign wait` blocks until a batch is sent, if you want to stay in a loop.
+- Receive batches with `cdesign wait` run as a BACKGROUND command (Claude Code: Bash with `run_in_background: true`; never block on it). It exits when the user presses Send, and you are notified with the comments. Apply every one, run `cdesign resolve <id...>` with all the ids, then start `cdesign wait` in the background again. Start it right after `cdesign open`, and keep one running whenever you are idle.
+- If you cannot run background commands, run `cdesign review` when the user says they sent comments (it prints the same batch). If it says nothing was sent, ask the user to press Send.
+- With the cdesign MCP tools, `review` and `resolve` are tools and `run` takes any other command; `wait` is still a background shell command.

@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { serve, listHtml } from "./server";
 import { componentIndex } from "./render";
 import * as tk from "./tokens";
-import { dataDir, readComments, update, commentsPath, type Comment } from "./store";
+import { beat, dataDir, readComments, update, commentsPath, type Comment } from "./store";
 
 const [cmd = "help", ...rest] = process.argv.slice(2);
 const flag = (n: string) => {
@@ -84,6 +84,9 @@ async function ensureServer(root: string, port?: string) {
 const fmt = (c: Comment) =>
   `--- comment ${c.id} ---\nfile: ${c.file}${c.uses?.length ? `\nused in (component instance, innermost first): ${c.uses.join(" <- ")}\n(edit the component file to change every instance; edit the instance line to change just this one)` : ""}\nelement: data-cd-id="${c.cdId}" (line:col of its start tag in ${c.file})\nselector: ${c.selector}\nsource:\n${c.snippet}\n\nrequest: ${c.text}\n`;
 
+const batchText = (batch: Comment[], again = false) =>
+  `${batch.length} comment(s) from the user. Apply all of them, then run: cdesign resolve ${batch.map((c) => c.id).join(" ")}${again ? "\nThen start `cdesign wait` again in the background so the next batch reaches you." : ""}\n\n${batch.map(fmt).join("\n")}`;
+
 // ---------- commands ----------
 switch (cmd) {
   case "serve": {
@@ -97,6 +100,10 @@ switch (cmd) {
     const port = flag("--port");
     const quiet = rest.includes("--no-browser");
     const root = resolve(rest.find((a) => !a.startsWith("--")) ?? ".");
+    if (!existsSync(join(root, "design", "design-system.md"))) {
+      Bun.spawnSync([process.execPath, join(import.meta.dir, "cli.ts"), "init", root], { stdio: ["ignore", "ignore", "inherit"] });
+      console.log("(design/ did not exist: scaffolded it. Create the design system next.)");
+    }
     const s = await ensureServer(root, port);
     const url = `http://localhost:${s.port}`;
     if (!quiet) Bun.spawn(["xdg-open", url], { stdio: ["ignore", "ignore", "ignore"] }).unref();
@@ -105,7 +112,10 @@ switch (cmd) {
     printContext(root);
     console.log(`=== LOOP ===
 Write/edit prototypes as .html files in ${root} (the viewer live-reloads).
-The user reviews in the viewer, comments on elements, then presses Send. When they tell you to (for example "apply the comments"), run \`cdesign review\`, apply every comment, then \`cdesign resolve <id...>\`.`);
+The user comments on elements in the viewer and presses Send, which delivers all comments as one batch.
+To receive it, run \`cdesign wait\` as a BACKGROUND command (Claude Code: Bash with run_in_background: true; do not block on it).
+It exits when the batch arrives and you are notified with the comments. Apply them all, run \`cdesign resolve <id...>\`, then start \`cdesign wait\` in the background again.
+If you cannot run background commands, run \`cdesign review\` when the user tells you they sent comments.`);
     break;
   }
   case "review": {
@@ -117,24 +127,30 @@ The user reviews in the viewer, comments on elements, then presses Send. When th
     }
     const ids = new Set(batch.map((c) => c.id));
     update(root, (l) => l.forEach((c) => ids.has(c.id) && (c.status = "sent")));
-    console.log(`${batch.length} comment(s) from the user. Apply all of them, then run: cdesign resolve ${batch.map((c) => c.id).join(" ")}\n`);
-    console.log(batch.map(fmt).join("\n"));
+    console.log(batchText(batch));
     break;
   }
   case "wait": {
+    // Run in the background (Claude Code: Bash with run_in_background). It exits when the user sends a batch,
+    // which wakes the agent. A heartbeat tells the viewer an agent is listening.
     const timeout = +(flag("--timeout") ?? 0) * 1000;
     const root = resolve(rest[0] ?? ".");
     const start = Date.now();
+    const stop = () => (beat(root, false), process.exit(0));
+    process.on("SIGTERM", stop);
+    process.on("SIGINT", stop);
+    let last = 0;
     for (;;) {
       const queued = readComments(root).filter((c) => c.status === "queued");
       if (queued.length) {
         const ids = new Set(queued.map((c) => c.id));
         update(root, (l) => l.forEach((c) => ids.has(c.id) && (c.status = "sent")));
-        console.log(queued.map(fmt).join("\n"));
-        console.log(`When done: cdesign resolve ${queued.map((c) => c.id).join(" ")}`);
+        beat(root, false);
+        console.log(batchText(queued, true));
         break;
       }
-      if (timeout && Date.now() - start > timeout) { console.log("no new comments (timeout)"); break; }
+      if (timeout && Date.now() - start > timeout) { beat(root, false); console.log("no new comments (timeout)"); break; }
+      if (Date.now() - last > 2000) (beat(root, true), (last = Date.now()));
       await Bun.sleep(500);
     }
     break;
@@ -244,6 +260,11 @@ sections: color, type, ${tk.FLAT.join(", ")}
 type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--family sans --ls 0 --sample text] --usage text`);
     break;
   }
+  case "mcp": {
+    const { startMcp } = await import("./mcp");
+    await startMcp();
+    break;
+  }
   case "skills":
     printSkills();
     break;
@@ -254,12 +275,13 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
     console.log(`cdesign <command>
   open [dir] [--port n] [--no-browser]  start viewer, print skills + project context
   review                                print the comments the user sent from the viewer
-  wait [--timeout s]                    block until the user sends comments (optional)
+  wait [--timeout s]                    run in the background: exits with the batch when the user presses Send
   resolve <id...>                       mark comments done
   comments [--all]                      list pending comments
   init [dir]                            scaffold design/ (design-system.md, tokens, _head, pages, components)
   check                                 verify tokens/components are defined and documented
   tokens <sub>                          query/change design/tokens.json, export css or tailwind (run: cdesign tokens)
+  mcp                                   MCP server (stdio): tells agents how to use cdesign
   skills                                print the cdesign usage skill
   context [dir]                         print tokens/components/pages found in project
   serve [dir]                           run the viewer in the foreground`);

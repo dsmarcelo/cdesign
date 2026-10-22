@@ -1,7 +1,7 @@
 import { watch, readdirSync, statSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, resolve, relative, sep } from "node:path";
 import { renderPage, snippetFor } from "./render";
-import { dataDir, readComments, update, type Comment } from "./store";
+import { dataDir, listening, readComments, update, type Comment } from "./store";
 
 const UI = join(import.meta.dir, "..", "ui");
 const SKIP = new Set(["node_modules", ".git", ".cdesign", "dist"]);
@@ -33,7 +33,14 @@ export function serve(root: string, port = 0) {
 
   let ct: Timer | undefined;
   mkdirSync(dataDir(root), { recursive: true });
+  let on = false;
+  const presence = () => {
+    const now = listening(root);
+    if (now !== on) ((on = now), push("agent"));
+  };
+  setInterval(presence, 3000); // a killed `wait` stops beating: notice it going stale
   watch(dataDir(root), (_e, f) => {
+    if (f === "agent.json") return presence();
     if (f !== "comments.json") return; // CLI edits (wait/resolve) reach the viewer too
     clearTimeout(ct);
     ct = setTimeout(() => push("comments"), 50);
@@ -73,6 +80,8 @@ export function serve(root: string, port = 0) {
         });
         return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } });
       }
+
+      if (p === "/__cd/agent") return json({ listening: listening(root) });
 
       if (p === "/__cd/comments" && req.method === "GET") return json(readComments(root));
 

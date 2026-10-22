@@ -39,3 +39,18 @@ export function update(root: string, fn: (l: Comment[]) => void) {
 
 export const commentsPath = path;
 export const hasData = (root: string) => existsSync(path(root));
+
+// `cdesign wait` writes a heartbeat so the viewer can show whether an agent is listening
+const agentPath = (root: string) => join(dataDir(root), "agent.json");
+export function beat(root: string, waiting: boolean) {
+  mkdirSync(dataDir(root), { recursive: true });
+  writeFileSync(agentPath(root), JSON.stringify({ waiting, at: Date.now() }));
+}
+export function listening(root: string): boolean {
+  try {
+    const a = JSON.parse(readFileSync(agentPath(root), "utf8"));
+    return !!a.waiting && Date.now() - a.at < 6000;
+  } catch {
+    return false;
+  }
+}

@@ -8,6 +8,7 @@
   body{margin:0;height:100vh;display:grid;grid-template-columns:230px 1fr 300px;grid-template-rows:44px 1fr;background:var(--bg);color:#fafafa;font:13px system-ui}
   header{grid-column:1/4;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--line)}
   header b{margin-right:auto}
+  #agent{font-size:12px;color:var(--mut);margin-right:8px} #agent::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:#52525b;margin-right:6px} #agent.on{color:#fafafa} #agent.on::before{background:#22c55e}
   button{background:var(--panel);color:inherit;border:1px solid var(--line);border-radius:8px;padding:5px 10px;font:inherit;cursor:pointer}
   button.on{background:var(--acc);border-color:var(--acc)}
   aside{overflow:auto;padding:8px;background:var(--panel)}
@@ -35,6 +36,7 @@
 </style>
 <header>
   <b>cdesign</b>
+  <span id="agent" title="Is an agent running `cdesign wait`?"></span>
   <button id="w" title="Preview width">Full</button>
   <button id="theme" title="Toggle light/dark preview">Light</button>
   <button id="mode">Comment (C)</button>
@@ -125,13 +127,21 @@ async function comments() {
   }
 }
 
+let agentOn = false;
+async function agent() {
+  agentOn = (await (await fetch("/__cd/agent")).json()).listening;
+  const working = !agentOn && (await (await fetch("/__cd/comments")).json()).some((c) => c.status === "sent");
+  $("#agent").className = agentOn ? "on" : "";
+  $("#agent").textContent = agentOn ? "Agent listening" : working ? "Agent working" : "No agent listening";
+}
 const PROMPT = "Run `cdesign review` and apply the comments I sent in the cdesign viewer.";
 function toast(t) { $("#toast").textContent = t; $("#toast").classList.add("on"); setTimeout(() => $("#toast").classList.remove("on"), 4000); }
 $("#send").onclick = async () => {
   const { queued } = await (await fetch("/__cd/send", { method: "POST" })).json();
   let copied = false;
   try { await navigator.clipboard.writeText(PROMPT); copied = true; } catch {}
-  toast(`${queued} comment(s) sent. ` + (copied ? "Prompt copied: paste it in your agent." : "Tell your agent: " + PROMPT));
+  await agent();
+  toast(agentOn ? `${queued} comment(s) sent to the listening agent.` : `${queued} comment(s) queued, no agent is listening. ` + (copied ? "Prompt copied: paste it in your agent." : "Tell your agent: " + PROMPT));
 };
 
 const theme = () => { try { return localStorage.getItem("cd-theme"); } catch { return null; } };
@@ -155,7 +165,8 @@ $("#fr").addEventListener("load", () => { sync(); applyTheme(); });
 
 new EventSource("/__cd/events").onmessage = (e) => {
   if (e.data === "reload") $("#fr").contentWindow.location.reload(), files();
-  if (e.data === "comments") { comments(); send({ cd: "pins" }); }
+  if (e.data === "comments") { comments(); send({ cd: "pins" }); agent(); }
+  if (e.data === "agent") agent();
 };
-files().then(load); comments(); applyTheme();
+files().then(load); comments(); applyTheme(); agent();
 </script>

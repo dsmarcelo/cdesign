@@ -3,8 +3,11 @@
   "version": "0.1.0",
   "description": "Lightweight HTML prototype viewer with element-level comments for coding agents",
   "type": "module",
-  "bin": { "cdesign": "src/cli.ts" },
+  "bin": {
+    "cdesign": "src/cli.ts"
+  },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "parse5": "^8.0.1"
   }
 }
