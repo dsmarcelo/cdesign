@@ -32,6 +32,7 @@
 <header>
   <b>cdesign</b>
   <button id="w" title="Preview width">Full</button>
+  <button id="theme" title="Toggle light/dark preview">Light</button>
   <button id="mode">Comment (C)</button>
 </header>
 <aside class="l" id="files"></aside>
@@ -115,16 +116,28 @@ async function comments() {
   }
 }
 
+const theme = () => { try { return localStorage.getItem("cd-theme"); } catch { return null; } };
+const current = () => theme() || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+function applyTheme() {
+  const t = current();
+  $("#theme").textContent = t === "dark" ? "Dark" : "Light";
+  $("#theme").classList.toggle("on", t === "dark");
+  try { $("#fr").contentDocument.documentElement.setAttribute("data-theme", t); } catch {}
+}
+$("#theme").onclick = () => {
+  try { localStorage.setItem("cd-theme", current() === "dark" ? "light" : "dark"); } catch {}
+  applyTheme();
+};
 const toggle = () => { on = !on; $("#mode").classList.toggle("on", on); sync(); };
 $("#mode").onclick = toggle;
 $("#w").onclick = () => { wi = (wi + 1) % widths.length; $("#w").textContent = widths[wi][0]; $("#fr").style.width = widths[wi][1]; };
 addEventListener("keydown", (e) => { if (e.key === "c" && !/input|textarea/i.test(e.target.tagName)) toggle(); });
 addEventListener("message", (e) => { if (e.data?.cd === "ready") sync(); });
-$("#fr").addEventListener("load", sync);
+$("#fr").addEventListener("load", () => { sync(); applyTheme(); });
 
 new EventSource("/__cd/events").onmessage = (e) => {
   if (e.data === "reload") $("#fr").contentWindow.location.reload(), files();
   if (e.data === "comments") { comments(); send({ cd: "pins" }); }
 };
-files().then(load); comments();
+files().then(load); comments(); applyTheme();
 </script>

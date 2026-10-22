@@ -151,7 +151,8 @@ export function renderPage(root: string, rel: string): string {
     body.childNodes.forEach((c: N) => (c.parentNode = body));
   }
   // shared head partial first, then each used component's <style> once, then the page's own head
-  const pre: N[] = [];
+  // viewer's light/dark choice (same origin, so the shell's localStorage is readable) before first paint
+  const pre: N[] = [...(parseFragment(`<script>try{var t=localStorage.getItem("cd-theme");if(t)document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>`).childNodes as N[])];
   const head = headPartial(root);
   if (head) pre.push(...(parseFragment(head).childNodes as N[]));
   for (const nodes of styles.values()) pre.push(...nodes);
