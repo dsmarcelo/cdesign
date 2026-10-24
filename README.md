@@ -11,12 +11,13 @@ A lightweight viewer for HTML prototypes, built for coding agents. The agent wri
 
 ## Install
 
-Requires [Bun](https://bun.sh).
+Linux/macOS. One command installs Bun if missing, cdesign into `~/.local/share/cdesign`, a `cdesign` launcher in `~/.local/bin`, and registers the MCP server with every agent found (Claude Code, Codex, Antigravity `agy`). Re-run it to update.
 
 ```bash
-bun install
-bun link
+curl -fsSL https://raw.githubusercontent.com/dsmarcelo/cdesign/main/install.sh | bash
 ```
+
+Register or remove the MCP server later with `cdesign install-mcp [claude|codex|agy|all]` / `cdesign uninstall-mcp`. From a local checkout: `CDESIGN_SRC=$PWD ./install.sh`.
 
 ## Use
 
@@ -34,6 +35,7 @@ Tell your agent to run `cdesign open`. Then in the viewer, press `C`, click elem
 | `open [dir] [--port n] [--no-browser]` | Start the viewer in the background; print skills and project context |
 | `review` | Print the batch the user sent from the viewer (run when asked to apply comments) |
 | `wait [--timeout s]` | Run in the background: exits with the batch when you press Send, which wakes the agent |
+| `install-mcp` / `uninstall-mcp` | Register / remove the MCP server in Claude Code, Codex and agy |
 | `mcp` | MCP server (stdio) that teaches agents how to use cdesign |
 | `resolve <id...>` | Mark comments done |
 | `comments [--all]` | List pending comments |
@@ -52,11 +54,7 @@ Comment flow: `draft` (in the viewer) → `queued` (Send) → `sent` (agent ran 
 
 Register the MCP server once, user-wide, and any agent that starts in any project knows what cdesign is and calls `open` when you mention it (the server's instructions are loaded into the agent). `open` scaffolds `design/` if needed, starts the viewer and returns the usage guide.
 
-```bash
-claude mcp add --scope user cdesign -- bun /path/to/cdesign/src/cli.ts mcp
-```
-
-For other agents, add the same command (`bun /path/to/cdesign/src/cli.ts mcp`) to their MCP config. Tools: `open`, `review`, `resolve`, and `run` (any other command, such as `tokens search`). The server uses the working directory the agent was started in as the project.
+`install.sh` does this for you; to redo it, run `cdesign install-mcp`. For other agents, use the command `bun <install dir>/src/cli.ts mcp` in their MCP config. Tools: `open`, `review`, `resolve`, and `run` (any other command, such as `tokens search`). The server uses the working directory the agent was started in as the project.
 
 ## Project structure
 

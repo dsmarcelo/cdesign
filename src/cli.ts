@@ -75,7 +75,7 @@ const readServer = (root: string) => {
 async function ensureServer(root: string, port?: string) {
   let s = readServer(root);
   if (s) return s;
-  Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), "serve", root, ...(port ? ["--port", port] : [])], { stdio: ["ignore", "ignore", "ignore"], detached: true }).unref();
+  Bun.spawn([process.execPath, join(import.meta.dir, "cli.ts"), "serve", root, ...(port ? ["--port", port] : [])], { stdio: ["ignore", "ignore", "ignore"], detached: true }).unref();
   for (let i = 0; i < 50 && !(s = readServer(root)); i++) await Bun.sleep(100);
   if (!s) throw new Error("server failed to start");
   return s;
@@ -265,6 +265,12 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
     await startMcp();
     break;
   }
+  case "install-mcp":
+  case "uninstall-mcp": {
+    const { installMcp } = await import("./install");
+    process.exitCode = installMcp(cmd === "uninstall-mcp", rest);
+    break;
+  }
   case "skills":
     printSkills();
     break;
@@ -282,6 +288,8 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
   check                                 verify tokens/components are defined and documented
   tokens <sub>                          query/change design/tokens.json, export css or tailwind (run: cdesign tokens)
   mcp                                   MCP server (stdio): tells agents how to use cdesign
+  install-mcp [claude|codex|agy|all]    register the MCP server with agents found on this machine
+  uninstall-mcp [claude|codex|agy|all]  remove it again
   skills                                print the cdesign usage skill
   context [dir]                         print tokens/components/pages found in project
   serve [dir]                           run the viewer in the foreground`);
