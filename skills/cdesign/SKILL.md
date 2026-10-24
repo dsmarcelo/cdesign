@@ -8,11 +8,12 @@ description: How to prototype in the cdesign viewer: design/ structure, <c-*> co
 Prototypes are references: another agent will later build the real code (React, Astro, ...) from them. Make them faithful and structured so porting is mechanical.
 
 ## Structure
-- `design/design-system.md`: source of truth (tokens, typography, spacing, components, rules). Read it first. Update it in the same edit as any token/style/component change, then run `cdesign check` (must report "in sync", including a preview for every component).
+- `design/design-system.md`: source of truth (tokens, typography, spacing, components, rules). Read it first. Update it in the same edit as any token/style/component change, then run `cdesign check` (must report "in sync", including a `.preview.html` next to every component).
 - `design/tokens.json`: the tokens (color light/dark, type, spacing, radius, size, shadow, fontSize, duration, easing), each with a `usage`. It is large: never read it. `design/tokens.css` is generated from it (never edit). `design/_head.html`: injected into every page's `<head>` (tokens, fonts, Tailwind). Do not repeat these per page.
 - `design/pages/*.html`: real app screens only, one per file. Never put component showcases here.
-- `design/components/*.html`: one component per file (fragment, no `<html>`).
-- `design/preview/<component>.html`: one page per component, same name as the component, showing every variant x size x state (disabled, invalid, loading, ...) as a labeled matrix built from `<c-name>` tags. Hover, focus and active are checked by interacting. Create or update the preview whenever you create or change a component.
+- `design/components/` holds reusable components in three folders: `ui/` (primitives: Button, Input, Select, Dialog), `shared/` (cross-feature: DataTable, SearchBar, FileUpload), `layout/` (Sidebar, Header, PageShell).
+- `design/features/<feature>/` holds components specific to one feature (e.g. `features/contracts/contract-table.html`). Promote one to `components/shared/` when a second feature needs it.
+- One component per file (fragment, no `<html>`): `button.html`. Its preview lives right next to it as `button.preview.html` (a full page, same folder): every variant x size x state (disabled, invalid, loading, ...) as a labeled matrix built from `<c-button>` tags. Hover, focus and active are checked by interacting. Create or update the preview whenever you create or change a component. Component names are the filename without `.html` and must be unique across all folders.
 - Reuse the project's real tokens/Tailwind classes and mirror its existing components. Never invent values that are not in the design system; add them there first.
 
 ## Tokens

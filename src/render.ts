@@ -16,15 +16,19 @@ function walk(n: N, fn: (n: N) => void) {
   for (const c of n.childNodes ?? []) walk(c, fn);
 }
 
-/** component name -> project-relative path, for every .html under a `components/` folder */
+const COMPONENT_DIRS = new Set(["components", "features"]);
+export const isPreview = (name: string) => name.endsWith(".preview.html");
+export const previewOf = (rel: string) => rel.replace(/\.html$/, ".preview.html");
+
+/** component name -> project-relative path, for every .html under a `components/` or `features/` folder (previews excluded) */
 export function componentIndex(root: string): Map<string, string> {
   const out = new Map<string, string>();
   const scan = (dir: string, inside: boolean) => {
     for (const name of readdirSync(dir)) {
       if (SKIP.has(name)) continue;
       const p = join(dir, name);
-      if (statSync(p).isDirectory()) scan(p, inside || name === "components");
-      else if (inside && name.endsWith(".html") && !name.startsWith("_"))
+      if (statSync(p).isDirectory()) scan(p, inside || COMPONENT_DIRS.has(name));
+      else if (inside && name.endsWith(".html") && !isPreview(name) && !name.startsWith("_"))
         out.set(name.slice(0, -5), p.slice(root.length + 1).split(sep).join("/"));
     }
   };

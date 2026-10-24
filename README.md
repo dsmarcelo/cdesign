@@ -66,8 +66,13 @@ design/
   tokens.css              generated from tokens.json
   _head.html              injected into every page's <head> (tokens, fonts, Tailwind)
   pages/                  real app screens, one per .html file
-  components/             one component per .html file
-  preview/                one page per component: all variants, sizes and states
+  components/
+    ui/                   primitives: button.html, button.preview.html, input.html, ...
+    shared/               cross-feature: data-table.html, search-bar.html, ...
+    layout/               sidebar.html, header.html, page-shell.html, ...
+  features/
+    contracts/            feature-specific: contract-table.html, contract-form.html, ...
+    customers/            customer-card.html, customer-filters.html, ...
 ```
 
 Keep `design-system.md` in sync with every token, style or component change. `cdesign check` flags what is missing.
@@ -106,7 +111,7 @@ The viewer header has a Light/Dark button, and a button at each end hides or sho
 
 ## Components
 
-Components are plain HTML fragments in a `components/` folder, resolved by filename and used as `<c-name>` tags.
+Components are plain HTML fragments under `components/` or `features/`, resolved by filename (unique across folders) and used as `<c-name>` tags. Each has a `<name>.preview.html` next to it showing all variants, sizes and states; `cdesign check` warns when it is missing.
 
 ```html
 <!-- components/card.html -->

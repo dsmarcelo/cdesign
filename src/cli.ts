@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { serve, listHtml } from "./server";
-import { componentIndex } from "./render";
+import { componentIndex, previewOf } from "./render";
 import * as tk from "./tokens";
 import { beat, dataDir, readComments, update, commentsPath, type Comment } from "./store";
 
@@ -187,7 +187,7 @@ Source of truth: \`design/tokens.json\` (query it with \`cdesign tokens search|s
 ## Typography and layout rules
 
 ## Components
-Files in \`design/components/\`, used as \`<c-name prop="x">children</c-name>\`.
+Files in \`design/components/<ui|shared|layout>/\` and \`design/features/<feature>/\`, each with a \`<name>.preview.html\` next to it. Used as \`<c-name prop="x">children</c-name>\`.
 | Component | Props | Slots | Notes |
 |---|---|---|---|
 
@@ -201,8 +201,7 @@ Files in \`design/components/\`, used as \`<c-name prop="x">children</c-name>\`.
 <link rel="stylesheet" href="/design/tokens.css">
 `);
     mkdirSync(join(root, "design/pages"), { recursive: true });
-    mkdirSync(join(root, "design/preview"), { recursive: true });
-    mkdirSync(join(root, "design/components"), { recursive: true });
+    for (const d of ["components/ui", "components/shared", "components/layout", "features"]) mkdirSync(join(root, "design", d), { recursive: true });
     break;
   }
   case "check": {
@@ -230,8 +229,7 @@ Files in \`design/components/\`, used as \`<c-name prop="x">children</c-name>\`.
     const idx = componentIndex(root);
     for (const f of files.filter((f) => f.endsWith(".html")))
       for (const m of read(f).matchAll(/<c-([\w-]+)/g)) if (!idx.has(m[1])) problems.push(`<c-${m[1]}> used in ${f} has no component file`);
-    const previews = new Set(files.filter((f) => /\/preview\/[^/]+\.html$/.test(f)).map((f) => f.split("/").pop()!.slice(0, -5)));
-    for (const n of idx.keys()) if (!previews.has(n)) warnings.push(`component "${n}" has no design/preview/${n}.html`);
+    for (const [n, rel] of idx) if (!existsSync(join(root, previewOf(rel)))) warnings.push(`component "${n}" has no ${previewOf(rel)}`);
     for (const n of idx.keys()) if (md && !md.includes(`c-${n}`) && !md.includes(n)) warnings.push(`component "${n}" is not documented in design-system.md`);
     for (const p of problems) console.log("ERROR  " + p);
     for (const w of warnings) console.log("WARN   " + w);
