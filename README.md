@@ -11,7 +11,7 @@ A lightweight viewer for HTML prototypes, built for coding agents. The agent wri
 
 ## Install
 
-Linux/macOS. One command installs Bun if missing, cdesign into `~/.local/share/cdesign`, a `cdesign` launcher in `~/.local/bin`, and registers the MCP server with every agent found (Claude Code, Codex, Antigravity `agy`). Re-run it to update.
+Linux/macOS. One command installs Bun if missing, cdesign into `~/.local/share/cdesign`, a `cdesign` launcher in `~/.local/bin`, and registers the MCP server with every agent found (Claude Code, Codex, Antigravity `agy`). Update with `cdesign update` (re-runs the installer).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dsmarcelo/cdesign/main/install.sh | bash
@@ -36,6 +36,7 @@ Tell your agent to run `cdesign open`. Then in the viewer, press `C`, click elem
 | `review` | Print the batch the user sent from the viewer (run when asked to apply comments) |
 | `wait [--timeout s]` | Run in the background: exits with the batch when you press Send, which wakes the agent |
 | `install-mcp` / `uninstall-mcp` | Register / remove the MCP server in Claude Code, Codex and agy |
+| `update` | Install the latest version from GitHub |
 | `mcp` | MCP server (stdio) that teaches agents how to use cdesign |
 | `resolve <id...>` | Mark comments done |
 | `comments [--all]` | List pending comments |

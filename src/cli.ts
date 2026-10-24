@@ -271,6 +271,12 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
     process.exitCode = installMcp(cmd === "uninstall-mcp", rest);
     break;
   }
+  case "update": {
+    const url = `https://raw.githubusercontent.com/${process.env.CDESIGN_REPO ?? "dsmarcelo/cdesign"}/${process.env.CDESIGN_REF ?? "main"}/install.sh`;
+    const p = Bun.spawnSync(["bash", "-c", `curl -fsSL ${url} | bash`], { stdio: ["inherit", "inherit", "inherit"] });
+    process.exitCode = p.exitCode;
+    break;
+  }
   case "skills":
     printSkills();
     break;
@@ -290,6 +296,7 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
   mcp                                   MCP server (stdio): tells agents how to use cdesign
   install-mcp [claude|codex|agy|all]    register the MCP server with agents found on this machine
   uninstall-mcp [claude|codex|agy|all]  remove it again
+  update                                reinstall the latest version from GitHub
   skills                                print the cdesign usage skill
   context [dir]                         print tokens/components/pages found in project
   serve [dir]                           run the viewer in the foreground`);
