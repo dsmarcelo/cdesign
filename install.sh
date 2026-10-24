@@ -15,9 +15,9 @@ if ! command -v bun >/dev/null; then
 fi
 
 if [ -n "${CDESIGN_SRC:-}" ]; then
-  # local install from a checkout (development)
-  rm -rf "$SHARE"; mkdir -p "$SHARE"
-  tar -C "$CDESIGN_SRC" --exclude=node_modules --exclude=.git -cf - . | tar -C "$SHARE" -xf -
+  # dev install: link the checkout so edits apply immediately
+  rm -rf "$SHARE"; mkdir -p "$(dirname "$SHARE")"
+  ln -s "$(cd "$CDESIGN_SRC" && pwd)" "$SHARE"
 else
   tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
   echo "Downloading $REPO@$REF..."

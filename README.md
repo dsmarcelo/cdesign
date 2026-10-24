@@ -17,7 +17,7 @@ Linux/macOS. One command installs Bun if missing, cdesign into `~/.local/share/c
 curl -fsSL https://raw.githubusercontent.com/dsmarcelo/cdesign/main/install.sh | bash
 ```
 
-Register or remove the MCP server later with `cdesign install-mcp [claude|codex|agy|all]` / `cdesign uninstall-mcp`. From a local checkout: `CDESIGN_SRC=$PWD ./install.sh`.
+Register or remove the MCP server later with `cdesign install-mcp [claude|codex|agy|all]` / `cdesign uninstall-mcp`. Dev mode: `CDESIGN_SRC=$PWD ./install.sh` from a checkout links the install to it, so edits apply at once (`cdesign update` switches back to the GitHub version).
 
 ## Use
 
