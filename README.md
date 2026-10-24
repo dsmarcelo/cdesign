@@ -11,11 +11,19 @@ A lightweight viewer for HTML prototypes, built for coding agents. The agent wri
 
 ## Install
 
-Linux/macOS. One command installs Bun if missing, cdesign into `~/.local/share/cdesign`, a `cdesign` launcher in `~/.local/bin`, and registers the MCP server with every agent found (Claude Code, Codex, Antigravity `agy`). Update with `cdesign update` (re-runs the installer).
+Linux/macOS (bash) and Windows (PowerShell). One command installs Bun if missing, cdesign into `~/.local/share/cdesign`, a `cdesign` launcher in `~/.local/bin`, and registers the MCP server with every agent found (Claude Code, Codex, Antigravity `agy`). Update with `cdesign update` (re-runs the installer).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dsmarcelo/cdesign/main/install.sh | bash
 ```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/dsmarcelo/cdesign/main/install.ps1 | iex
+```
+
+This creates `%USERPROFILE%\.localin\cdesign.cmd` and adds that folder to your user PATH (open a new terminal afterwards). Dev mode: `$env:CDESIGN_SRC = $PWD; .\install.ps1`.
 
 Register or remove the MCP server later with `cdesign install-mcp [claude|codex|agy|all]` / `cdesign uninstall-mcp`. Dev mode: `CDESIGN_SRC=$PWD ./install.sh` from a checkout links the install to it, so edits apply at once (`cdesign update` switches back to the GitHub version).
 
@@ -33,6 +41,7 @@ Tell your agent to run `cdesign open`. Then in the viewer, press `C`, click elem
 | Command | What it does |
 |---|---|
 | `open [dir] [--port n] [--no-browser]` | Start the viewer in the background; print skills and project context |
+| `close [dir]` | Stop the viewer started by `open` |
 | `review` | Print the batch the user sent from the viewer (run when asked to apply comments) |
 | `wait [--timeout s]` | Run in the background: exits with the batch when you press Send, which wakes the agent |
 | `install-mcp` / `uninstall-mcp` | Register / remove the MCP server in Claude Code, Codex and agy |

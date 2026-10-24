@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { serve, listHtml } from "./server";
 import { componentIndex, previewOf } from "./render";
@@ -106,7 +106,10 @@ switch (cmd) {
     }
     const s = await ensureServer(root, port);
     const url = `http://localhost:${s.port}`;
-    if (!quiet) Bun.spawn(["xdg-open", url], { stdio: ["ignore", "ignore", "ignore"] }).unref();
+    if (!quiet) {
+      const opener = process.platform === "win32" ? ["cmd", "/c", "start", "", url] : process.platform === "darwin" ? ["open", url] : ["xdg-open", url];
+      try { Bun.spawn(opener, { stdio: ["ignore", "ignore", "ignore"] }).unref(); } catch { /* no browser opener available */ }
+    }
     console.log(`cdesign viewer running: ${url}\nproject: ${root}\n`);
     printSkills();
     printContext(root);
@@ -116,6 +119,15 @@ The user comments on elements in the viewer and presses Send, which delivers all
 To receive it, run \`cdesign wait\` as a BACKGROUND command (Claude Code: Bash with run_in_background: true; do not block on it).
 It exits when the batch arrives and you are notified with the comments. Apply them all, run \`cdesign resolve <id...>\`, then start \`cdesign wait\` in the background again.
 If you cannot run background commands, run \`cdesign review\` when the user tells you they sent comments.`);
+    break;
+  }
+  case "close": {
+    const root = resolve(rest[0] ?? ".");
+    const s = readServer(root);
+    if (!s) { console.log("cdesign viewer is not running"); break; }
+    try { process.kill(s.pid); } catch { /* already gone */ }
+    try { rmSync(join(dataDir(root), "server.json")); } catch { /* ignore */ }
+    console.log(`cdesign viewer stopped (port ${s.port})`);
     break;
   }
   case "review": {
@@ -270,8 +282,11 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
     break;
   }
   case "update": {
-    const url = `https://raw.githubusercontent.com/${process.env.CDESIGN_REPO ?? "dsmarcelo/cdesign"}/${process.env.CDESIGN_REF ?? "main"}/install.sh`;
-    const p = Bun.spawnSync(["bash", "-c", `curl -fsSL ${url} | bash`], { stdio: ["inherit", "inherit", "inherit"] });
+    const base = `https://raw.githubusercontent.com/${process.env.CDESIGN_REPO ?? "dsmarcelo/cdesign"}/${process.env.CDESIGN_REF ?? "main"}`;
+    const cmdline = process.platform === "win32"
+      ? ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", `irm ${base}/install.ps1 | iex`]
+      : ["bash", "-c", `curl -fsSL ${base}/install.sh | bash`];
+    const p = Bun.spawnSync(cmdline, { stdio: ["inherit", "inherit", "inherit"] });
     process.exitCode = p.exitCode;
     break;
   }
@@ -284,6 +299,7 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
   default:
     console.log(`cdesign <command>
   open [dir] [--port n] [--no-browser]  start viewer, print skills + project context
+  close [dir]                           stop the viewer started by open
   review                                print the comments the user sent from the viewer
   wait [--timeout s]                    run in the background: exits with the batch when the user presses Send
   resolve <id...>                       mark comments done
