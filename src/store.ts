@@ -1,5 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { createHash } from "node:crypto";
+import { homedir } from "node:os";
+import { basename, join } from "node:path";
 
 export type Comment = {
   id: string;
@@ -53,4 +55,21 @@ export function listening(root: string): boolean {
   } catch {
     return false;
   }
+}
+
+// ---------- daemon registry (one viewer process for every project) ----------
+export const homeDir = () => process.env.CDESIGN_HOME ?? join(homedir(), ".cdesign");
+export const daemonPath = () => join(homeDir(), "daemon.json");
+const projectsPath = () => join(homeDir(), "projects.json");
+
+/** DNS-label-safe, stable id of a project folder: "my-app-1a2b3c". It is the subdomain of the project's viewer URL. */
+export const projectId = (root: string) =>
+  `${(basename(root).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "project").slice(0, 40)}-${createHash("sha1").update(root).digest("hex").slice(0, 6)}`;
+
+export function readProjects(): string[] {
+  try { return (JSON.parse(readFileSync(projectsPath(), "utf8")) as string[]).filter((r) => existsSync(r)); } catch { return []; }
+}
+export function writeProjects(roots: string[]) {
+  mkdirSync(homeDir(), { recursive: true });
+  writeFileSync(projectsPath(), JSON.stringify(roots, null, 2));
 }

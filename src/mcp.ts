@@ -8,7 +8,7 @@ const CLI = join(import.meta.dir, "cli.ts");
 const INSTRUCTIONS = `cdesign is a local viewer for HTML prototypes and mockups, with element-level comments from the user.
 Use it whenever the user mentions cdesign, asks to design, prototype or mock up UI, or asks you to apply design comments.
 Start by calling the \`open\` tool, even if the project has no design/ folder yet: it scaffolds design/, starts the viewer and returns the full usage guide and project context. Follow that guide.
-When the user is vague about location ("this page", "change this", "here", "this button"), call \`page\` before asking anything: it returns the page open in the viewer and the element the user selected with the pointer tool. \`open\` reuses a viewer already running for the project, so never ask the user for a localhost link.
+When the user is vague about location ("this page", "change this", "here", "this button"), call \`page\` before asking anything: it returns the page open in the viewer and the element the user selected with the pointer tool. \`open\` reuses the shared viewer process (one for all projects, chosen by the folder you run in), so never ask the user for a localhost link.
 Never read design/tokens.json directly (it is huge); query it with \`run\` ("tokens search <words>").`;
 
 /** Every tool is a thin wrapper over the CLI, run in the project the agent was started in. */

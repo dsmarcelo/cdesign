@@ -34,12 +34,17 @@
   .st{font-size:10px;text-transform:uppercase;color:var(--acc)}
   .c.queued .st,.c.sent .st{color:var(--mut)}
   button.go{background:var(--acc);border-color:var(--acc)} button:disabled{opacity:.4;cursor:default}
+  select{background:var(--panel);color:inherit;border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:inherit;max-width:220px}
+  #pick{position:fixed;inset:0;background:var(--bg);display:none;place-content:center;gap:8px;padding:24px;z-index:9;width:min(480px,100%);margin:auto;align-content:center}
+  body.nop #pick{display:grid} body.nop>:not(#pick):not(#toast){display:none}
+  #pick h2{margin:0 0 8px;font-size:16px} #pick .f{border:1px solid var(--line);color:#fafafa} #pick small{color:var(--mut)}
   #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#fafafa;color:#111;padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:80vw}
   #toast.on{opacity:1}
 </style>
 <header>
   <button id="tl" class="ic on" title="Hide/show files"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M6 3v10"/></svg></button>
   <b>cdesign</b>
+  <select id="proj" title="Switch project"></select>
   <span id="agent" title="Is an agent running `cdesign wait`?"></span>
   <button id="w" title="Preview width">Full</button>
   <button id="theme" title="Toggle light/dark preview">Light</button>
@@ -51,6 +56,7 @@
 <aside class="l" id="files"></aside>
 <main><iframe id="fr"></iframe></main>
 <aside class="r" id="cm"></aside>
+<div id="pick"></div>
 <div id="toast"></div>
 <script>
 const $ = (s) => document.querySelector(s);
@@ -200,6 +206,36 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) repo
 addEventListener("message", (e) => { if (e.data?.cd === "ready") sync(); });
 $("#fr").addEventListener("load", () => { sync(); applyTheme(); });
 
+async function addFolder() {
+  const root = prompt("Absolute path of the project folder");
+  if (!root) return;
+  const r = await fetch("/__cd/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ root }) });
+  const j = await r.json();
+  if (!r.ok) return toast(j.error || "could not add folder");
+  location.href = j.url;
+}
+async function projects() {
+  const { current, projects: l } = await (await fetch("/__cd/projects")).json();
+  const sel = $("#proj");
+  sel.innerHTML = "";
+  for (const p of l) sel.add(new Option(p.name, p.url, false, p.id === current));
+  sel.add(new Option("Add folder…", "#add"));
+  if (current) sel.add(new Option("Close this project", "#close"));
+  sel.onchange = async () => {
+    if (sel.value === "#add") return addFolder();
+    if (sel.value === "#close") { await fetch(`/__cd/projects/${current}/remove`, { method: "POST" }); return location.href = location.origin.replace(/^(https?:\/\/)[^.]+\.localhost/, "$1localhost"); }
+    location.href = sel.value;
+  };
+  if (current) return current;
+  document.body.classList.add("nop"); // bare localhost: pick a project
+  const pk = $("#pick");
+  pk.innerHTML = "<h2>cdesign</h2>";
+  for (const p of l) { const b = document.createElement("button"); b.className = "f"; b.innerHTML = `${p.name}<br><small>${p.root}</small>`; b.onclick = () => (location.href = p.url); pk.appendChild(b); }
+  const a = document.createElement("button"); a.textContent = "Add folder…"; a.onclick = addFolder; pk.appendChild(a);
+  return null;
+}
+projects().then((cur) => { if (cur) start(); });
+function start() {
 const es = new EventSource("/__cd/events?tab=" + tabId);
 es.onopen = report; // also after a reconnect: the server forgets a tab when its stream closes
 es.onmessage = (e) => {
@@ -208,4 +244,5 @@ es.onmessage = (e) => {
   if (e.data === "agent") agent();
 };
 files().then(load); comments(); applyTheme(); agent();
+}
 </script>

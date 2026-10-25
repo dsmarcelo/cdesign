@@ -40,8 +40,8 @@ Tell your agent to run `cdesign open`. Then in the viewer, press `C`, click elem
 
 | Command | What it does |
 |---|---|
-| `open [dir] [--port n] [--no-browser]` | Start the viewer in the background; print skills and project context |
-| `close [dir]` | Stop the viewer started by `open` |
+| `open [dir] [--port n] [--no-browser]` | Open the project in the viewer (starts the shared viewer process if needed); print skills and project context |
+| `close [dir] [--all]` | Close the project in the viewer; `--all` stops the viewer for every project |
 | `page` | Print the page open in the viewer (most recently active tab) and the element selected with the pointer button (`S`) |
 | `review` | Print the batch the user sent from the viewer (run when asked to apply comments) |
 | `wait [--timeout s]` | Run in the background: exits with the batch when you press Send, which wakes the agent |
@@ -55,7 +55,7 @@ Tell your agent to run `cdesign open`. Then in the viewer, press `C`, click elem
 | `check` | Verify tokens and components are defined and documented |
 | `skills` | Print the cdesign usage skill |
 | `context [dir]` | Print design system, tokens, components and pages |
-| `serve [dir]` | Run the viewer in the foreground |
+| `serve [dir] [--port n]` | Run the viewer in the foreground (it normally starts by itself) |
 
 `open` scaffolds `design/` if it does not exist yet.
 
@@ -66,6 +66,10 @@ Comment flow: `draft` (in the viewer) → `queued` (Send) → `sent` (agent ran 
 Register the MCP server once, user-wide, and any agent that starts in any project knows what cdesign is and calls `open` when you mention it (the server's instructions are loaded into the agent). `open` scaffolds `design/` if needed, starts the viewer and returns the usage guide.
 
 `install.sh` does this for you; to redo it, run `cdesign install-mcp`. For other agents, use the command `bun <install dir>/src/cli.ts mcp` in their MCP config. Tools: `open`, `page`, `review`, `resolve`, and `run` (any other command, such as `tokens search`). The server uses the working directory the agent was started in as the project.
+
+## One viewer for all projects
+
+A single background process serves every project (default port 4747, localhost only; its address is kept in `~/.cdesign/daemon.json`). Each project has its own address, `http://<project>.localhost:4747/`, and the header has a project switcher (add a folder, close a project). Agents address their own project from the folder they run in, so several agents on several projects do not mix. The process stops by itself after 2 minutes with no viewer tab open and no agent running `cdesign wait` (`CDESIGN_IDLE_SECONDS` changes this), so nothing is left behind; the next `cdesign open` starts it again.
 
 ## Project structure
 

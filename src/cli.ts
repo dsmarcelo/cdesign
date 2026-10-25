@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { serve, listHtml } from "./server";
+import { serveDaemon, listHtml, DEFAULT_PORT } from "./server";
 import { componentIndex, previewOf, sourceOfPreview } from "./render";
 import * as tk from "./tokens";
-import { beat, dataDir, readComments, update, commentsPath, type Comment } from "./store";
+import { beat, dataDir, daemonPath, projectId, readComments, update, commentsPath, type Comment } from "./store";
 
 const [cmd = "help", ...rest] = process.argv.slice(2);
 const flag = (n: string) => {
@@ -64,45 +64,67 @@ function printContext(root: string) {
   show("Existing prototypes (.html)", listHtml(root));
 }
 
-// ---------- server lifecycle ----------
+// ---------- daemon lifecycle (one viewer process for every project) ----------
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
-const readServer = (root: string) => {
+const readDaemon = () => {
   try {
-    const s = JSON.parse(readFileSync(join(dataDir(root), "server.json"), "utf8"));
+    const s = JSON.parse(readFileSync(daemonPath(), "utf8"));
     return alive(s.pid) ? (s as { port: number; pid: number }) : null;
   } catch { return null; }
 };
 
-/** readServer plus a real request: a recycled pid or a hung process must not look like a viewer. Stale files are removed. */
-async function liveServer(root: string) {
-  const s = readServer(root);
+/** readDaemon plus a real request: a recycled pid or a hung process must not look like the daemon. Stale files are removed. */
+async function liveDaemon() {
+  const s = readDaemon();
   if (!s) return null;
   try {
-    if ((await fetch(`http://localhost:${s.port}/__cd/files`, { signal: AbortSignal.timeout(1000) })).ok) return s;
+    if ((await fetch(`http://127.0.0.1:${s.port}/__cd/projects`, { signal: AbortSignal.timeout(1000) })).ok) return s;
   } catch { /* not answering */ }
-  try { rmSync(join(dataDir(root), "server.json")); } catch { /* ignore */ }
+  try { rmSync(daemonPath()); } catch { /* ignore */ }
   return null;
 }
 
-/** The project an agent is working in: nearest parent with a running viewer or a design/ folder, else cwd. */
+async function ensureDaemon(port?: string) {
+  let s = await liveDaemon();
+  if (s) return s;
+  Bun.spawn([process.execPath, join(import.meta.dir, "cli.ts"), "daemon", ...(port ? ["--port", port] : [])], { stdio: ["ignore", "ignore", "ignore"], detached: true }).unref();
+  for (let i = 0; i < 50 && !(s = await liveDaemon()); i++) await Bun.sleep(100);
+  if (!s) throw new Error("cdesign daemon failed to start");
+  return s;
+}
+
+type Reg = { id: string; root: string; url: string; tabs: number };
+/** Register a project with the daemon (starting it if needed). */
+async function register(root: string, port?: string): Promise<Reg & { port: number }> {
+  const s = await ensureDaemon(port);
+  const r = await fetch(`http://127.0.0.1:${s.port}/__cd/projects`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ root }) });
+  if (!r.ok) throw new Error(`could not register ${root}: ${await r.text()}`);
+  return { ...((await r.json()) as Reg), port: s.port };
+}
+
+/** The project an agent is working in: nearest parent with a design/ folder, else cwd. */
 function findRoot(from = process.cwd()) {
   for (let d = resolve(from); ; d = dirname(d)) {
-    if (readServer(d) || existsSync(join(d, "design", "design-system.md"))) return d;
+    if (existsSync(join(d, "design", "design-system.md"))) return d;
     if (dirname(d) === d) return resolve(from);
   }
 }
 
-/** What the user has open in the viewer right now (last active tab), or null when no viewer is running. */
+/** What the user has open in the viewer right now (last active tab), or null when the daemon or the project is not running. */
 async function pageText(root: string) {
-  const s = await liveServer(root);
+  const s = await liveDaemon();
   if (!s) return null;
+  const id = projectId(root);
   try {
-    const r = (await (await fetch(`http://localhost:${s.port}/__cd/page`)).json()) as {
+    const known = ((await (await fetch(`http://127.0.0.1:${s.port}/__cd/projects`)).json()) as { projects: { id: string }[] }).projects;
+    if (!known.some((p) => p.id === id)) return null;
+    const base = `http://${id}.localhost:${s.port}`;
+    const r = (await (await fetch(`http://127.0.0.1:${s.port}/__cd/page?project=${id}`)).json()) as {
       file: string | null;
       selection: { file: string; cdId: string; uses: string[]; selector: string; tag: string; text: string; snippet: string } | null;
     };
-    if (!r.file) return `cdesign viewer is running (http://localhost:${s.port}) but no page is open in it yet.`;
-    let t = `Open in cdesign: ${r.file} (http://localhost:${s.port}/#${r.file})`;
+    if (!r.file) return `cdesign viewer is running (${base}/) but no page is open in it yet.`;
+    let t = `Open in cdesign: ${r.file} (${base}/#${r.file})`;
     const e = r.selection;
     if (e) {
       t += `
@@ -117,15 +139,6 @@ ${e.snippet}`;
   } catch { return null; }
 }
 
-async function ensureServer(root: string, port?: string) {
-  let s = await liveServer(root);
-  if (s) return s;
-  Bun.spawn([process.execPath, join(import.meta.dir, "cli.ts"), "serve", root, ...(port ? ["--port", port] : [])], { stdio: ["ignore", "ignore", "ignore"], detached: true }).unref();
-  for (let i = 0; i < 50 && !(s = readServer(root)); i++) await Bun.sleep(100);
-  if (!s) throw new Error("server failed to start");
-  return s;
-}
-
 const fmt = (c: Comment) =>
   `--- comment ${c.id} ---\nfile: ${c.file}${c.uses?.length ? `\nused in (component instance, innermost first): ${c.uses.join(" <- ")}\n(edit the component file to change every instance; edit the instance line to change just this one)` : ""}\nelement: data-cd-id="${c.cdId}" (line:col of its start tag in ${c.file})\nselector: ${c.selector}\nsource:\n${c.snippet}\n\nrequest: ${c.text}\n`;
 
@@ -134,11 +147,12 @@ const batchText = (batch: Comment[], again = false) =>
 
 // ---------- commands ----------
 switch (cmd) {
+  case "daemon":
   case "serve": {
     const port = flag("--port");
-    const root = resolve(rest[0] ?? ".");
-    const s = serve(root, port ? +port : 0);
-    console.log(`cdesign viewer: http://localhost:${s.port}  (${root})`);
+    const { server, addProject } = await serveDaemon(port ? +port : DEFAULT_PORT);
+    if (cmd === "serve" && rest[0]) addProject(resolve(rest[0]));
+    console.log(`cdesign viewer: http://localhost:${server.port}`);
     break;
   }
   case "open": {
@@ -146,17 +160,15 @@ switch (cmd) {
     const quiet = rest.includes("--no-browser");
     const dirArg = rest.find((a) => !a.startsWith("--"));
     const root = dirArg ? resolve(dirArg) : findRoot();
-    if (!existsSync(join(root, "design", "design-system.md"))) {
-      Bun.spawnSync([process.execPath, join(import.meta.dir, "cli.ts"), "init", root], { stdio: ["ignore", "ignore", "inherit"] });
-      console.log("(design/ did not exist: scaffolded it. Create the design system next.)");
-    }
-    const s = await ensureServer(root, port);
-    const url = `http://localhost:${s.port}`;
-    if (!quiet) {
-      const opener = process.platform === "win32" ? ["cmd", "/c", "start", "", url] : process.platform === "darwin" ? ["open", url] : ["xdg-open", url];
+    const scaffolded = !existsSync(join(root, "design", "design-system.md"));
+    const reg = await register(root, port); // scaffolds design/ when missing
+    if (scaffolded) console.log("(design/ did not exist: scaffolded it. Create the design system next.)");
+    try { rmSync(join(dataDir(root), "server.json")); } catch { /* legacy per-project server file */ }
+    if (!quiet && !reg.tabs) {
+      const opener = process.platform === "win32" ? ["cmd", "/c", "start", "", reg.url] : process.platform === "darwin" ? ["open", reg.url] : ["xdg-open", reg.url];
       try { Bun.spawn(opener, { stdio: ["ignore", "ignore", "ignore"] }).unref(); } catch { /* no browser opener available */ }
     }
-    console.log(`cdesign viewer running: ${url}\nproject: ${root}\n`);
+    console.log(`cdesign viewer running: ${reg.url}\nproject: ${root}\n`);
     printSkills();
     printContext(root);
     console.log(`=== LOOP ===
@@ -164,16 +176,27 @@ Write/edit prototypes as .html files in ${root} (the viewer live-reloads).
 The user comments on elements in the viewer and presses Send, which delivers all comments as one batch.
 To receive it, run \`cdesign wait\` as a BACKGROUND command (Claude Code: Bash with run_in_background: true; do not block on it).
 It exits when the batch arrives and you are notified with the comments. Apply them all, run \`cdesign resolve <id...>\`, then start \`cdesign wait\` in the background again.
-If you cannot run background commands, run \`cdesign review\` when the user tells you they sent comments.`);
+If you cannot run background commands, run \`cdesign review\` when the user tells you they sent comments.
+One viewer process serves all projects and stops by itself when no viewer tab or listening agent is left.`);
     break;
   }
   case "close": {
+    const s = await liveDaemon();
+    if (rest.includes("--all")) {
+      if (!s) { console.log("cdesign viewer is not running"); break; }
+      await fetch(`http://127.0.0.1:${s.port}/__cd/shutdown`, { method: "POST" }).catch(() => {});
+      console.log("cdesign viewer stopped");
+      break;
+    }
     const root = resolve(rest[0] ?? ".");
-    const s = readServer(root);
+    try { // a viewer from before the single-process daemon
+      const old = JSON.parse(readFileSync(join(dataDir(root), "server.json"), "utf8"));
+      if (alive(old.pid)) process.kill(old.pid);
+      rmSync(join(dataDir(root), "server.json"));
+    } catch { /* none */ }
     if (!s) { console.log("cdesign viewer is not running"); break; }
-    try { process.kill(s.pid); } catch { /* already gone */ }
-    try { rmSync(join(dataDir(root), "server.json")); } catch { /* ignore */ }
-    console.log(`cdesign viewer stopped (port ${s.port})`);
+    const r = (await (await fetch(`http://127.0.0.1:${s.port}/__cd/projects/${projectId(root)}/remove`, { method: "POST" })).json()) as { remaining: number };
+    console.log(`project closed${r.remaining ? ` (${r.remaining} other project(s) still open)` : "; no projects left, viewer stopped"}`);
     break;
   }
   case "page": {
@@ -371,8 +394,8 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
     break;
   default:
     console.log(`cdesign <command>
-  open [dir] [--port n] [--no-browser]  start viewer, print skills + project context
-  close [dir]                           stop the viewer started by open
+  open [dir] [--port n] [--no-browser]  open the project in the viewer (one shared process), print skills + context
+  close [dir] [--all]                   close the project in the viewer; --all stops the viewer for every project
   page                                  what the user has open in the viewer (page + selected element)
   review                                print the comments the user sent from the viewer
   wait [--timeout s]                    run in the background: exits with the batch when the user presses Send
@@ -387,6 +410,6 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
   update                                reinstall the latest version from GitHub
   skills                                print the cdesign usage skill
   context [dir]                         print tokens/components/pages found in project
-  serve [dir]                           run the viewer in the foreground`);
+  serve [dir] [--port n]                run the viewer in the foreground (it normally starts by itself)`);
 }
 void commentsPath;
