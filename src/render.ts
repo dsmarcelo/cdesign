@@ -18,18 +18,24 @@ function walk(n: N, fn: (n: N) => void) {
 
 const COMPONENT_DIRS = new Set(["components", "features"]);
 export const isPreview = (name: string) => name.endsWith(".preview.html");
-export const previewOf = (rel: string) => rel.replace(/\.html$/, ".preview.html");
+/** `x/button.html` -> `x/previews/button.preview.html` */
+export const previewOf = (rel: string) => rel.replace(/(^|\/)([^/]+)\.html$/, "$1previews/$2.preview.html");
+/** `x/previews/button.preview.html` -> `x/button.html` */
+export const sourceOfPreview = (rel: string) => rel.replace(/(^|\/)previews\/([^/]+)\.preview\.html$/, "$1$2.html");
 
-/** component name -> project-relative path, for every .html under a `components/` or `features/` folder (previews excluded) */
-export function componentIndex(root: string): Map<string, string> {
+/** component name -> project-relative path, for every .html under a `components/` or `features/` folder (previews excluded). Duplicate names are pushed to `dups`. */
+export function componentIndex(root: string, dups: string[] = []): Map<string, string> {
   const out = new Map<string, string>();
   const scan = (dir: string, inside: boolean) => {
     for (const name of readdirSync(dir)) {
-      if (SKIP.has(name)) continue;
+      if (SKIP.has(name) || name === "previews" || (name === "prototype" && dir === join(root, "design"))) continue;
       const p = join(dir, name);
       if (statSync(p).isDirectory()) scan(p, inside || COMPONENT_DIRS.has(name));
-      else if (inside && name.endsWith(".html") && !isPreview(name) && !name.startsWith("_"))
-        out.set(name.slice(0, -5), p.slice(root.length + 1).split(sep).join("/"));
+      else if (inside && name.endsWith(".html") && !isPreview(name) && !name.startsWith("_")) {
+        const n = name.slice(0, -5);
+        if (out.has(n)) dups.push(n);
+        out.set(n, p.slice(root.length + 1).split(sep).join("/"));
+      }
     }
   };
   scan(root, false);
@@ -122,7 +128,7 @@ function expand(parent: N, root: string, idx: Map<string, string>, stack: string
 }
 
 const headPartial = (root: string) => {
-  for (const p of ["design/_head.html", "design/prototypes/_head.html"]) {
+  for (const p of ["design/_head.html", "design/prototype/_head.html", "design/prototypes/_head.html"]) {
     const f = join(root, p);
     if (existsSync(f)) return readFileSync(f, "utf8");
   }

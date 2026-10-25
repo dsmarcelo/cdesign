@@ -77,13 +77,18 @@ design/
   _head.html              injected into every page's <head> (tokens, fonts, Tailwind)
   pages/                  real app screens, one per .html file
   components/
-    ui/                   primitives: button.html, button.preview.html, input.html, ...
+    ui/                   primitives: button.html, input.html, ...
+      previews/           button.preview.html, input.preview.html, ...
     shared/               cross-feature: data-table.html, search-bar.html, ...
     layout/               sidebar.html, header.html, page-shell.html, ...
   features/
     contracts/            feature-specific: contract-table.html, contract-form.html, ...
+      previews/           contract-table.preview.html, ...
     customers/            customer-card.html, customer-filters.html, ...
+  prototype/              work in progress; moved to components/ or pages/ once done
 ```
+
+Every folder keeps its previews in its own `previews/` subfolder. Prototypes start in `prototype/`; when one is done, the agent asks whether to move it to `components/`, `features/` or `pages/`. Moved files stay editable.
 
 Keep `design-system.md` in sync with every token, style or component change. `cdesign check` flags what is missing.
 
@@ -121,7 +126,7 @@ The viewer header has a Light/Dark button, and a button at each end hides or sho
 
 ## Components
 
-Components are plain HTML fragments under `components/` or `features/`, resolved by filename (unique across folders) and used as `<c-name>` tags. Each has a `<name>.preview.html` next to it showing all variants, sizes and states; `cdesign check` warns when it is missing.
+Components are plain HTML fragments under `components/` or `features/`, resolved by filename (unique across folders) and used as `<c-name>` tags. Each has a `previews/<name>.preview.html` in a `previews/` folder beside it showing all variants, sizes and states; `cdesign check` warns when it is missing (`cdesign check --fix` moves old side-by-side previews into `previews/`).
 
 ```html
 <!-- components/card.html -->

@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { serve, listHtml } from "./server";
-import { componentIndex, previewOf } from "./render";
+import { componentIndex, previewOf, sourceOfPreview } from "./render";
 import * as tk from "./tokens";
 import { beat, dataDir, readComments, update, commentsPath, type Comment } from "./store";
 
@@ -46,7 +46,7 @@ function printContext(root: string) {
     if (vars.length) tokens.push(`  ${f}: ${vars.length} custom properties (${vars.slice(0, 8).join(", ")}${vars.length > 8 ? ", …" : ""})`);
   }
   const tw = files.filter((f) => /tailwind\.config\.|@theme/.test(f));
-  const comps = files.filter((f) => /(^|\/)components?\//i.test(f) && /\.(tsx|jsx|astro|vue|svelte|html)$/.test(f));
+  const comps = files.filter((f) => /(^|\/)(components?|features)\//i.test(f) && !/(^|\/)previews\//.test(f) && /\.(tsx|jsx|astro|vue|svelte|html)$/.test(f));
   const pages = files.filter((f) => /(^|\/)(pages|routes|app)\//.test(f) && /\.(tsx|jsx|astro|vue|svelte|html|mdx?)$/.test(f));
   const show = (t: string, l: string[], n = 25) => console.log(`${t} (${l.length})\n${l.slice(0, n).map((x) => (x.startsWith("  ") ? x : "  " + x)).join("\n") || "  none found"}${l.length > n ? `\n  … +${l.length - n}` : ""}\n`);
   const ds = join(root, "design", "design-system.md");
@@ -60,6 +60,7 @@ function printContext(root: string) {
   show("Tailwind config", tw);
   show("Components", comps);
   show("Pages / routes", pages);
+  show("Prototypes in progress (design/prototype/)", files.filter((f) => f.startsWith("design/prototype/") && f.endsWith(".html") && !f.includes("/_")));
   show("Existing prototypes (.html)", listHtml(root));
 }
 
@@ -252,9 +253,12 @@ Source of truth: \`design/tokens.json\` (query it with \`cdesign tokens search|s
 ## Typography and layout rules
 
 ## Components
-Files in \`design/components/<ui|shared|layout>/\` and \`design/features/<feature>/\`, each with a \`<name>.preview.html\` next to it. Used as \`<c-name prop="x">children</c-name>\`.
+Files in \`design/components/<ui|shared|layout>/\` and \`design/features/<feature>/\`, each with a \`previews/<name>.preview.html\` in a \`previews/\` folder beside it. Used as \`<c-name prop="x">children</c-name>\`.
 | Component | Props | Slots | Notes |
 |---|---|---|---|
+
+## Prototypes
+Work in progress lives in \`design/prototype/\`. When one is done, ask the user whether to move it to \`components/\`, \`features/\` or \`pages/\`.
 
 ## Patterns and rules
 `);
@@ -266,12 +270,21 @@ Files in \`design/components/<ui|shared|layout>/\` and \`design/features/<featur
 <link rel="stylesheet" href="/design/tokens.css">
 `);
     mkdirSync(join(root, "design/pages"), { recursive: true });
-    for (const d of ["components/ui", "components/shared", "components/layout", "features"]) mkdirSync(join(root, "design", d), { recursive: true });
+    for (const d of ["components/ui", "components/shared", "components/layout", "features", "prototype"]) mkdirSync(join(root, "design", d), { recursive: true });
     break;
   }
   case "check": {
-    const root = resolve(rest[0] ?? ".");
+    const fix = rest.includes("--fix");
+    const root = resolve(rest.filter((a) => a !== "--fix")[0] ?? ".");
     const dir = join(root, "design");
+    if (fix && existsSync(dir))
+      for (const f of walk(dir, root).filter((f) => f.endsWith(".preview.html") && !/(^|\/)previews\//.test(f))) {
+        const to = previewOf(f.replace(/\.preview\.html$/, ".html"));
+        if (existsSync(join(root, to))) continue;
+        mkdirSync(dirname(join(root, to)), { recursive: true });
+        renameSync(join(root, f), join(root, to));
+        console.log(`moved   ${f} -> ${to}`);
+      }
     const files = existsSync(dir) ? walk(dir, root).filter((f) => /\.(html|css)$/.test(f)) : [];
     const read = (f: string) => readFileSync(join(root, f), "utf8");
     const mdPath = join(dir, "design-system.md");
@@ -291,7 +304,14 @@ Files in \`design/components/<ui|shared|layout>/\` and \`design/features/<featur
       for (const f of files.filter((f) => f.endsWith(".html"))) warnings.push(...tk.hardcoded(f, read(f)));
     }
     for (const v of defined) if (!hasTokens && md && !md.includes(v)) warnings.push(`${v} is defined but not documented in design-system.md`);
-    const idx = componentIndex(root);
+    const dups: string[] = [];
+    const idx = componentIndex(root, dups);
+    for (const n of new Set(dups)) warnings.push(`component name "${n}" is used by more than one file`);
+    for (const f of files) {
+      if (!f.endsWith(".preview.html")) continue;
+      if (!/(^|\/)previews\//.test(f)) warnings.push(`${f} must live in a previews/ folder (run \`cdesign check --fix\`)`);
+      else if (!existsSync(join(root, sourceOfPreview(f)))) warnings.push(`${f} has no ${sourceOfPreview(f)}`);
+    }
     for (const f of files.filter((f) => f.endsWith(".html")))
       for (const m of read(f).matchAll(/<c-([\w-]+)/g)) if (!idx.has(m[1])) problems.push(`<c-${m[1]}> used in ${f} has no component file`);
     for (const [n, rel] of idx) if (!existsSync(join(root, previewOf(rel)))) warnings.push(`component "${n}" has no ${previewOf(rel)}`);
@@ -358,7 +378,7 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
   wait [--timeout s]                    run in the background: exits with the batch when the user presses Send
   resolve <id...>                       mark comments done
   comments [--all]                      list pending comments
-  init [dir]                            scaffold design/ (design-system.md, tokens, _head, pages, components)
+  init [dir]                            scaffold design/ (design-system.md, tokens, _head, pages, components, features, prototype)
   check                                 verify tokens/components are defined and documented
   tokens <sub>                          query/change design/tokens.json, export css or tailwind (run: cdesign tokens)
   mcp                                   MCP server (stdio): tells agents how to use cdesign
