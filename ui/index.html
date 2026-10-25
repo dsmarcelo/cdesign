@@ -14,6 +14,7 @@
   aside{overflow:auto;padding:8px;background:var(--panel)}
   aside.l{grid-area:2/1} main{grid-area:2/2} aside.r{grid-area:2/3}
   body.hl{--lw:0px} body.hr{--rw:0px} body.hl aside.l,body.hr aside.r{display:none}
+  .grp{display:inline-flex;gap:4px}
   header button.ic{padding:5px 7px;line-height:0} header button.ic svg{width:16px;height:16px}
   aside.l{border-right:1px solid var(--line)} aside.r{border-left:1px solid var(--line)}
   details{margin:0}
@@ -46,7 +47,7 @@
   <b>cdesign</b>
   <select id="proj" title="Switch project"></select>
   <span id="agent" title="Is an agent running `cdesign wait`?"></span>
-  <button id="w" title="Preview width">Full</button>
+  <span id="w" class="grp"><button class="ic on" data-w="100%" title="Full width"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3" width="12.5" height="8" rx="1.5"/><path d="M5.5 13.5h5"/></svg></button><button class="ic" data-w="768px" title="Tablet (768px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="1.75" width="10" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="390px" title="Mobile (390px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button></span>
   <button id="theme" title="Toggle light/dark preview">Light</button>
   <button id="sel" class="ic" title="Select element for the agent (S)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M3.5 2.5l9 4.2-3.9 1.3-1.3 3.9z"/><path d="M8.6 8l3 3.2"/></svg></button>
   <button id="mode">Comment (C)</button>
@@ -65,8 +66,6 @@ const tabId = Math.random().toString(36).slice(2, 10);
 // tell the server which page this tab shows; the agent reads it through `cdesign page`
 const report = () => fetch("/__cd/page", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tabId, file: cur }), keepalive: true }).catch(() => {});
 function setCur(p) { cur = p; if (location.hash.slice(1) !== p) location.hash = p; files(); load(); report(); }
-const widths = [["Full", "100%"], ["Tablet", "768px"], ["Mobile", "390px"]];
-let wi = 0;
 
 // folders start closed; the ones the user opens stay open across redraws and reloads of this tab (sessionStorage: per tab, gone when it closes)
 const opened = new Set((() => { try { return JSON.parse(sessionStorage.getItem("cd-opened") || "[]"); } catch { return []; } })());
@@ -194,7 +193,7 @@ function setMode(m) {
 }
 $("#mode").onclick = () => setMode("comment");
 $("#sel").onclick = () => setMode("select");
-$("#w").onclick = () => { wi = (wi + 1) % widths.length; $("#w").textContent = widths[wi][0]; $("#fr").style.width = widths[wi][1]; };
+document.querySelectorAll("#w button").forEach((b) => (b.onclick = () => { document.querySelectorAll("#w button").forEach((x) => x.classList.toggle("on", x === b)); $("#fr").style.width = b.dataset.w; }));
 addEventListener("keydown", (e) => {
   if (/input|textarea/i.test(e.target.tagName)) return;
   if (e.key === "c") setMode("comment");
