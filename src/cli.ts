@@ -102,6 +102,14 @@ async function register(root: string, port?: string): Promise<Reg & { port: numb
   return { ...((await r.json()) as Reg), port: s.port };
 }
 
+/** Expose the project through a cloudflared quick tunnel; prints the private link. */
+async function tunnel(reg: { id: string; port: number }, stop = false) {
+  const r = await fetch(`http://127.0.0.1:${reg.port}/__cd/projects/${reg.id}/tunnel${stop ? "/stop" : ""}`, { method: "POST" });
+  const b = (await r.json()) as { url?: string; error?: string };
+  if (!r.ok) throw new Error(b.error ?? "tunnel failed");
+  console.log(stop ? "tunnel stopped" : `tunnel (anyone with this link can view and comment; it stops with the viewer or \`cdesign tunnel stop\`):\n${b.url}\n`);
+}
+
 /** The project an agent is working in: nearest parent with a design/ folder, else cwd. */
 function findRoot(from = process.cwd()) {
   for (let d = resolve(from); ; d = dirname(d)) {
@@ -169,6 +177,7 @@ switch (cmd) {
       try { Bun.spawn(opener, { stdio: ["ignore", "ignore", "ignore"] }).unref(); } catch { /* no browser opener available */ }
     }
     console.log(`cdesign viewer running: ${reg.url}\nproject: ${root}\n`);
+    if (rest.includes("--tunnel")) await tunnel(reg).catch((e) => console.log(`tunnel not started: ${e.message}\n`));
     printSkills();
     printContext(root);
     console.log(`=== LOOP ===
@@ -178,6 +187,12 @@ To receive it, run \`cdesign wait\` as a BACKGROUND command (Claude Code: Bash w
 It exits when the batch arrives and you are notified with the comments. Apply them all, run \`cdesign resolve <id...>\`, then start \`cdesign wait\` in the background again.
 If you cannot run background commands, run \`cdesign review\` when the user tells you they sent comments.
 One viewer process serves all projects and stops by itself when no viewer tab or listening agent is left.`);
+    break;
+  }
+  case "tunnel": {
+    const stop = rest[0] === "stop";
+    const root = stop ? findRoot(rest[1]) : findRoot(rest[0]);
+    await tunnel(await register(root), stop).catch((e) => (console.error(e.message), process.exit(1)));
     break;
   }
   case "close": {
@@ -394,7 +409,8 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
     break;
   default:
     console.log(`cdesign <command>
-  open [dir] [--port n] [--no-browser]  open the project in the viewer (one shared process), print skills + context
+  open [dir] [--port n] [--no-browser] [--tunnel]  open the project in the viewer (one shared process), print skills + context
+  tunnel [dir] | tunnel stop [dir]      share the project via a cloudflared quick tunnel (private link, needs cloudflared)
   close [dir] [--all]                   close the project in the viewer; --all stops the viewer for every project
   page                                  what the user has open in the viewer (page + selected element)
   review                                print the comments the user sent from the viewer

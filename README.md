@@ -40,7 +40,8 @@ Tell your agent to run `cdesign open`. Then in the viewer, press `C`, click elem
 
 | Command | What it does |
 |---|---|
-| `open [dir] [--port n] [--no-browser]` | Open the project in the viewer (starts the shared viewer process if needed); print skills and project context |
+| `open [dir] [--port n] [--no-browser] [--tunnel]` | Open the project in the viewer (starts the shared viewer process if needed); print skills and project context. `--tunnel` also shares it over the internet |
+| `tunnel [dir]` / `tunnel stop [dir]` | Share one project through a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) quick tunnel. Prints a private link (secret token); only that project is reachable |
 | `close [dir] [--all]` | Close the project in the viewer; `--all` stops the viewer for every project |
 | `page` | Print the page open in the viewer (most recently active tab) and the element selected with the pointer button (`S`) |
 | `review` | Print the batch the user sent from the viewer (run when asked to apply comments) |

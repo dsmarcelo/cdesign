@@ -81,6 +81,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     return p;
   }
   function removeProject(p: Project) {
+    stopTunnel(p.id);
     for (const w of p.watchers) w.close();
     for (const c of p.clients) try { c.close(); } catch { /* already closed */ }
     projects.delete(p.id);
@@ -92,7 +93,65 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     projects: [...projects.values()].map((p) => ({ id: p.id, root: p.root, name: basename(p.root), url: `http://${p.id}.localhost:${server.port}/`, tabs: p.clients.size })),
   });
 
+  // ----- tunnel: a second listener for ONE project behind a secret token, exposed by `cloudflared` -----
+  type Tunnel = { token: string; url: string; proc: ReturnType<typeof Bun.spawn>; srv: ReturnType<typeof Bun.serve> };
+  const tunnels = new Map<string, Tunnel>();
+  const stopTunnel = (id: string) => {
+    const t = tunnels.get(id);
+    if (!t) return;
+    tunnels.delete(id);
+    try { t.proc.kill(); } catch { /* already gone */ }
+    t.srv.stop(true);
+  };
+  async function startTunnel(p: Project): Promise<Tunnel> {
+    const old = tunnels.get(p.id);
+    if (old) return old;
+    const token = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
+    const srv = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.searchParams.get("t") === token) {
+          url.searchParams.delete("t");
+          return new Response(null, { status: 302, headers: { location: url.pathname + url.search, "set-cookie": `cd_t=${token}; Path=/; HttpOnly; Secure; SameSite=Lax` } });
+        }
+        if (!(req.headers.get("cookie") ?? "").split(/;\s*/).includes(`cd_t=${token}`)) return new Response("unauthorized: open the full link printed by cdesign", { status: 401 });
+        return fetchHandler(req, p);
+      },
+    });
+    let proc: ReturnType<typeof Bun.spawn>;
+    try {
+      proc = Bun.spawn(["cloudflared", "tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${srv.port}`], { stdout: "ignore", stderr: "pipe" });
+    } catch {
+      srv.stop(true);
+      throw new Error("cloudflared not found. Install it: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/");
+    }
+    const url = await new Promise<string>((ok, fail) => {
+      const timer = setTimeout(() => fail(new Error("cloudflared gave no tunnel URL within 30s")), 30000);
+      proc.exited.then(() => fail(new Error("cloudflared exited before the tunnel was ready")));
+      (async () => {
+        let seen = "";
+        for await (const chunk of proc.stderr as ReadableStream<Uint8Array>) { // keep draining so the pipe never blocks
+          seen = (seen + new TextDecoder().decode(chunk)).slice(-2000);
+          const m = seen.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
+          if (m) { clearTimeout(timer); ok(m[0]); seen = ""; }
+        }
+      })().catch(() => {});
+    }).catch((e) => {
+      try { proc.kill(); } catch { /* ignore */ }
+      srv.stop(true);
+      throw e;
+    });
+    const t = { token, url, proc, srv };
+    tunnels.set(p.id, t);
+    proc.exited.then(() => tunnels.get(p.id) === t && stopTunnel(p.id));
+    return t;
+  }
+
   const shutdown = () => {
+    for (const id of [...tunnels.keys()]) stopTunnel(id);
     try { rmSync(daemonPath()); } catch { /* ignore */ }
     process.exit(0);
   };
@@ -107,13 +166,15 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     else if (Date.now() - lastActive > idleMs) shutdown();
   }, Math.min(5000, Math.max(200, idleMs / 4)));
 
-  const fetchHandler = async (req: Request): Promise<Response> => {
+  /** `via` is set for requests that came through a tunnel: pinned to that project, no daemon-level routes. */
+  const fetchHandler = async (req: Request, via?: Project): Promise<Response> => {
     const url = new URL(req.url);
     const p = decodeURIComponent(url.pathname);
     const hostHeader = req.headers.get("host") ?? "";
     const host = hostHeader.replace(/:\d+$/, "").toLowerCase();
-    let project: Project | null = null;
-    if (host.endsWith(".localhost")) {
+    let project: Project | null = via ?? null;
+    if (via) { /* host was checked by the tunnel */ }
+    else if (host.endsWith(".localhost")) {
       project = projects.get(host.slice(0, -".localhost".length)) ?? null;
       if (!project) return new Response("unknown cdesign project", { status: 404 });
     } else if (!["localhost", "127.0.0.1", "[::1]"].includes(host)) return new Response("forbidden", { status: 403 }); // DNS rebinding
@@ -129,7 +190,8 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     if (p === "/") return new Response(Bun.file(join(UI, "index.html")));
 
     // ----- daemon-level API -----
-    if (p === "/__cd/projects" && req.method === "GET") return json(list(project));
+    if (p === "/__cd/projects" && req.method === "GET") return json(via ? { current: via.id, projects: [{ id: via.id, name: basename(via.root), tabs: via.clients.size }] } : list(project));
+    if (via && (p.startsWith("/__cd/projects") || p === "/__cd/shutdown")) return new Response("forbidden", { status: 403 });
     if (p === "/__cd/projects" && req.method === "POST") {
       const b = (await req.json().catch(() => ({}))) as { root?: string };
       const root = b.root ? resolve(b.root) : "";
@@ -146,6 +208,19 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       if (a) removeProject(a);
       if (!projects.size) setTimeout(shutdown, 200); // last project closed: nothing left to serve
       return json({ ok: true, remaining: projects.size });
+    }
+    const tn = p.match(/^\/__cd\/projects\/([^/]+)\/tunnel(\/stop)?$/);
+    if (tn && req.method === "POST") {
+      const a = projects.get(tn[1]);
+      if (!a) return json({ error: "unknown project" }, 404);
+      if (tn[2]) return (stopTunnel(a.id), json({ ok: true }));
+      try {
+        const t = await startTunnel(a);
+        lastActive = Date.now();
+        return json({ url: `${t.url}/?t=${t.token}` });
+      } catch (e) {
+        return json({ error: (e as Error).message }, 500);
+      }
     }
     if (p === "/__cd/shutdown" && req.method === "POST") {
       setTimeout(shutdown, 100);
@@ -271,7 +346,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     return new Response(f, { headers: { "cache-control": "no-store" } });
   };
 
-  const bind = (port: number) => Bun.serve({ port, hostname: "127.0.0.1", idleTimeout: 0, fetch: fetchHandler });
+  const bind = (port: number) => Bun.serve({ port, hostname: "127.0.0.1", idleTimeout: 0, fetch: (req) => fetchHandler(req) });
   try {
     server = bind(preferred);
   } catch (e) {

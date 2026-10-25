@@ -1,11 +1,15 @@
 <!doctype html>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#111113">
 <title>cdesign</title>
+<script>try{document.documentElement.dataset.theme=localStorage.getItem("cd-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light")}catch{}</script>
 <style>
+  html{background:#111113;overscroll-behavior:none}
   :root{color-scheme:dark;--bg:#111113;--panel:#18181b;--line:#27272a;--mut:#a1a1aa;--acc:#2563eb}
   *{box-sizing:border-box}
-  body{margin:0;height:100vh;display:grid;grid-template-columns:var(--lw,230px) 1fr var(--rw,300px);grid-template-rows:44px 1fr;background:var(--bg);color:#fafafa;font:13px system-ui}
+  body{margin:0;height:100vh;height:100dvh;display:grid;grid-template-columns:var(--lw,230px) 1fr var(--rw,300px);grid-template-rows:44px 1fr;background:var(--bg);color:#fafafa;font:13px system-ui}
   header{grid-column:1/4;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--line)}
   header b{margin-right:auto}
   #agent{font-size:12px;color:var(--mut);margin-right:8px} #agent::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:#52525b;margin-right:6px} #agent.on{color:#fafafa} #agent.on::before{background:#22c55e}
@@ -28,6 +32,7 @@
   .f:hover,.f.sel{background:var(--line);color:#fff}
   main{display:flex;justify-content:center;overflow:auto;padding:12px}
   iframe{border:1px solid var(--line);background:#fff;border-radius:8px;height:100%;width:100%}
+  html[data-theme=dark] iframe{background:#000}
   .c{border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px}
   .c small{display:block;color:var(--mut);font-size:11px;margin-bottom:4px;word-break:break-all}
   .c.done{opacity:.45}
@@ -41,10 +46,30 @@
   #pick h2{margin:0 0 8px;font-size:16px} #pick .f{border:1px solid var(--line);color:#fafafa} #pick small{color:var(--mut)}
   #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#fafafa;color:#111;padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:80vw}
   #toast.on{opacity:1}
+  #bar{display:contents} #more{display:none}
+  @media (max-width:700px){
+    body{grid-template-columns:1fr;grid-template-rows:44px 1fr}
+    header{grid-column:1;position:relative}
+    header b{margin-right:auto}
+    #more{display:inline-flex} #more.on{background:var(--acc);border-color:var(--acc)}
+    #bar{display:none;position:absolute;top:100%;left:0;right:0;z-index:20;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+    body.bar #bar{display:flex}
+    #bar #proj{flex:1 1 140px;max-width:none} #bar #agent{flex:1 1 100%;order:-1;margin:0}
+    aside.l,aside.r{position:fixed;top:44px;bottom:0;z-index:10;width:min(300px,85vw)}
+    aside.l{left:0} aside.r{right:0}
+    main{grid-area:2/1;padding:0}
+    iframe{border:0;border-radius:0}
+    aside.l,aside.r{padding-bottom:calc(8px + env(safe-area-inset-bottom))}
+    body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+    aside.l,aside.r{top:calc(44px + env(safe-area-inset-top));bottom:env(safe-area-inset-bottom)}
+    aside.l{left:env(safe-area-inset-left)} aside.r{right:env(safe-area-inset-right)}
+  }
 </style>
 <header>
   <button id="tl" class="ic on" title="Hide/show files"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M6 3v10"/></svg></button>
   <b>cdesign</b>
+  <button id="more" class="ic" title="Show/hide toolbar"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg></button>
+  <div id="bar">
   <select id="proj" title="Switch project"></select>
   <span id="agent" title="Is an agent running `cdesign wait`?"></span>
   <span id="w" class="grp"><button class="ic on" data-w="100%" title="Full width"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3" width="12.5" height="8" rx="1.5"/><path d="M5.5 13.5h5"/></svg></button><button class="ic" data-w="768px" title="Tablet (768px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="1.75" width="10" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="390px" title="Mobile (390px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button></span>
@@ -53,6 +78,7 @@
   <button id="mode">Comment (C)</button>
   <button id="send" class="go" disabled>Send to agent</button>
   <button id="tr" class="ic on" title="Hide/show comments"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M10 3v10"/></svg></button>
+  </div>
 </header>
 <aside class="l" id="files"></aside>
 <main><iframe id="fr"></iframe></main>
@@ -106,7 +132,7 @@ function draw(n, el, prefix) {
     b.className = "f" + (f.path === cur ? " sel" : "");
     b.textContent = f.name;
     b.title = f.path;
-    b.onclick = () => setCur(f.path);
+    b.onclick = () => { setCur(f.path); if (mob.matches) { mstate["cd-hide-l"] = true; panels(); } };
     el.appendChild(b);
   }
 }
@@ -162,20 +188,29 @@ $("#send").onclick = async () => {
   toast(agentOn ? `${queued} comment(s) sent to the listening agent.` : `${queued} comment(s) queued, no agent is listening. ` + (copied ? "Prompt copied: paste it in your agent." : "Tell your agent: " + PROMPT));
 };
 
-const hidden = (k) => { try { return localStorage.getItem(k) === "1"; } catch { return false; } };
+// phones: panels are overlays, closed by default, kept in memory only; desktop keeps its choice in localStorage
+const mob = matchMedia("(max-width:700px)"), mstate = {};
+const hidden = (k) => { if (mob.matches) return mstate[k] !== false; try { return localStorage.getItem(k) === "1"; } catch { return false; } };
 function panel(btn, cls, key, toggleIt) {
-  if (toggleIt) { try { localStorage.setItem(key, hidden(key) ? "0" : "1"); } catch {} }
+  if (toggleIt) {
+    const h = hidden(key);
+    if (mob.matches) mstate[key] = !h; else { try { localStorage.setItem(key, h ? "0" : "1"); } catch {} }
+  }
   document.body.classList.toggle(cls, hidden(key));
   $(btn).classList.toggle("on", !hidden(key));
 }
-$("#tl").onclick = () => panel("#tl", "hl", "cd-hide-l", true);
-$("#tr").onclick = () => panel("#tr", "hr", "cd-hide-r", true);
-panel("#tl", "hl", "cd-hide-l"); panel("#tr", "hr", "cd-hide-r");
+const panels = () => { panel("#tl", "hl", "cd-hide-l"); panel("#tr", "hr", "cd-hide-r"); };
+$("#tl").onclick = () => { if (mob.matches) mstate["cd-hide-r"] = true; panel("#tl", "hl", "cd-hide-l", true); panels(); };
+$("#tr").onclick = () => { if (mob.matches) mstate["cd-hide-l"] = true; panel("#tr", "hr", "cd-hide-r", true); panels(); };
+$("#more").onclick = () => $("#more").classList.toggle("on", document.body.classList.toggle("bar"));
+mob.addEventListener("change", panels);
+panels();
 
 const theme = () => { try { return localStorage.getItem("cd-theme"); } catch { return null; } };
 const current = () => theme() || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 function applyTheme() {
   const t = current();
+  document.documentElement.dataset.theme = t;
   $("#theme").textContent = t === "dark" ? "Dark" : "Light";
   $("#theme").classList.toggle("on", t === "dark");
   try { $("#fr").contentDocument.documentElement.setAttribute("data-theme", t); } catch {}
