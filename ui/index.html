@@ -193,7 +193,10 @@ function setMode(m) {
 }
 $("#mode").onclick = () => setMode("comment");
 $("#sel").onclick = () => setMode("select");
-document.querySelectorAll("#w button").forEach((b) => (b.onclick = () => { document.querySelectorAll("#w button").forEach((x) => x.classList.toggle("on", x === b)); $("#fr").style.width = b.dataset.w; }));
+// preview width persists across reloads of this tab (sessionStorage)
+const setWidth = (w) => { document.querySelectorAll("#w button").forEach((x) => x.classList.toggle("on", x.dataset.w === w)); $("#fr").style.width = w; try { sessionStorage.setItem("cd-width", w); } catch { /* storage unavailable */ } };
+document.querySelectorAll("#w button").forEach((b) => (b.onclick = () => setWidth(b.dataset.w)));
+try { const w = sessionStorage.getItem("cd-width"); if (w && document.querySelector(`#w button[data-w="${w}"]`)) setWidth(w); } catch { /* storage unavailable */ }
 addEventListener("keydown", (e) => {
   if (/input|textarea/i.test(e.target.tagName)) return;
   if (e.key === "c") setMode("comment");
