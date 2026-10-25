@@ -31,7 +31,18 @@
   .f{display:block;width:100%;text-align:left;border:0;background:none;padding:6px 8px;border-radius:6px;color:var(--mut)}
   .f:hover,.f.sel{background:var(--line);color:#fff}
   main{display:flex;justify-content:center;overflow:auto;padding:12px}
-  iframe{border:1px solid var(--line);background:#fff;border-radius:8px;height:100%;width:100%}
+  iframe{border:1px solid var(--line);background:#fff;border-radius:8px;height:100%;width:100%;display:block}
+  #stage{display:flex;gap:12px;justify-content:center;width:100%;height:100%;min-width:0}
+  .dev{position:relative;height:100%;width:100%;min-width:0} #d2{display:none}
+  body.split #d1{width:390px;flex:0 1 390px} body.split #d2{display:block;flex:1 1 0;width:auto}
+  body.resp #stage{justify-content:flex-start;align-items:flex-start} body.resp #d1{flex:none}
+  .rh{display:none;position:absolute;z-index:3;touch-action:none} body.resp .rh{display:block}
+  .rh::after{content:"";position:absolute;background:var(--mut);border-radius:2px;opacity:.5} .rh:hover::after,body.drag .rh::after{opacity:1;background:var(--acc)}
+  #rx{top:0;bottom:0;right:-11px;width:11px;cursor:ew-resize} #rx::after{left:4px;top:calc(50% - 16px);width:3px;height:32px}
+  #ry{left:0;right:0;bottom:-11px;height:11px;cursor:ns-resize} #ry::after{top:4px;left:calc(50% - 16px);height:3px;width:32px}
+  #rxy{right:-11px;bottom:-11px;width:14px;height:14px;cursor:nwse-resize} #rxy::after{right:3px;bottom:3px;width:7px;height:7px;border-radius:0 0 2px 0;background:none;border-right:3px solid var(--mut);border-bottom:3px solid var(--mut)}
+  #dim{display:none;position:absolute;right:8px;bottom:8px;z-index:3;background:#000c;color:#fff;font-size:11px;padding:2px 7px;border-radius:6px;pointer-events:none;font-variant-numeric:tabular-nums} body.resp #dim{display:block}
+  body.drag{user-select:none} body.drag iframe{pointer-events:none}
   html[data-theme=dark] iframe{background:#000}
   .c{border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px}
   .c small{display:block;color:var(--mut);font-size:11px;margin-bottom:4px;word-break:break-all}
@@ -72,7 +83,7 @@
   <div id="bar">
   <select id="proj" title="Switch project"></select>
   <span id="agent" title="Is an agent running `cdesign wait`?"></span>
-  <span id="w" class="grp"><button class="ic on" data-w="100%" title="Full width"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3" width="12.5" height="8" rx="1.5"/><path d="M5.5 13.5h5"/></svg></button><button class="ic" data-w="768px" title="Tablet (768px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="1.75" width="10" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="390px" title="Mobile (390px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button></span>
+  <span id="w" class="grp"><button class="ic on" data-w="100%" title="Full width"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3" width="12.5" height="8" rx="1.5"/><path d="M5.5 13.5h5"/></svg></button><button class="ic" data-w="768px" title="Tablet (768px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="1.75" width="10" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="390px" title="Mobile (390px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="resp" title="Responsive: drag the edges to resize width and height"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="2.75" width="9.5" height="9.5" rx="1.5"/><path d="M14.25 7.5v6.75H7.5M10.5 14.25l3.75-3.75"/></svg></button><button class="ic" data-w="split" title="Split: mobile on the left, full width on the right"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3.25" width="4" height="9.5" rx="1"/><rect x="7.75" y="3.25" width="6.5" height="9.5" rx="1"/></svg></button></span>
   <button id="theme" title="Toggle light/dark preview">Light</button>
   <button id="sel" class="ic" title="Select element for the agent (S)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M3.5 2.5l9 4.2-3.9 1.3-1.3 3.9z"/><path d="M8.6 8l3 3.2"/></svg></button>
   <button id="mode">Comment (C)</button>
@@ -81,7 +92,10 @@
   </div>
 </header>
 <aside class="l" id="files"></aside>
-<main><iframe id="fr"></iframe></main>
+<main><div id="stage">
+  <div class="dev" id="d1"><iframe id="fr"></iframe><i class="rh" id="rx"></i><i class="rh" id="ry"></i><i class="rh" id="rxy"></i><span id="dim"></span></div>
+  <div class="dev" id="d2"><iframe id="fr2"></iframe></div>
+</div></main>
 <aside class="r" id="cm"></aside>
 <div id="pick"></div>
 <div id="toast"></div>
@@ -146,8 +160,9 @@ async function files() {
   draw(tree(l), $("#files"), "");
   if (!l.length) $("#files").textContent = "No .html files";
 }
-const load = () => { if (cur) $("#fr").src = "/p/" + cur; };
-const send = (m) => $("#fr").contentWindow?.postMessage(m, "*");
+const frames = () => [$("#fr"), $("#fr2")];
+const load = () => { if (cur) { $("#fr").src = "/p/" + cur; if (view === "split") $("#fr2").src = "/p/" + cur; } };
+const send = (m) => frames().forEach((f) => f.contentWindow?.postMessage(m, "*"));
 const sync = () => { send({ cd: "mode", mode, tab: tabId }); send({ cd: "pins" }); };
 
 async function comments() {
@@ -213,7 +228,7 @@ function applyTheme() {
   document.documentElement.dataset.theme = t;
   $("#theme").textContent = t === "dark" ? "Dark" : "Light";
   $("#theme").classList.toggle("on", t === "dark");
-  try { $("#fr").contentDocument.documentElement.setAttribute("data-theme", t); } catch {}
+  for (const f of frames()) try { f.contentDocument.documentElement.setAttribute("data-theme", t); } catch {}
 }
 $("#theme").onclick = () => {
   try { localStorage.setItem("cd-theme", current() === "dark" ? "light" : "dark"); } catch {}
@@ -228,10 +243,41 @@ function setMode(m) {
 }
 $("#mode").onclick = () => setMode("comment");
 $("#sel").onclick = () => setMode("select");
-// preview width persists across reloads of this tab (sessionStorage)
-const setWidth = (w) => { document.querySelectorAll("#w button").forEach((x) => x.classList.toggle("on", x.dataset.w === w)); $("#fr").style.width = w; try { sessionStorage.setItem("cd-width", w); } catch { /* storage unavailable */ } };
+// preview size persists across reloads of this tab (sessionStorage): a preset width, "resp" (free width x height) or "split" (phone + full)
+let view = "100%", rs = { w: 800, h: 600 };
+const store = (k, v) => { try { sessionStorage.setItem(k, v); } catch { /* storage unavailable */ } };
+const dim = () => { $("#dim").textContent = `${Math.round(rs.w)} × ${Math.round(rs.h)}`; };
+const size = () => { const d = $("#d1"); d.style.width = view === "resp" ? rs.w + "px" : view === "split" ? "" : view; d.style.height = view === "resp" ? rs.h + "px" : ""; dim(); };
+const setWidth = (w) => {
+  if (w === "resp" && view !== "resp") { const r = $("#d1").getBoundingClientRect(); if (!rs.set) rs = { w: Math.round(r.width) || rs.w, h: Math.round(r.height) || rs.h }; }
+  view = w;
+  document.querySelectorAll("#w button").forEach((x) => x.classList.toggle("on", x.dataset.w === w));
+  document.body.classList.toggle("resp", w === "resp");
+  document.body.classList.toggle("split", w === "split");
+  size();
+  if (w === "split") { if (cur) $("#fr2").src = "/p/" + cur; } else if ($("#fr2").src && $("#fr2").src !== "about:blank") $("#fr2").src = "about:blank";
+  store("cd-width", w);
+};
 document.querySelectorAll("#w button").forEach((b) => (b.onclick = () => setWidth(b.dataset.w)));
+try { const r = (sessionStorage.getItem("cd-resp") || "").split("x").map(Number); if (r[0] >= 200 && r[1] >= 200) rs = { w: r[0], h: r[1], set: true }; } catch { /* storage unavailable */ }
 try { const w = sessionStorage.getItem("cd-width"); if (w && document.querySelector(`#w button[data-w="${w}"]`)) setWidth(w); } catch { /* storage unavailable */ }
+// drag the edges of the responsive frame (iframes ignore the pointer meanwhile so the drag is not swallowed)
+for (const [id, dx, dy] of [["rx", 1, 0], ["ry", 0, 1], ["rxy", 1, 1]]) {
+  const h = $("#" + id);
+  h.onpointerdown = (e) => {
+    e.preventDefault();
+    h.setPointerCapture(e.pointerId);
+    document.body.classList.add("drag");
+    const x0 = e.clientX, y0 = e.clientY, w0 = rs.w, h0 = rs.h;
+    h.onpointermove = (m) => {
+      if (dx) rs.w = Math.max(200, Math.min(4000, w0 + m.clientX - x0));
+      if (dy) rs.h = Math.max(200, Math.min(4000, h0 + m.clientY - y0));
+      rs.set = true;
+      size();
+    };
+    h.onpointerup = h.onpointercancel = () => { h.onpointermove = h.onpointerup = h.onpointercancel = null; document.body.classList.remove("drag"); store("cd-resp", `${Math.round(rs.w)}x${Math.round(rs.h)}`); };
+  };
+}
 addEventListener("keydown", (e) => {
   if (/input|textarea/i.test(e.target.tagName)) return;
   if (e.key === "c") setMode("comment");
@@ -242,7 +288,7 @@ addEventListener("hashchange", () => { const h = location.hash.slice(1); if (h &
 addEventListener("focus", report);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) report(); });
 addEventListener("message", (e) => { if (e.data?.cd === "ready") sync(); });
-$("#fr").addEventListener("load", () => { sync(); applyTheme(); });
+frames().forEach((f) => f.addEventListener("load", () => { sync(); applyTheme(); }));
 
 async function addFolder() {
   const root = prompt("Absolute path of the project folder");
@@ -277,7 +323,7 @@ function start() {
 const es = new EventSource("/__cd/events?tab=" + tabId);
 es.onopen = report; // also after a reconnect: the server forgets a tab when its stream closes
 es.onmessage = (e) => {
-  if (e.data === "reload") $("#fr").contentWindow.location.reload(), files();
+  if (e.data === "reload") $("#fr").contentWindow.location.reload(), view === "split" && $("#fr2").contentWindow.location.reload(), files();
   if (e.data === "comments") { comments(); send({ cd: "pins" }); agent(); }
   if (e.data === "agent") agent();
 };
