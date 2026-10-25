@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { serve, listHtml } from "./server";
 import { componentIndex, previewOf } from "./render";
 import * as tk from "./tokens";
@@ -72,8 +72,52 @@ const readServer = (root: string) => {
   } catch { return null; }
 };
 
+/** readServer plus a real request: a recycled pid or a hung process must not look like a viewer. Stale files are removed. */
+async function liveServer(root: string) {
+  const s = readServer(root);
+  if (!s) return null;
+  try {
+    if ((await fetch(`http://localhost:${s.port}/__cd/files`, { signal: AbortSignal.timeout(1000) })).ok) return s;
+  } catch { /* not answering */ }
+  try { rmSync(join(dataDir(root), "server.json")); } catch { /* ignore */ }
+  return null;
+}
+
+/** The project an agent is working in: nearest parent with a running viewer or a design/ folder, else cwd. */
+function findRoot(from = process.cwd()) {
+  for (let d = resolve(from); ; d = dirname(d)) {
+    if (readServer(d) || existsSync(join(d, "design", "design-system.md"))) return d;
+    if (dirname(d) === d) return resolve(from);
+  }
+}
+
+/** What the user has open in the viewer right now (last active tab), or null when no viewer is running. */
+async function pageText(root: string) {
+  const s = await liveServer(root);
+  if (!s) return null;
+  try {
+    const r = (await (await fetch(`http://localhost:${s.port}/__cd/page`)).json()) as {
+      file: string | null;
+      selection: { file: string; cdId: string; uses: string[]; selector: string; tag: string; text: string; snippet: string } | null;
+    };
+    if (!r.file) return `cdesign viewer is running (http://localhost:${s.port}) but no page is open in it yet.`;
+    let t = `Open in cdesign: ${r.file} (http://localhost:${s.port}/#${r.file})`;
+    const e = r.selection;
+    if (e) {
+      t += `
+Selected element (picked by the user with the pointer tool; "this"/"here" refers to it): <${e.tag}> data-cd-id="${e.cdId}" in ${e.file}${e.uses.length ? `
+  used in (component instance, innermost first): ${e.uses.join(" <- ")}` : ""}
+  selector: ${e.selector}${e.text ? `
+  text: ${e.text}` : ""}
+  source:
+${e.snippet}`;
+    }
+    return t;
+  } catch { return null; }
+}
+
 async function ensureServer(root: string, port?: string) {
-  let s = readServer(root);
+  let s = await liveServer(root);
   if (s) return s;
   Bun.spawn([process.execPath, join(import.meta.dir, "cli.ts"), "serve", root, ...(port ? ["--port", port] : [])], { stdio: ["ignore", "ignore", "ignore"], detached: true }).unref();
   for (let i = 0; i < 50 && !(s = readServer(root)); i++) await Bun.sleep(100);
@@ -99,7 +143,8 @@ switch (cmd) {
   case "open": {
     const port = flag("--port");
     const quiet = rest.includes("--no-browser");
-    const root = resolve(rest.find((a) => !a.startsWith("--")) ?? ".");
+    const dirArg = rest.find((a) => !a.startsWith("--"));
+    const root = dirArg ? resolve(dirArg) : findRoot();
     if (!existsSync(join(root, "design", "design-system.md"))) {
       Bun.spawnSync([process.execPath, join(import.meta.dir, "cli.ts"), "init", root], { stdio: ["ignore", "ignore", "inherit"] });
       console.log("(design/ did not exist: scaffolded it. Create the design system next.)");
@@ -130,8 +175,13 @@ If you cannot run background commands, run \`cdesign review\` when the user tell
     console.log(`cdesign viewer stopped (port ${s.port})`);
     break;
   }
+  case "page": {
+    const root = findRoot();
+    console.log((await pageText(root)) ?? "cdesign is not open for this project. Call `open` to start the viewer.");
+    break;
+  }
   case "review": {
-    const root = resolve(".");
+    const root = findRoot();
     const batch = readComments(root).filter((c) => c.status === "queued" || c.status === "sent");
     if (!batch.length) {
       console.log("No comments sent. The user sends a batch with the Send button in the viewer; ask them to do that, then run `cdesign review` again.");
@@ -140,6 +190,9 @@ If you cannot run background commands, run \`cdesign review\` when the user tell
     const ids = new Set(batch.map((c) => c.id));
     update(root, (l) => l.forEach((c) => ids.has(c.id) && (c.status = "sent")));
     console.log(batchText(batch));
+    const now = await pageText(root);
+    if (now) console.log(`
+${now}`);
     break;
   }
   case "wait": {
@@ -168,13 +221,13 @@ If you cannot run background commands, run \`cdesign review\` when the user tell
     break;
   }
   case "comments": {
-    const root = resolve(".");
+    const root = findRoot();
     const l = readComments(root).filter((c) => rest.includes("--all") || c.status !== "done");
     console.log(l.length ? l.map((c) => `[${c.status}]\n${fmt(c)}`).join("\n") : "no pending comments");
     break;
   }
   case "resolve": {
-    const root = resolve(".");
+    const root = findRoot();
     const ids = new Set(rest);
     update(root, (l) => l.forEach((c) => ids.has(c.id) && (c.status = "done")));
     console.log(`resolved: ${rest.join(", ")}`);
@@ -250,7 +303,7 @@ Files in \`design/components/<ui|shared|layout>/\` and \`design/features/<featur
     break;
   }
   case "tokens": {
-    const root = resolve(".");
+    const root = findRoot();
     const [sub, ...args] = rest;
     const opts: Record<string, string> = {};
     const pos: string[] = [];
@@ -300,6 +353,7 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
     console.log(`cdesign <command>
   open [dir] [--port n] [--no-browser]  start viewer, print skills + project context
   close [dir]                           stop the viewer started by open
+  page                                  what the user has open in the viewer (page + selected element)
   review                                print the comments the user sent from the viewer
   wait [--timeout s]                    run in the background: exits with the batch when the user presses Send
   resolve <id...>                       mark comments done

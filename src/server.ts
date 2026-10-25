@@ -18,18 +18,25 @@ export function listHtml(root: string, dir = root, out: string[] = []): string[]
 
 export function serve(root: string, port = 0) {
   const clients = new Set<ReadableStreamDefaultController>();
+  const tabOf = new Map<ReadableStreamDefaultController, string>();
   const enc = new TextEncoder();
+  const drop = (c: ReadableStreamDefaultController) => {
+    clients.delete(c);
+    const id = tabOf.get(c);
+    tabOf.delete(c);
+    if (id) tabs.delete(id); // closed tab: the previous one becomes current again
+  };
   const push = (ev: string) => {
     for (const c of clients) {
       try {
         c.enqueue(enc.encode(`data: ${ev}\n\n`));
       } catch {
-        clients.delete(c);
+        drop(c);
       }
     }
   };
 
-  setInterval(() => push("ping"), 15000); // keep SSE connections alive
+  setInterval(() => push("ping"), 5000); // keep SSE connections alive
 
   let ct: Timer | undefined;
   mkdirSync(dataDir(root), { recursive: true });
@@ -53,6 +60,12 @@ export function serve(root: string, port = 0) {
     t = setTimeout(() => push("reload"), 80);
   });
 
+  // viewer tabs: the most recently active one is "the page the user has open"
+  type Selection = { file: string; cdId: string; uses: string[]; selector: string; tag: string; text: string; snippet: string };
+  const tabs = new Map<string, { file: string | null; at: number; selection: Selection | null }>();
+  const tab = (id: string) => tabs.get(id) ?? (tabs.set(id, { file: null, at: 0, selection: null }), tabs.get(id)!);
+  const current = () => [...tabs.values()].filter((t) => t.file).sort((a, b) => b.at - a.at)[0] ?? null;
+
   const json = (v: unknown, status = 200) => Response.json(v, { status });
 
   const server = Bun.serve({
@@ -68,17 +81,51 @@ export function serve(root: string, port = 0) {
 
       if (p === "/__cd/events") {
         let ctrl!: ReadableStreamDefaultController;
+        const tabId = url.searchParams.get("tab");
         const stream = new ReadableStream({
           start(c) {
             ctrl = c;
             clients.add(c);
+            if (tabId) tabOf.set(c, tabId);
             c.enqueue(enc.encode(": hi\n\n"));
           },
           cancel() {
-            clients.delete(ctrl);
+            drop(ctrl);
           },
         });
         return new Response(stream, { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } });
+      }
+
+      if (p === "/__cd/page" && req.method === "GET") {
+        const t = url.searchParams.has("tab") ? tabs.get(url.searchParams.get("tab")!) ?? null : current();
+        return json({ file: t?.file ?? null, selection: t?.selection ?? null });
+      }
+
+      if (p === "/__cd/page" && req.method === "POST") {
+        const b = (await req.json()) as { tabId?: string; file?: string | null };
+        if (!b.tabId) return json({ error: "tabId required" }, 400);
+        const t = tab(b.tabId);
+        if (t.file !== (b.file ?? null)) t.selection = null; // a selection belongs to one page
+        t.file = b.file ?? null;
+        t.at = Date.now();
+        return json({ ok: true });
+      }
+
+      if (p === "/__cd/selection" && req.method === "POST") {
+        const b = (await req.json()) as { tabId?: string; selection?: Omit<Selection, "snippet"> | null };
+        if (!b.tabId) return json({ error: "tabId required" }, 400);
+        const t = tab(b.tabId);
+        t.at = Date.now();
+        if (!b.selection) {
+          t.selection = null;
+          return json({ ok: true });
+        }
+        let snippet = "";
+        try {
+          snippet = snippetFor(await Bun.file(join(root, b.selection.file)).text(), b.selection.cdId);
+        } catch {}
+        t.selection = { ...b.selection, uses: b.selection.uses ?? [], snippet };
+        return json({ ok: true });
       }
 
       if (p === "/__cd/agent") return json({ listening: listening(root) });
@@ -144,6 +191,6 @@ export function serve(root: string, port = 0) {
   });
 
   mkdirSync(dataDir(root), { recursive: true });
-  writeFileSync(join(dataDir(root), "server.json"), JSON.stringify({ port: server.port, pid: process.pid }));
+  writeFileSync(join(dataDir(root), "server.json"), JSON.stringify({ port: server.port, pid: process.pid, root, startedAt: Date.now() }));
   return server;
 }

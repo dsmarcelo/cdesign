@@ -35,3 +35,7 @@ Prototypes are references: another agent will later build the real code (React, 
 - Receive batches with `cdesign wait` run as a BACKGROUND command (Claude Code: Bash with `run_in_background: true`; never block on it). It exits when the user presses Send, and you are notified with the comments. Apply every one, run `cdesign resolve <id...>` with all the ids, then start `cdesign wait` in the background again. Start it right after `cdesign open`, and keep one running whenever you are idle.
 - If you cannot run background commands, run `cdesign review` when the user says they sent comments (it prints the same batch). If it says nothing was sent, ask the user to press Send.
 - With the cdesign MCP tools, `review` and `resolve` are tools and `run` takes any other command; `wait` is still a background shell command.
+
+## What the user is looking at
+- The viewer reports the page open in its most recently active tab, and the element the user picked with the pointer button (`S`) in the header. When the user is vague ("this page", "change this", "here"), run `cdesign page` (MCP tool `page`) before asking: it prints the page and the selected element (file, `data-cd-id`, selector, source). `open` and `review` print it too.
+- If it says cdesign is not open, run `cdesign open`; it reuses a viewer already running for the project (also from a subfolder), so never ask the user for a localhost link.

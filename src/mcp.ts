@@ -8,6 +8,7 @@ const CLI = join(import.meta.dir, "cli.ts");
 const INSTRUCTIONS = `cdesign is a local viewer for HTML prototypes and mockups, with element-level comments from the user.
 Use it whenever the user mentions cdesign, asks to design, prototype or mock up UI, or asks you to apply design comments.
 Start by calling the \`open\` tool, even if the project has no design/ folder yet: it scaffolds design/, starts the viewer and returns the full usage guide and project context. Follow that guide.
+When the user is vague about location ("this page", "change this", "here", "this button"), call \`page\` before asking anything: it returns the page open in the viewer and the element the user selected with the pointer tool. \`open\` reuses a viewer already running for the project, so never ask the user for a localhost link.
 Never read design/tokens.json directly (it is huge); query it with \`run\` ("tokens search <words>").`;
 
 /** Every tool is a thin wrapper over the CLI, run in the project the agent was started in. */
@@ -25,6 +26,11 @@ const tools = [
   {
     name: "open",
     description: "Start the cdesign viewer for this project (scaffolds design/ if missing) and return the usage guide, design system, tokens digest and project context. Call this first.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    name: "page",
+    description: "Return the page currently open in the cdesign viewer for this project (the most recently active tab) and the element the user selected, if any. Use it to resolve vague references like \"this page\" or \"change this\".",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -53,6 +59,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   let text: string;
   switch (req.params.name) {
     case "open": text = await cli(["open"]); break;
+    case "page": text = await cli(["page"]); break;
     case "review": text = await cli(["review"]); break;
     case "resolve": text = await cli(["resolve", ...(a.ids ?? [])]); break;
     case "run": text = await cli(split(a.args ?? "")); break;

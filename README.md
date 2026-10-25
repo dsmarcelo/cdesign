@@ -42,6 +42,7 @@ Tell your agent to run `cdesign open`. Then in the viewer, press `C`, click elem
 |---|---|
 | `open [dir] [--port n] [--no-browser]` | Start the viewer in the background; print skills and project context |
 | `close [dir]` | Stop the viewer started by `open` |
+| `page` | Print the page open in the viewer (most recently active tab) and the element selected with the pointer button (`S`) |
 | `review` | Print the batch the user sent from the viewer (run when asked to apply comments) |
 | `wait [--timeout s]` | Run in the background: exits with the batch when you press Send, which wakes the agent |
 | `install-mcp` / `uninstall-mcp` | Register / remove the MCP server in Claude Code, Codex and agy |
@@ -64,7 +65,7 @@ Comment flow: `draft` (in the viewer) → `queued` (Send) → `sent` (agent ran 
 
 Register the MCP server once, user-wide, and any agent that starts in any project knows what cdesign is and calls `open` when you mention it (the server's instructions are loaded into the agent). `open` scaffolds `design/` if needed, starts the viewer and returns the usage guide.
 
-`install.sh` does this for you; to redo it, run `cdesign install-mcp`. For other agents, use the command `bun <install dir>/src/cli.ts mcp` in their MCP config. Tools: `open`, `review`, `resolve`, and `run` (any other command, such as `tokens search`). The server uses the working directory the agent was started in as the project.
+`install.sh` does this for you; to redo it, run `cdesign install-mcp`. For other agents, use the command `bun <install dir>/src/cli.ts mcp` in their MCP config. Tools: `open`, `page`, `review`, `resolve`, and `run` (any other command, such as `tokens search`). The server uses the working directory the agent was started in as the project.
 
 ## Project structure
 

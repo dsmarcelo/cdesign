@@ -43,6 +43,7 @@
   <span id="agent" title="Is an agent running `cdesign wait`?"></span>
   <button id="w" title="Preview width">Full</button>
   <button id="theme" title="Toggle light/dark preview">Light</button>
+  <button id="sel" class="ic" title="Select element for the agent (S)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M3.5 2.5l9 4.2-3.9 1.3-1.3 3.9z"/><path d="M8.6 8l3 3.2"/></svg></button>
   <button id="mode">Comment (C)</button>
   <button id="send" class="go" disabled>Send to agent</button>
   <button id="tr" class="ic on" title="Hide/show comments"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M10 3v10"/></svg></button>
@@ -53,7 +54,11 @@
 <div id="toast"></div>
 <script>
 const $ = (s) => document.querySelector(s);
-let cur = location.hash.slice(1) || null, on = false;
+let cur = location.hash.slice(1) || null, mode = null; // mode: null | "select" | "comment"
+const tabId = Math.random().toString(36).slice(2, 10);
+// tell the server which page this tab shows; the agent reads it through `cdesign page`
+const report = () => fetch("/__cd/page", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tabId, file: cur }), keepalive: true }).catch(() => {});
+function setCur(p) { cur = p; if (location.hash.slice(1) !== p) location.hash = p; files(); load(); report(); }
 const widths = [["Full", "100%"], ["Tablet", "768px"], ["Mobile", "390px"]];
 let wi = 0;
 
@@ -95,21 +100,23 @@ function draw(n, el, prefix) {
     b.className = "f" + (f.path === cur ? " sel" : "");
     b.textContent = f.name;
     b.title = f.path;
-    b.onclick = () => { cur = f.path; location.hash = f.path; files(); load(); };
+    b.onclick = () => setCur(f.path);
     el.appendChild(b);
   }
 }
 
 async function files() {
   const l = await (await fetch("/__cd/files")).json();
+  const had = cur;
   if (!cur || !l.includes(cur)) cur = l[0] ?? null;
+  if (cur !== had) report();
   $("#files").innerHTML = "";
   draw(tree(l), $("#files"), "");
   if (!l.length) $("#files").textContent = "No .html files";
 }
 const load = () => { if (cur) $("#fr").src = "/p/" + cur; };
 const send = (m) => $("#fr").contentWindow?.postMessage(m, "*");
-const sync = () => { send({ cd: "mode", on }); send({ cd: "pins" }); };
+const sync = () => { send({ cd: "mode", mode, tab: tabId }); send({ cd: "pins" }); };
 
 async function comments() {
   const l = await (await fetch("/__cd/comments")).json();
@@ -127,7 +134,7 @@ async function comments() {
     const mk = (t, p) => { const b = document.createElement("button"); b.textContent = t; b.onclick = () => fetch(`/__cd/comments/${c.id}/${p}`, { method: "POST" }); d.appendChild(b); };
     mk(c.status === "done" ? "Reopen" : "Done", c.status === "done" ? "open" : "done");
     mk("Delete", "delete");
-    d.onclick = (e) => { if (e.target.tagName !== "BUTTON" && c.file !== cur) { cur = c.file; files(); load(); } };
+    d.onclick = (e) => { if (e.target.tagName !== "BUTTON" && c.file !== cur) setCur(c.file); };
     $("#cm").appendChild(d);
   }
 }
@@ -171,14 +178,31 @@ $("#theme").onclick = () => {
   try { localStorage.setItem("cd-theme", current() === "dark" ? "light" : "dark"); } catch {}
   applyTheme();
 };
-const toggle = () => { on = !on; $("#mode").classList.toggle("on", on); sync(); };
-$("#mode").onclick = toggle;
+function setMode(m) {
+  mode = mode === m ? null : m;
+  $("#mode").classList.toggle("on", mode === "comment");
+  $("#sel").classList.toggle("on", mode === "select");
+  if (mode !== "select") send({ cd: "clear" }); // the agent only sees a selection while Select is active
+  sync();
+}
+$("#mode").onclick = () => setMode("comment");
+$("#sel").onclick = () => setMode("select");
 $("#w").onclick = () => { wi = (wi + 1) % widths.length; $("#w").textContent = widths[wi][0]; $("#fr").style.width = widths[wi][1]; };
-addEventListener("keydown", (e) => { if (e.key === "c" && !/input|textarea/i.test(e.target.tagName)) toggle(); });
+addEventListener("keydown", (e) => {
+  if (/input|textarea/i.test(e.target.tagName)) return;
+  if (e.key === "c") setMode("comment");
+  if (e.key === "s") setMode("select");
+  if (e.key === "Escape") send({ cd: "clear" });
+});
+addEventListener("hashchange", () => { const h = location.hash.slice(1); if (h && h !== cur) setCur(h); });
+addEventListener("focus", report);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) report(); });
 addEventListener("message", (e) => { if (e.data?.cd === "ready") sync(); });
 $("#fr").addEventListener("load", () => { sync(); applyTheme(); });
 
-new EventSource("/__cd/events").onmessage = (e) => {
+const es = new EventSource("/__cd/events?tab=" + tabId);
+es.onopen = report; // also after a reconnect: the server forgets a tab when its stream closes
+es.onmessage = (e) => {
   if (e.data === "reload") $("#fr").contentWindow.location.reload(), files();
   if (e.data === "comments") { comments(); send({ cd: "pins" }); agent(); }
   if (e.data === "agent") agent();

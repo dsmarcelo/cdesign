@@ -1,10 +1,11 @@
 // Injected into every previewed page. Pick an element, comment on it.
 (() => {
-  let on = false, hover = null;
+  let mode = null, hover = null, tab = null, picked = null;
 
   const css = document.createElement("style");
   css.textContent = `
   .__cd-hl{outline:2px solid #2563eb!important;outline-offset:1px;cursor:crosshair!important}
+  .__cd-sel{outline:2px dashed #16a34a!important;outline-offset:2px}
   .__cd-pin{position:absolute;z-index:2147483646;width:22px;height:22px;border-radius:50%;background:#2563eb;color:#fff;
     font:600 11px/22px system-ui;text-align:center;transform:translate(-50%,-50%);box-shadow:0 1px 4px #0005;pointer-events:none}
   .__cd-pin.q{background:#71717a}
@@ -36,20 +37,39 @@
     return u;
   };
   const clearHl = () => hover?.classList.remove("__cd-hl");
+  const post = (selection) => fetch("/__cd/selection", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tabId: tab, selection }) }).catch(() => {});
+  const unpick = () => { picked?.classList.remove("__cd-sel"); picked = null; };
+  const pick = (el) => {
+    unpick();
+    picked = el;
+    el.classList.add("__cd-sel");
+    post({ file: fileOf(el), cdId: el.getAttribute("data-cd-id"), uses: usesOf(el), selector: selectorOf(el), tag: el.tagName.toLowerCase(), text: (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 200) });
+  };
+  // after a reload the page is new: redraw the outline for the selection the server still holds
+  async function restore() {
+    if (!tab || picked?.isConnected) return;
+    try {
+      const { selection: s } = await (await fetch("/__cd/page?tab=" + tab)).json();
+      if (!s) return;
+      const el = [...document.querySelectorAll(`[data-cd-id="${s.cdId}"]`)].find((e) => fileOf(e) === s.file);
+      if (el) (picked = el).classList.add("__cd-sel");
+    } catch {}
+  }
 
   document.addEventListener("mouseover", (e) => {
-    if (!on || e.target.closest(".__cd-pop")) return;
+    if (!mode || e.target.closest(".__cd-pop")) return;
     clearHl();
     hover = target(e);
     hover?.classList.add("__cd-hl");
   });
   document.addEventListener("click", (e) => {
-    if (!on || e.target.closest(".__cd-pop")) return;
+    if (!mode || e.target.closest(".__cd-pop")) return;
     const el = target(e);
     if (!el) return;
     e.preventDefault();
     e.stopPropagation();
-    openPop(el, e.pageX, e.pageY);
+    if (mode === "select") pick(el);
+    else openPop(el, e.pageX, e.pageY);
   }, true);
 
   function openPop(el, x, y) {
@@ -105,10 +125,13 @@
 
   addEventListener("message", (e) => {
     if (e.data?.cd === "mode") {
-      on = e.data.on;
-      if (!on) { clearHl(); document.querySelector(".__cd-pop")?.remove(); }
+      mode = e.data.mode;
+      tab = e.data.tab;
+      if (!mode) clearHl();
+      if (mode !== "comment") document.querySelector(".__cd-pop")?.remove();
     }
-    if (e.data?.cd === "pins") pins();
+    if (e.data?.cd === "clear" && (picked || tab)) { unpick(); post(null); }
+    if (e.data?.cd === "pins") { pins(); restore(); }
   });
   addEventListener("load", pins);
   parent.postMessage({ cd: "ready" }, "*");
