@@ -68,8 +68,7 @@ function setCur(p) { cur = p; if (location.hash.slice(1) !== p) location.hash = 
 const widths = [["Full", "100%"], ["Tablet", "768px"], ["Mobile", "390px"]];
 let wi = 0;
 
-const closed = new Set(JSON.parse(localStorage.getItem("cd-closed") || "[]"));
-const saveClosed = () => localStorage.setItem("cd-closed", JSON.stringify([...closed]));
+const opened = new Set(); // folders start closed; the ones the user opens stay open while the page lives (the list is redrawn on every file change)
 
 function tree(list) {
   const root = { dirs: {}, files: [] };
@@ -91,8 +90,8 @@ function draw(n, el, prefix) {
     }
     const key = prefix + label;
     const det = document.createElement("details");
-    det.open = !closed.has(key);
-    det.ontoggle = () => { det.open ? closed.delete(key) : closed.add(key); saveClosed(); };
+    det.open = opened.has(key);
+    det.ontoggle = () => { det.open ? opened.add(key) : opened.delete(key); };
     const sum = document.createElement("summary");
     sum.textContent = label;
     const kids = document.createElement("div");
