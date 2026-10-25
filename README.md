@@ -43,6 +43,7 @@ Tell your agent to run `cdesign open`. Then in the viewer, press `C`, click elem
 | `open [dir] [--port n] [--no-browser] [--tunnel]` | Open the project in the viewer (starts the shared viewer process if needed); print skills and project context. `--tunnel` also shares it over the internet |
 | `tunnel [dir]` / `tunnel stop [dir]` | Share one project through a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) quick tunnel. Prints a private link (secret token); only that project is reachable |
 | `close [dir] [--all]` | Close the project in the viewer; `--all` stops the viewer for every project |
+| `shot [page] [--selected\|--selector css] [--width n] [--theme light\|dark] [--format webp\|jpeg\|png] [--full] [--y n]` | Screenshot a page or one element with headless Chrome (needs Chrome/Chromium; `CDESIGN_CHROME` overrides the path). Small WebP, long side <= 1568px, so agents spend far fewer tokens than with browser screenshots |
 | `page` | Print the page open in the viewer (most recently active tab) and the element selected with the pointer button (`S`) |
 | `review` | Print the batch the user sent from the viewer (run when asked to apply comments) |
 | `wait [--timeout s]` | Run in the background: exits with the batch when you press Send, which wakes the agent |
@@ -66,7 +67,7 @@ Comment flow: `draft` (in the viewer) → `queued` (Send) → `sent` (agent ran 
 
 Register the MCP server once, user-wide, and any agent that starts in any project knows what cdesign is and calls `open` when you mention it (the server's instructions are loaded into the agent). `open` scaffolds `design/` if needed, starts the viewer and returns the usage guide.
 
-`install.sh` does this for you; to redo it, run `cdesign install-mcp`. For other agents, use the command `bun <install dir>/src/cli.ts mcp` in their MCP config. Tools: `open`, `page`, `review`, `resolve`, and `run` (any other command, such as `tokens search`). The server uses the working directory the agent was started in as the project.
+`install.sh` does this for you; to redo it, run `cdesign install-mcp`. For other agents, use the command `bun <install dir>/src/cli.ts mcp` in their MCP config. Tools: `open`, `page`, `screenshot` (returns the image directly), `review`, `resolve`, and `run` (any other command, such as `tokens search`). The server uses the working directory the agent was started in as the project.
 
 ## One viewer for all projects
 

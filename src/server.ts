@@ -339,7 +339,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     if (!(await f.exists())) return new Response("not found", { status: 404 });
     if (abs.endsWith(".html") && p.startsWith("/p/")) {
       const html = renderPage(root, rel);
-      const tag = `<script src="/__cd/overlay.js"></script>`;
+      const tag = url.searchParams.has("raw") ? "" : `<script src="/__cd/overlay.js"></script>`; // raw: screenshots, no commenting overlay
       const body = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, tag + "</body>") : html + tag;
       return new Response(body, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
     }

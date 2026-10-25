@@ -2,6 +2,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 
 const CLI = join(import.meta.dir, "cli.ts");
 
@@ -34,6 +35,23 @@ const tools = [
     inputSchema: { type: "object", properties: {} },
   },
   {
+    name: "screenshot",
+    description: "Screenshot a prototype page or one element and get it back as a compact image (WebP, at most 1568px on the long side), without opening a browser. Cheaper and sharper than screenshotting the viewer. Defaults to the page open in the viewer; use selected:true for the element the user picked, or selector for any CSS selector. Long pages are cropped from the top (see the note in the result): use y, or full, or a selector.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        page: { type: "string", description: "Page path relative to the project, e.g. design/prototype/home.html. Default: the page open in the viewer." },
+        selected: { type: "boolean", description: "Capture the element the user selected in the viewer." },
+        selector: { type: "string", description: "CSS selector of the element to capture." },
+        width: { type: "number", description: "Viewport width in CSS px (default 1280; use 390 for mobile)." },
+        theme: { type: "string", enum: ["light", "dark"] },
+        format: { type: "string", enum: ["webp", "jpeg", "png"], description: "Default webp." },
+        y: { type: "number", description: "Page shots: start this many px from the top." },
+        full: { type: "boolean", description: "Page shots: do not crop tall pages (the image is scaled down instead)." },
+      },
+    },
+  },
+  {
     name: "review",
     description: "Return the batch of comments the user sent from the viewer (Send button). Apply every one, then call resolve with all the ids.",
     inputSchema: { type: "object", properties: {} },
@@ -55,11 +73,30 @@ const mcp = new Server({ name: "cdesign", version: "0.1.0" }, { capabilities: { 
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
-  const a = (req.params.arguments ?? {}) as { ids?: string[]; args?: string };
+  const a = (req.params.arguments ?? {}) as { ids?: string[]; args?: string; page?: string; selected?: boolean; selector?: string; width?: number; theme?: string; format?: string; y?: number; full?: boolean };
   let text: string;
   switch (req.params.name) {
     case "open": text = await cli(["open"]); break;
     case "page": text = await cli(["page"]); break;
+    case "screenshot": {
+      const args = ["shot", "--json"];
+      if (a.page) args.push(a.page);
+      if (a.selected) args.push("--selected");
+      if (a.selector) args.push("--selector", a.selector);
+      if (a.width) args.push("--width", String(a.width));
+      if (a.theme) args.push("--theme", a.theme);
+      if (a.format) args.push("--format", a.format);
+      if (a.y) args.push("--y", String(a.y));
+      if (a.full) args.push("--full");
+      const out = await cli(args);
+      try {
+        const info = JSON.parse(out.split("\n").filter((l) => l.startsWith("{")).pop() ?? "");
+        const note = `${info.page}${info.selector ? ` ${info.selector}` : ""}: ${info.width}x${info.height} ${info.mime}, ${(info.bytes / 1024).toFixed(1)} KB, saved at ${info.path}${info.note ? `\n${info.note}` : ""}`;
+        return { content: [{ type: "image", data: readFileSync(info.path).toString("base64"), mimeType: info.mime }, { type: "text", text: note }] };
+      } catch {
+        return { content: [{ type: "text", text: out }], isError: true };
+      }
+    }
     case "review": text = await cli(["review"]); break;
     case "resolve": text = await cli(["resolve", ...(a.ids ?? [])]); break;
     case "run": text = await cli(split(a.args ?? "")); break;

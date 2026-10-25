@@ -41,3 +41,8 @@ Prototypes are references: another agent will later build the real code (React, 
 ## What the user is looking at
 - The viewer reports the page open in its most recently active tab, and the element the user picked with the pointer button (`S`) in the header. When the user is vague ("this page", "change this", "here"), run `cdesign page` (MCP tool `page`) before asking: it prints the page and the selected element (file, `data-cd-id`, selector, source). `open` and `review` print it too.
 - If it says cdesign is not open, run `cdesign open`; it reuses the shared viewer process, which serves all projects and picks yours from the folder you run in (also from a subfolder), so never ask the user for a localhost link.
+
+## Seeing your work (screenshots)
+- To check what you built, use `cdesign shot` (MCP tool `screenshot`), not a browser screenshot of the viewer: it renders the page or one element in headless Chrome and returns a small WebP (long side <= 1568px), so it costs far fewer tokens and has no viewer chrome around it.
+- `cdesign shot` = the page open in the viewer; `cdesign shot design/prototype/home.html`; `--selected` = the element the user picked; `--selector ".card"` = any element. Add `--width 390` for mobile and `--theme dark` for dark mode. Prefer an element over a whole page when you only changed one thing.
+- Tall pages are cropped from the top and the result says so; use `--y <px>` for the next part, or a selector. The CLI prints the saved file path (under `.cdesign/shots/`); the MCP tool returns the image directly. Needs Chrome/Chromium (`CDESIGN_CHROME` sets the path).

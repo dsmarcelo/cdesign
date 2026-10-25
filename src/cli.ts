@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { serveDaemon, listHtml, DEFAULT_PORT } from "./server";
+import { screenshot } from "./shot";
 import { componentIndex, previewOf, sourceOfPreview } from "./render";
 import * as tk from "./tokens";
 import { beat, dataDir, daemonPath, projectId, readComments, update, commentsPath, type Comment } from "./store";
@@ -259,6 +260,46 @@ ${now}`);
     }
     break;
   }
+  case "shot": {
+    // cdesign shot [page.html] [--selector css | --selected] [--width 1280] [--theme light|dark] [--format webp|jpeg|png] [--full] [--y n] [--out file] [--json]
+    const bool = (n: string) => { const i = rest.indexOf(n); if (i >= 0) rest.splice(i, 1); return i >= 0; };
+    const selected = bool("--selected"), full = bool("--full"), asJson = bool("--json");
+    const selector = flag("--selector"), width = +(flag("--width") ?? 1280), theme = flag("--theme") as "light" | "dark" | undefined;
+    const format = (flag("--format") ?? "webp") as "webp" | "jpeg" | "png", y = +(flag("--y") ?? 0), out = flag("--out");
+    const fail = (m: string): never => { console.error(m); process.exit(1); };
+    if (!["webp", "jpeg", "png"].includes(format)) fail("--format must be webp, jpeg or png");
+    if (theme && theme !== "light" && theme !== "dark") fail("--theme must be light or dark");
+    if (!(width >= 200 && width <= 4000)) fail("--width must be between 200 and 4000");
+    const root = findRoot();
+    const reg = await register(root);
+    let file = rest.find((a) => !a.startsWith("--"));
+    let sel = selector;
+    if (!file || selected) {
+      const cur = (await (await fetch(`http://127.0.0.1:${reg.port}/__cd/page?project=${reg.id}`)).json()) as {
+        file: string | null; selection: { file: string; cdId: string } | null;
+      };
+      if (selected) {
+        if (!cur.selection) fail("No element is selected in the viewer. Ask the user to pick one with the pointer tool, or pass --selector.");
+        if (file && file !== cur.file) fail(`The selected element is on ${cur.file}, not ${file}.`);
+        sel = `[data-cd-id="${cur.selection!.cdId}"][data-cd-file="${cur.selection!.file}"]`;
+      }
+      file ??= cur.file ?? undefined;
+    }
+    if (!file) fail("No page given and none open in the viewer. Pass a page, e.g. `cdesign shot design/prototype/home.html`.");
+    const url = `http://${reg.id}.localhost:${reg.port}/p/${encodeURI(file!)}?raw=1`;
+    let shot;
+    try {
+      shot = await screenshot({ url, selector: sel, width, theme, format, maxEdge: 1568, maxHeight: full ? 0 : 1600, y });
+    } catch (e) { fail((e as Error).message); }
+    const dir = join(dataDir(root), "shots");
+    mkdirSync(dir, { recursive: true });
+    const path = out ? resolve(out) : join(dir, `${Date.now()}.${format === "jpeg" ? "jpg" : format}`);
+    writeFileSync(path, shot!.data);
+    if (!out) for (const old of readdirSync(dir).sort().slice(0, -20)) rmSync(join(dir, old), { force: true }); // keep the last 20
+    const info = { path, mime: shot!.mime, width: shot!.width, height: shot!.height, bytes: shot!.data.length, note: shot!.note, page: file, selector: sel ?? null };
+    console.log(asJson ? JSON.stringify(info) : `${path}\n${info.width}x${info.height} ${info.mime}, ${(info.bytes / 1024).toFixed(1)} KB${info.note ? `\n${info.note}` : ""}`);
+    break;
+  }
   case "comments": {
     const root = findRoot();
     const l = readComments(root).filter((c) => rest.includes("--all") || c.status !== "done");
@@ -413,6 +454,8 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
   tunnel [dir] | tunnel stop [dir]      share the project via a cloudflared quick tunnel (private link, needs cloudflared)
   close [dir] [--all]                   close the project in the viewer; --all stops the viewer for every project
   page                                  what the user has open in the viewer (page + selected element)
+  shot [page] [--selected|--selector css] [--width n] [--theme light|dark] [--format webp|jpeg|png] [--full] [--y n] [--out file]
+                                        screenshot a page or one element (headless Chrome) as a small image file
   review                                print the comments the user sent from the viewer
   wait [--timeout s]                    run in the background: exits with the batch when the user presses Send
   resolve <id...>                       mark comments done
