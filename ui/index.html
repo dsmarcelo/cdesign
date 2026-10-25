@@ -68,7 +68,9 @@ function setCur(p) { cur = p; if (location.hash.slice(1) !== p) location.hash = 
 const widths = [["Full", "100%"], ["Tablet", "768px"], ["Mobile", "390px"]];
 let wi = 0;
 
-const opened = new Set(); // folders start closed; the ones the user opens stay open while the page lives (the list is redrawn on every file change)
+// folders start closed; the ones the user opens stay open across redraws and reloads of this tab (sessionStorage: per tab, gone when it closes)
+const opened = new Set((() => { try { return JSON.parse(sessionStorage.getItem("cd-opened") || "[]"); } catch { return []; } })());
+const saveOpened = () => { try { sessionStorage.setItem("cd-opened", JSON.stringify([...opened])); } catch { /* storage unavailable */ } };
 
 function tree(list) {
   const root = { dirs: {}, files: [] };
@@ -91,7 +93,7 @@ function draw(n, el, prefix) {
     const key = prefix + label;
     const det = document.createElement("details");
     det.open = opened.has(key);
-    det.ontoggle = () => { det.open ? opened.add(key) : opened.delete(key); };
+    det.ontoggle = () => { det.open ? opened.add(key) : opened.delete(key); saveOpened(); };
     const sum = document.createElement("summary");
     sum.textContent = label;
     const kids = document.createElement("div");
