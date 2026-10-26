@@ -5,7 +5,7 @@ import { serveDaemon, listHtml, DEFAULT_PORT } from "./server";
 import { screenshot } from "./shot";
 import { componentIndex, previewOf, sourceOfPreview } from "./render";
 import * as tk from "./tokens";
-import { beat, dataDir, daemonPath, projectId, readComments, update, commentsPath, type Comment } from "./store";
+import { beat, dataDir, daemonPath, projectId, readComments, readTunnelConfig, writeTunnelConfig, update, commentsPath, type Comment } from "./store";
 
 const [cmd = "help", ...rest] = process.argv.slice(2);
 const flag = (n: string) => {
@@ -191,6 +191,29 @@ One viewer process serves all projects and stops by itself when no viewer tab or
     break;
   }
   case "tunnel": {
+    if (["set", "unset", "show"].includes(rest[0])) {
+      const sub = rest.shift();
+      const cfg = readTunnelConfig();
+      if (sub === "show") {
+        console.log(cfg ? `fixed tunnel domain: https://${cfg.domain} (${cfg.provider}, local port ${cfg.port})` : "no fixed domain: `cdesign tunnel` uses a random cloudflared quick-tunnel URL. Set one with `cdesign tunnel set`.");
+        break;
+      }
+      if (sub === "unset") { writeTunnelConfig(null); console.log("fixed domain removed; `cdesign tunnel` uses a random quick-tunnel URL again"); break; }
+      const provider = flag("--provider") ?? "ngrok", domain = (flag("--domain") ?? flag("--hostname") ?? "").replace(/^https?:\/\//, "").replace(/\/.*$/, "").toLowerCase();
+      const token = flag("--token"), port = +(flag("--port") ?? 4748);
+      const fail = (m: string): never => { console.error(m); process.exit(1); };
+      if (provider !== "ngrok" && provider !== "cloudflare") fail("--provider must be ngrok or cloudflare");
+      if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(domain)) fail("give the domain with --domain, e.g. --domain my-name.ngrok-free.dev");
+      if (provider === "cloudflare" && !token) fail("--provider cloudflare needs --token <tunnel token> (Zero Trust > Networks > Tunnels)");
+      if (!(port > 1023 && port < 65536)) fail("--port must be between 1024 and 65535");
+      const secret = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", ""); // stable access secret: the private link stays the same
+      writeTunnelConfig(provider === "ngrok" ? { provider, domain, port, secret } : { provider, domain, token: token!, port, secret });
+      console.log(`fixed tunnel domain saved: https://${domain} (${provider})
+Run \`cdesign tunnel\` to share the open project at it. The private link keeps the same ?t=… secret until you run \`tunnel set\` again. One project at a time can use the domain.${provider === "cloudflare" ? `
+In the Cloudflare dashboard the tunnel's public hostname must be ${domain} -> http://localhost:${port}.` : `
+Needs ngrok installed and authenticated (\`ngrok config add-authtoken <token>\`); the free plan includes one static domain.`}`);
+      break;
+    }
     const stop = rest[0] === "stop";
     const root = stop ? findRoot(rest[1]) : findRoot(rest[0]);
     await tunnel(await register(root), stop).catch((e) => (console.error(e.message), process.exit(1)));
@@ -451,7 +474,9 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
   default:
     console.log(`cdesign <command>
   open [dir] [--port n] [--no-browser] [--tunnel]  open the project in the viewer (one shared process), print skills + context
-  tunnel [dir] | tunnel stop [dir]      share the project via a cloudflared quick tunnel (private link, needs cloudflared)
+  tunnel [dir] | tunnel stop [dir]      share the project (private link): fixed domain if set, else a random cloudflared quick tunnel
+  tunnel set --provider ngrok --domain <name.ngrok-free.dev> | --provider cloudflare --hostname <h> --token <t> [--port n]
+                                        use a fixed domain; tunnel show | tunnel unset
   close [dir] [--all]                   close the project in the viewer; --all stops the viewer for every project
   page                                  what the user has open in the viewer (page + selected element)
   shot [page] [--selected|--selector css] [--width n] [--theme light|dark] [--format webp|jpeg|png] [--full] [--y n] [--out file]

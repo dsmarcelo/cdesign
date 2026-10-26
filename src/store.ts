@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
@@ -72,4 +72,18 @@ export function readProjects(): string[] {
 export function writeProjects(roots: string[]) {
   mkdirSync(homeDir(), { recursive: true });
   writeFileSync(projectsPath(), JSON.stringify(roots, null, 2));
+}
+
+// ---------- fixed tunnel domain (optional; without it `tunnel` uses a random cloudflared quick-tunnel URL) ----------
+export type TunnelConfig =
+  | { provider: "ngrok"; domain: string; port: number; secret: string }
+  | { provider: "cloudflare"; domain: string; token: string; port: number; secret: string };
+const tunnelPath = () => join(homeDir(), "tunnel.json");
+export function readTunnelConfig(): TunnelConfig | null {
+  try { return JSON.parse(readFileSync(tunnelPath(), "utf8")) as TunnelConfig; } catch { return null; }
+}
+export function writeTunnelConfig(c: TunnelConfig | null) {
+  if (!c) return rmSync(tunnelPath(), { force: true });
+  mkdirSync(homeDir(), { recursive: true });
+  writeFileSync(tunnelPath(), JSON.stringify(c, null, 2), { mode: 0o600 }); // holds the access secret and the tunnel token
 }

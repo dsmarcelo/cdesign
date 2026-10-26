@@ -1,7 +1,7 @@
 import { watch, readdirSync, statSync, writeFileSync, mkdirSync, existsSync, rmSync, type FSWatcher } from "node:fs";
 import { basename, isAbsolute, join, resolve, relative, sep } from "node:path";
 import { renderPage, snippetFor } from "./render";
-import { daemonPath, dataDir, homeDir, listening, projectId, readComments, readProjects, update, writeProjects, type Comment } from "./store";
+import { daemonPath, dataDir, homeDir, listening, projectId, readComments, readProjects, readTunnelConfig, update, writeProjects, type Comment } from "./store";
 
 const UI = join(import.meta.dir, "..", "ui");
 const SKIP = new Set(["node_modules", ".git", ".cdesign", "dist"]);
@@ -93,7 +93,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     projects: [...projects.values()].map((p) => ({ id: p.id, root: p.root, name: basename(p.root), url: `http://${p.id}.localhost:${server.port}/`, tabs: p.clients.size })),
   });
 
-  // ----- tunnel: a second listener for ONE project behind a secret token, exposed by `cloudflared` -----
+  // ----- tunnel: a second listener for ONE project behind a secret token, exposed by `cloudflared` (or ngrok / a named Cloudflare tunnel when a fixed domain is configured) -----
   type Tunnel = { token: string; url: string; proc: ReturnType<typeof Bun.spawn>; srv: ReturnType<typeof Bun.serve> };
   const tunnels = new Map<string, Tunnel>();
   const stopTunnel = (id: string) => {
@@ -106,9 +106,14 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
   async function startTunnel(p: Project): Promise<Tunnel> {
     const old = tunnels.get(p.id);
     if (old) return old;
-    const token = crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
+    const cfg = readTunnelConfig(); // fixed domain (one project at a time: the domain points at one listener), else a random quick tunnel
+    if (cfg && tunnels.size) {
+      const other = projects.get([...tunnels.keys()][0]);
+      throw new Error(`the fixed domain ${cfg.domain} is already serving ${other ? basename(other.root) : "another project"}; run \`cdesign tunnel stop\` for it first`);
+    }
+    const token = cfg?.secret ?? crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
     const srv = Bun.serve({
-      port: 0,
+      port: cfg?.port ?? 0,
       hostname: "127.0.0.1",
       idleTimeout: 0,
       fetch(req) {
@@ -121,24 +126,36 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
         return fetchHandler(req, p);
       },
     });
+    const bin = cfg?.provider === "ngrok" ? "ngrok" : "cloudflared";
+    const args =
+      cfg?.provider === "ngrok" ? ["http", `--url=https://${cfg.domain}`, "--log=stdout", "--log-format=json", String(srv.port)]
+      : cfg?.provider === "cloudflare" ? ["tunnel", "--no-autoupdate", "run", "--token", cfg.token]
+      : ["tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${srv.port}`];
+    // what the tool prints when the tunnel is up (quick tunnels also print their random URL)
+    const ready = cfg?.provider === "ngrok" ? /started tunnel|obj=tunnels/ : cfg?.provider === "cloudflare" ? /Registered tunnel connection/ : /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
     let proc: ReturnType<typeof Bun.spawn>;
     try {
-      proc = Bun.spawn(["cloudflared", "tunnel", "--no-autoupdate", "--url", `http://127.0.0.1:${srv.port}`], { stdout: "ignore", stderr: "pipe" });
+      proc = Bun.spawn([bin, ...args], { stdout: bin === "ngrok" ? "pipe" : "ignore", stderr: "pipe" });
     } catch {
       srv.stop(true);
-      throw new Error("cloudflared not found. Install it: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/");
+      throw new Error(bin === "ngrok" ? "ngrok not found. Install it: https://ngrok.com/download (then `ngrok config add-authtoken <token>`)" : "cloudflared not found. Install it: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/");
     }
     const url = await new Promise<string>((ok, fail) => {
-      const timer = setTimeout(() => fail(new Error("cloudflared gave no tunnel URL within 30s")), 30000);
-      proc.exited.then(() => fail(new Error("cloudflared exited before the tunnel was ready")));
-      (async () => {
+      const timer = setTimeout(() => fail(new Error(`${bin} did not report a tunnel within 30s${tail ? `: ${tail.trim().slice(-300)}` : ""}`)), 30000);
+      let tail = "";
+      proc.exited.then(() => (clearTimeout(timer), fail(new Error(`${bin} exited before the tunnel was ready${tail ? `: ${tail.trim().slice(-300)}` : ""}`))));
+      const watch = async (stream: ReadableStream<Uint8Array>) => {
         let seen = "";
-        for await (const chunk of proc.stderr as ReadableStream<Uint8Array>) { // keep draining so the pipe never blocks
-          seen = (seen + new TextDecoder().decode(chunk)).slice(-2000);
-          const m = seen.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
-          if (m) { clearTimeout(timer); ok(m[0]); seen = ""; }
+        for await (const chunk of stream) { // keep draining so the pipe never blocks
+          const text = new TextDecoder().decode(chunk);
+          tail = (tail + text).slice(-2000);
+          seen = (seen + text).slice(-2000);
+          const m = seen.match(ready);
+          if (m) { clearTimeout(timer); ok(cfg ? `https://${cfg.domain}` : m[0]); seen = ""; }
         }
-      })().catch(() => {});
+      };
+      watch(proc.stderr as ReadableStream<Uint8Array>).catch(() => {});
+      if (bin === "ngrok") watch(proc.stdout as ReadableStream<Uint8Array>).catch(() => {});
     }).catch((e) => {
       try { proc.kill(); } catch { /* ignore */ }
       srv.stop(true);
