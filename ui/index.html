@@ -299,12 +299,12 @@ async function addFolder() {
   location.href = j.url;
 }
 async function projects() {
-  const { current, projects: l } = await (await fetch("/__cd/projects")).json();
+  const { current, projects: l, remote } = await (await fetch("/__cd/projects")).json();
   const sel = $("#proj");
   sel.innerHTML = "";
   for (const p of l) sel.add(new Option(p.name, p.url, false, p.id === current));
-  sel.add(new Option("Add folder…", "#add"));
-  if (current) sel.add(new Option("Close this project", "#close"));
+  if (!remote) sel.add(new Option("Add folder…", "#add"));
+  if (current && !remote) sel.add(new Option("Close this project", "#close"));
   sel.onchange = async () => {
     if (sel.value === "#add") return addFolder();
     if (sel.value === "#close") { await fetch(`/__cd/projects/${current}/remove`, { method: "POST" }); return location.href = location.origin.replace(/^(https?:\/\/)[^.]+\.localhost/, "$1localhost"); }

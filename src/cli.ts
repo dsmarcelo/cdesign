@@ -221,7 +221,7 @@ One viewer process serves all projects and stops by itself when no viewer tab or
       const secret = withSecret ? crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "") : undefined; // stable access secret (opt-in): the private link stays the same
       writeTunnelConfig(provider === "ngrok" ? { provider, domain, port, secret } : { provider, domain, token: token!, port, secret });
       console.log(`fixed tunnel domain saved: https://${domain} (${provider})
-Run \`cdesign tunnel\` to share the open project at it. One project at a time can use the domain.${secret ? "\nThe link carries a ?t=… secret that stays the same until you run `tunnel set` again." : `\nNo secret: anyone who knows https://${domain} can view the project and send comments to your agent while the tunnel runs. Add --secret to require one.`}${provider === "cloudflare" ? `
+Run \`cdesign tunnel\` to share the viewer (all your open projects, switchable from the header) at it.${secret ? "\nThe link carries a ?t=… secret that stays the same until you run `tunnel set` again." : `\nNo secret: anyone who knows https://${domain} can view your open projects and send comments to your agent while the tunnel runs. Add --secret to require one.`}${provider === "cloudflare" ? `
 In the Cloudflare dashboard the tunnel's public hostname must be ${domain} -> http://localhost:${port}.` : `
 Needs ngrok installed and authenticated (\`ngrok config add-authtoken <token>\`); the free plan includes one static domain.`}`);
       break;

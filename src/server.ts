@@ -81,7 +81,6 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     return p;
   }
   function removeProject(p: Project) {
-    stopTunnel(p.id);
     for (const w of p.watchers) w.close();
     for (const c of p.clients) try { c.close(); } catch { /* already closed */ }
     projects.delete(p.id);
@@ -93,38 +92,42 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     projects: [...projects.values()].map((p) => ({ id: p.id, root: p.root, name: basename(p.root), url: `http://${p.id}.localhost:${server.port}/`, tabs: p.clients.size })),
   });
 
-  // ----- tunnel: a second listener for ONE project behind a secret token, exposed by `cloudflared` (or ngrok / a named Cloudflare tunnel when a fixed domain is configured) -----
+  // ----- tunnel: a second listener for the whole viewer (every project, switchable in the UI), exposed by `cloudflared` quick tunnel (random URL + secret) or the fixed domain from `tunnel set` -----
   type Tunnel = { token: string; url: string; proc: ReturnType<typeof Bun.spawn>; srv: ReturnType<typeof Bun.serve> };
-  const tunnels = new Map<string, Tunnel>();
-  const stopTunnel = (id: string) => {
-    const t = tunnels.get(id);
+  let tunnel: Tunnel | null = null;
+  let tunnelHome = ""; // project a visitor lands on until they pick another (cookie)
+  const stopTunnel = () => {
+    const t = tunnel;
     if (!t) return;
-    tunnels.delete(id);
+    tunnel = null;
     try { t.proc.kill(); } catch { /* already gone */ }
     t.srv.stop(true);
   };
-  async function startTunnel(p: Project): Promise<Tunnel> {
-    const old = tunnels.get(p.id);
-    if (old) return old;
-    const cfg = readTunnelConfig(); // fixed domain (one project at a time: the domain points at one listener), else a random quick tunnel
-    if (cfg && tunnels.size) {
-      const other = projects.get([...tunnels.keys()][0]);
-      throw new Error(`the fixed domain ${cfg.domain} is already serving ${other ? basename(other.root) : "another project"}; run \`cdesign tunnel stop\` for it first`);
-    }
+  async function startTunnel(): Promise<Tunnel> {
+    if (tunnel) return tunnel;
+    const cfg = readTunnelConfig(); // fixed domain, else a random quick tunnel
     const token = cfg ? cfg.secret ?? "" : crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", ""); // "" = open fixed domain, no secret
     const srv = Bun.serve({
       port: cfg?.port ?? 0,
       hostname: "127.0.0.1",
       idleTimeout: 0,
       fetch(req) {
-        if (!token) return fetchHandler(req, p);
         const url = new URL(req.url);
-        if (url.searchParams.get("t") === token) {
-          url.searchParams.delete("t");
-          return new Response(null, { status: 302, headers: { location: url.pathname + url.search, "set-cookie": `cd_t=${token}; Path=/; HttpOnly; Secure; SameSite=Lax` } });
+        const cookies = (req.headers.get("cookie") ?? "").split(/;\s*/);
+        const cookie = (n: string) => cookies.find((c) => c.startsWith(n + "="))?.slice(n.length + 1);
+        const set: string[] = [];
+        if (token && url.searchParams.get("t") === token) { url.searchParams.delete("t"); set.push(`cd_t=${token}; Path=/; HttpOnly; Secure; SameSite=Lax`); }
+        else if (token && cookie("cd_t") !== token) return new Response("unauthorized: open the full link printed by cdesign", { status: 401 });
+        const pick = url.searchParams.get("project"); // the project switcher: remember the choice in a cookie
+        if (pick && projects.has(pick)) { url.searchParams.delete("project"); set.push(`cd_p=${pick}; Path=/; HttpOnly; SameSite=Lax`); }
+        if (set.length) {
+          const h = new Headers({ location: url.pathname + url.search });
+          for (const c of set) h.append("set-cookie", c);
+          return new Response(null, { status: 302, headers: h });
         }
-        if (!(req.headers.get("cookie") ?? "").split(/;\s*/).includes(`cd_t=${token}`)) return new Response("unauthorized: open the full link printed by cdesign", { status: 401 });
-        return fetchHandler(req, p);
+        const project = projects.get(cookie("cd_p") ?? "") ?? projects.get(tunnelHome) ?? [...projects.values()][0];
+        if (!project) return new Response("no project is open in cdesign", { status: 404 });
+        return fetchHandler(req, project, true);
       },
     });
     const bin = cfg?.provider === "ngrok" ? "ngrok" : "cloudflared";
@@ -163,13 +166,13 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       throw e;
     });
     const t = { token, url, proc, srv };
-    tunnels.set(p.id, t);
-    proc.exited.then(() => tunnels.get(p.id) === t && stopTunnel(p.id));
+    tunnel = t;
+    proc.exited.then(() => tunnel === t && stopTunnel());
     return t;
   }
 
   const shutdown = () => {
-    for (const id of [...tunnels.keys()]) stopTunnel(id);
+    stopTunnel();
     try { rmSync(daemonPath()); } catch { /* ignore */ }
     process.exit(0);
   };
@@ -184,8 +187,8 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     else if (Date.now() - lastActive > idleMs) shutdown();
   }, Math.min(5000, Math.max(200, idleMs / 4)));
 
-  /** `via` is set for requests that came through a tunnel: pinned to that project, no daemon-level routes. */
-  const fetchHandler = async (req: Request, via?: Project): Promise<Response> => {
+  /** `via` is set for requests that came through a tunnel: pinned to that project (the visitor switches with the project cookie); only the project list is readable, no other daemon-level routes. */
+  const fetchHandler = async (req: Request, via?: Project, remote = false): Promise<Response> => {
     const url = new URL(req.url);
     const p = decodeURIComponent(url.pathname);
     const hostHeader = req.headers.get("host") ?? "";
@@ -208,7 +211,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     if (p === "/") return new Response(Bun.file(join(UI, "index.html")));
 
     // ----- daemon-level API -----
-    if (p === "/__cd/projects" && req.method === "GET") return json(via ? { current: via.id, projects: [{ id: via.id, name: basename(via.root), tabs: via.clients.size }] } : list(project));
+    if (p === "/__cd/projects" && req.method === "GET") return json(remote ? { current: via!.id, remote: true, projects: [...projects.values()].map((q) => ({ id: q.id, name: basename(q.root), url: `/?project=${q.id}`, tabs: q.clients.size })) } : list(project));
     if (via && (p.startsWith("/__cd/projects") || p === "/__cd/shutdown")) return new Response("forbidden", { status: 403 });
     if (p === "/__cd/projects" && req.method === "POST") {
       const b = (await req.json().catch(() => ({}))) as { root?: string };
@@ -231,11 +234,12 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     if (tn && req.method === "POST") {
       const a = projects.get(tn[1]);
       if (!a) return json({ error: "unknown project" }, 404);
-      if (tn[2]) return (stopTunnel(a.id), json({ ok: true }));
+      if (tn[2]) return (stopTunnel(), json({ ok: true }));
       try {
-        const t = await startTunnel(a);
+        const t = await startTunnel();
+        tunnelHome = a.id;
         lastActive = Date.now();
-        return json({ url: t.token ? `${t.url}/?t=${t.token}` : `${t.url}/` });
+        return json({ url: `${t.url}/?project=${a.id}${t.token ? `&t=${t.token}` : ""}` });
       } catch (e) {
         return json({ error: (e as Error).message }, 500);
       }
