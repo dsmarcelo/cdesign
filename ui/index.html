@@ -57,7 +57,7 @@
   #pick h2{margin:0 0 8px;font-size:16px} #pick .f{border:1px solid var(--line);color:#fafafa} #pick small{color:var(--mut)}
   #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#fafafa;color:#111;padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:80vw}
   #toast.on{opacity:1}
-  #bar{display:contents} #more{display:none}
+  #bar{display:contents} #more,#bb{display:none}
   @media (max-width:700px){
     body{grid-template-columns:1fr;grid-template-rows:44px 1fr}
     header{grid-column:1;position:relative}
@@ -74,6 +74,12 @@
     body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
     aside.l,aside.r{top:calc(44px + env(safe-area-inset-top));bottom:env(safe-area-inset-bottom)}
     aside.l{left:env(safe-area-inset-left)} aside.r{right:env(safe-area-inset-right)}
+    #bb{display:inline-flex}
+    body.bb{grid-template-rows:1fr 44px}
+    body.bb header{grid-area:2/1;border-bottom:0;border-top:1px solid var(--line)}
+    body.bb main{grid-area:1/1}
+    body.bb #bar{top:auto;bottom:100%;border-bottom:0;border-top:1px solid var(--line)}
+    body.bb aside.l,body.bb aside.r{top:env(safe-area-inset-top);bottom:calc(44px + env(safe-area-inset-bottom))}
   }
 </style>
 <header>
@@ -84,6 +90,7 @@
   <select id="proj" title="Switch project"></select>
   <span id="agent" title="Is an agent running `cdesign wait`?"></span>
   <span id="w" class="grp"><button class="ic on" data-w="100%" title="Full width"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3" width="12.5" height="8" rx="1.5"/><path d="M5.5 13.5h5"/></svg></button><button class="ic" data-w="768px" title="Tablet (768px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="1.75" width="10" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="390px" title="Mobile (390px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="resp" title="Responsive: drag the edges to resize width and height"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="2.75" width="9.5" height="9.5" rx="1.5"/><path d="M14.25 7.5v6.75H7.5M10.5 14.25l3.75-3.75"/></svg></button><button class="ic" data-w="split" title="Split: mobile on the left, full width on the right"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3.25" width="4" height="9.5" rx="1"/><rect x="7.75" y="3.25" width="6.5" height="9.5" rx="1"/></svg></button></span>
+  <button id="bb" title="Move the toolbar to the bottom/top of the screen">Toolbar: top</button>
   <button id="theme" title="Toggle light/dark preview">Light</button>
   <button id="sel" class="ic" title="Select element for the agent (S)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M3.5 2.5l9 4.2-3.9 1.3-1.3 3.9z"/><path d="M8.6 8l3 3.2"/></svg></button>
   <button id="mode">Comment (C)</button>
@@ -218,6 +225,9 @@ const panels = () => { panel("#tl", "hl", "cd-hide-l"); panel("#tr", "hr", "cd-h
 $("#tl").onclick = () => { if (mob.matches) mstate["cd-hide-r"] = true; panel("#tl", "hl", "cd-hide-l", true); panels(); };
 $("#tr").onclick = () => { if (mob.matches) mstate["cd-hide-l"] = true; panel("#tr", "hr", "cd-hide-r", true); panels(); };
 $("#more").onclick = () => $("#more").classList.toggle("on", document.body.classList.toggle("bar"));
+const bb = () => { let on = false; try { on = localStorage.getItem("cd-bar-bottom") === "1"; } catch {} document.body.classList.toggle("bb", on); $("#bb").textContent = on ? "Toolbar: bottom" : "Toolbar: top"; return on; };
+$("#bb").onclick = () => { try { localStorage.setItem("cd-bar-bottom", bb() ? "0" : "1"); } catch {} bb(); };
+bb();
 mob.addEventListener("change", panels);
 panels();
 
