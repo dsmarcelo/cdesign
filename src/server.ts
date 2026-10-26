@@ -111,12 +111,13 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       const other = projects.get([...tunnels.keys()][0]);
       throw new Error(`the fixed domain ${cfg.domain} is already serving ${other ? basename(other.root) : "another project"}; run \`cdesign tunnel stop\` for it first`);
     }
-    const token = cfg?.secret ?? crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "");
+    const token = cfg ? cfg.secret ?? "" : crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", ""); // "" = open fixed domain, no secret
     const srv = Bun.serve({
       port: cfg?.port ?? 0,
       hostname: "127.0.0.1",
       idleTimeout: 0,
       fetch(req) {
+        if (!token) return fetchHandler(req, p);
         const url = new URL(req.url);
         if (url.searchParams.get("t") === token) {
           url.searchParams.delete("t");
@@ -234,7 +235,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       try {
         const t = await startTunnel(a);
         lastActive = Date.now();
-        return json({ url: `${t.url}/?t=${t.token}` });
+        return json({ url: t.token ? `${t.url}/?t=${t.token}` : `${t.url}/` });
       } catch (e) {
         return json({ error: (e as Error).message }, 500);
       }
