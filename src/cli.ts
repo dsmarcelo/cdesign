@@ -85,9 +85,21 @@ async function liveDaemon() {
   return null;
 }
 
+/** The running viewer predates the installed code (e.g. after `cdesign update` or a git pull): it must restart to pick up new features. */
+const stale = (startedAt?: number) => {
+  if (!startedAt) return false;
+  try { return readdirSync(import.meta.dir).some((f) => f.endsWith(".ts") && statSync(join(import.meta.dir, f)).mtimeMs > startedAt); } catch { return false; }
+};
+
 async function ensureDaemon(port?: string) {
   let s = await liveDaemon();
-  if (s) return s;
+  if (s) {
+    const info = (() => { try { return JSON.parse(readFileSync(daemonPath(), "utf8")); } catch { return {}; } })();
+    if (!stale(info.startedAt)) return s;
+    await fetch(`http://127.0.0.1:${s.port}/__cd/shutdown`, { method: "POST" }).catch(() => {});
+    for (let i = 0; i < 30 && alive(s.pid); i++) await Bun.sleep(100);
+    s = null;
+  }
   Bun.spawn([process.execPath, join(import.meta.dir, "cli.ts"), "daemon", ...(port ? ["--port", port] : [])], { stdio: ["ignore", "ignore", "ignore"], detached: true }).unref();
   for (let i = 0; i < 50 && !(s = await liveDaemon()); i++) await Bun.sleep(100);
   if (!s) throw new Error("cdesign daemon failed to start");
