@@ -158,4 +158,4 @@ Components are plain HTML fragments under `components/` or `features/`, resolved
 
 ## Data
 
-Comments are stored in `<project>/.cdesign/comments.json`. Add `.cdesign` to the project's `.gitignore`.
+Comments are stored in `<project>/.cdesign/comments.json`. `.cdesign/` holds only local state (comments, screenshots, agent status); cdesign puts a `.gitignore` containing `*` inside it automatically, so nothing there is committed and you don't need to edit your own `.gitignore`.

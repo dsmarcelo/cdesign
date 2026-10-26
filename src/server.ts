@@ -1,7 +1,7 @@
 import { watch, readdirSync, statSync, writeFileSync, mkdirSync, existsSync, rmSync, type FSWatcher } from "node:fs";
 import { basename, isAbsolute, join, resolve, relative, sep } from "node:path";
 import { renderPage, snippetFor } from "./render";
-import { daemonPath, dataDir, homeDir, listening, projectId, readComments, readProjects, readTunnelConfig, update, writeProjects, type Comment } from "./store";
+import { daemonPath, dataDir, ensureDataDir, homeDir, listening, projectId, readComments, readProjects, readTunnelConfig, update, writeProjects, type Comment } from "./store";
 
 const UI = join(import.meta.dir, "..", "ui");
 const SKIP = new Set(["node_modules", ".git", ".cdesign", "dist"]);
@@ -62,7 +62,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     const old = projects.get(projectId(root));
     if (old) return old;
     const p: Project = { id: projectId(root), root, clients: new Set(), tabOf: new Map(), tabs: new Map(), on: false, watchers: [] };
-    mkdirSync(dataDir(root), { recursive: true });
+    ensureDataDir(root);
     let ct: Timer | undefined, t: Timer | undefined;
     const quiet = (w: FSWatcher) => (w.on("error", () => {}), w);
     p.watchers.push(quiet(watch(dataDir(root), (_e, f) => {

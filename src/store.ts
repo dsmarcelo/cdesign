@@ -16,6 +16,14 @@ export type Comment = {
 };
 
 export const dataDir = (root: string) => join(root, ".cdesign");
+/** Creates .cdesign/ with a `*` .gitignore inside it, so comments, screenshots and the agent heartbeat (local-only state) never get committed, whatever the project's own .gitignore says. */
+export function ensureDataDir(root: string) {
+  const d = dataDir(root);
+  mkdirSync(d, { recursive: true });
+  const g = join(d, ".gitignore");
+  if (!existsSync(g)) writeFileSync(g, "# cdesign local state (comments, screenshots, agent status): not for version control\n*\n");
+  return d;
+}
 const path = (root: string) => join(dataDir(root), "comments.json");
 
 export function readComments(root: string): Comment[] {
@@ -29,7 +37,7 @@ export function readComments(root: string): Comment[] {
 }
 
 export function writeComments(root: string, list: Comment[]) {
-  mkdirSync(dataDir(root), { recursive: true });
+  ensureDataDir(root);
   writeFileSync(path(root), JSON.stringify(list, null, 2));
 }
 
@@ -45,7 +53,7 @@ export const hasData = (root: string) => existsSync(path(root));
 // `cdesign wait` writes a heartbeat so the viewer can show whether an agent is listening
 const agentPath = (root: string) => join(dataDir(root), "agent.json");
 export function beat(root: string, waiting: boolean) {
-  mkdirSync(dataDir(root), { recursive: true });
+  ensureDataDir(root);
   writeFileSync(agentPath(root), JSON.stringify({ waiting, at: Date.now() }));
 }
 export function listening(root: string): boolean {

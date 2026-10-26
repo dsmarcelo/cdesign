@@ -5,7 +5,7 @@ import { serveDaemon, listHtml, DEFAULT_PORT } from "./server";
 import { screenshot } from "./shot";
 import { componentIndex, previewOf, sourceOfPreview } from "./render";
 import * as tk from "./tokens";
-import { beat, dataDir, daemonPath, projectId, readComments, readTunnelConfig, writeTunnelConfig, update, commentsPath, type Comment } from "./store";
+import { beat, dataDir, ensureDataDir, daemonPath, projectId, readComments, readTunnelConfig, writeTunnelConfig, update, commentsPath, type Comment } from "./store";
 
 const [cmd = "help", ...rest] = process.argv.slice(2);
 const flag = (n: string) => {
@@ -326,7 +326,7 @@ ${now}`);
     try {
       shot = await screenshot({ url, selector: sel, width, theme, format, maxEdge: 1568, maxHeight: full ? 0 : 1600, y });
     } catch (e) { fail((e as Error).message); }
-    const dir = join(dataDir(root), "shots");
+    const dir = join(ensureDataDir(root), "shots");
     mkdirSync(dir, { recursive: true });
     const path = out ? resolve(out) : join(dir, `${Date.now()}.${format === "jpeg" ? "jpg" : format}`);
     writeFileSync(path, shot!.data);
