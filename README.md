@@ -7,7 +7,7 @@ A lightweight viewer for HTML prototypes, built for coding agents. The agent wri
 - **Viewer:** `cdesign open` serves your project's `.html` files with live reload, a folder tree, and a comment mode.
 - **Element ids:** the server stamps every element with `data-cd-id="line:col"` at serve time. Your files are never modified.
 - **Comments to the agent:** a comment carries the file, element id, selector, the element's source and your text. Comments stay drafts until you press **Send to agent**, which delivers them all as one batch to an agent running `cdesign wait`.
-- **Skills on demand:** `cdesign open` prints the usage skill and the project context, so nothing is installed per project.
+- **Context on demand:** `cdesign open` returns short directions and the current target. Agents retrieve relevant guidance, component contracts and skills as needed; nothing is installed per project.
 
 ## Install
 
@@ -33,14 +33,14 @@ In any project:
 
 ```bash
 cdesign init     # once: scaffold design/
-cdesign open     # start the viewer and print skills + context for the agent
+cdesign open     # start the viewer with compact agent directions
 ```
 
 Tell your agent to run `cdesign open`. Then in the viewer, press `C`, click elements and add comments (Ctrl+Enter). When you are done, press **Send to agent**. The header shows whether an agent is listening: it is if the agent has `cdesign wait` running in the background, and the batch reaches it in the same conversation. If none is listening, the batch is queued and a prompt is copied for you to paste (the agent then runs `cdesign review`).
 
 | Command | What it does |
 |---|---|
-| `open [dir] [--port n] [--no-browser] [--tunnel]` | Open the project in the viewer (starts the shared viewer process if needed); print skills and project context. `--tunnel` also shares it over the internet |
+| `open [dir] [--port n] [--no-browser] [--tunnel] [--full]` | Open the viewer with compact directions and current page/selection. `--full` opts into the usage skill and legacy inventories. `--tunnel` also shares it over the internet |
 | `tunnel [dir]` / `tunnel stop [dir]` | Share the whole viewer (every open project, switchable in the header; `dir` picks the one visitors land on) through a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) quick tunnel. Prints a private link (secret token) |
 | `tunnel set --provider ngrok --domain <name.ngrok-free.dev>` / `tunnel set --provider cloudflare --hostname <host> --token <token> [--port n]` | Make `tunnel` use a **fixed domain** (stored in `~/.cdesign/tunnel.json`). The link is just the domain, with no secret: anyone who knows it can view your open projects and send comments to your agent while the tunnel runs. Add `--secret` to require a stable `?t=` secret instead. **ngrok** is the free route: one static domain per free account (install ngrok, run `ngrok config add-authtoken …`, claim the domain at dashboard.ngrok.com > Domains). **cloudflare** needs a domain on your Cloudflare account and a named tunnel whose public hostname points to `http://localhost:<port>` (default 4748). `tunnel show` prints it, `tunnel unset` returns to random quick-tunnel URLs |
 | `close [dir] [--all]` | Close the project in the viewer; `--all` stops the viewer for every project |
@@ -56,8 +56,8 @@ Tell your agent to run `cdesign open`. Then in the viewer, press `C`, click elem
 | `init [dir]` | Scaffold the `design/` structure |
 | `tokens <sub>` | Search, show, set, remove, build and export tokens |
 | `check` | Verify tokens and components are defined and documented |
-| `skills` | Print the cdesign usage skill |
-| `context [dir]` | Print design system, tokens, components and pages |
+| `skills [get <name>]` | List available skills, or read one |
+| `context [list\|find <words>\|get <id>\|for <path>] [--offset n]` | Discover guidance, read a topic/contract, or map direct dependencies. `--full` opts into legacy inventories |
 | `serve [dir] [--port n]` | Run the viewer in the foreground (it normally starts by itself) |
 
 `open` scaffolds `design/` if it does not exist yet.
@@ -66,9 +66,9 @@ Comment flow: `draft` (in the viewer) → `queued` (Send) → `sent` (agent ran 
 
 ## MCP (agents know cdesign without per-project setup)
 
-Register the MCP server once, user-wide, and any agent that starts in any project knows what cdesign is and calls `open` when you mention it (the server's instructions are loaded into the agent). `open` scaffolds `design/` if needed, starts the viewer and returns the usage guide.
+Register the MCP server once, user-wide, and any agent that starts in any project knows what cdesign is and calls `open` when you mention it (the server's instructions are loaded into the agent). `open` scaffolds `design/` if needed, starts the viewer and returns compact retrieval directions.
 
-`install.sh` does this for you; to redo it, run `cdesign install-mcp`. For other agents, use the command `bun <install dir>/src/cli.ts mcp` in their MCP config. Tools: `open`, `page`, `screenshot` (returns the image directly), `review`, `resolve`, and `run` (any other command, such as `tokens search`). The server uses the working directory the agent was started in as the project.
+`install.sh` does this for you; to redo it, run `cdesign install-mcp`. For other agents, use the command `bun <install dir>/src/cli.ts mcp` in their MCP config. Tools: `open`, `context` (list/find/get/for, with query and offset), `page`, `screenshot` (returns the image directly), `review`, `resolve`, and `run` (any other command, such as `tokens search`). The server uses the working directory the agent was started in as the project.
 
 ## One viewer for all projects
 
@@ -78,7 +78,9 @@ A single background process serves every project (default port 4747, localhost o
 
 ```
 design/
-  design-system.md        source of truth: tokens, typography, components, rules
+  design-system.md        short entry point: identity, essentials, authority and links
+  foundations/            optional focused guidance (color, typography, interaction)
+  patterns/               optional guidance (forms, page shells, feedback)
   tokens.json             design tokens (source of truth, query with `cdesign tokens`)
   tokens.css              generated from tokens.json
   _head.html              injected into every page's <head> (tokens, fonts, Tailwind)
@@ -98,13 +100,32 @@ design/
 
 Every folder keeps its previews in its own `previews/` subfolder. Prototypes start in `prototype/`; when one is done, the agent asks whether to move it to `components/`, `features/` or `pages/`. Moved files stay editable.
 
-Keep `design-system.md` in sync with every token, style or component change. `cdesign check` flags what is missing.
+Update canonical guidance when shared rules or contracts change; local copy and composition edits need no overview update. Short component contracts live in leading HTML comments. Add longer family guidance only when needed. `cdesign check` accepts documentation across maintained design Markdown and component headers, and checks relative guidance file links (not heading anchors). It checks structure, not semantic agreement or rendered quality.
+
+## Targeted context
+
+```bash
+cdesign context                                  # document and component directory
+cdesign context get 'design-system#overview'      # identity and essential constraints
+cdesign context find form validation              # search maintained guidance and contracts
+cdesign context get 'design-system#form-controls' # one section of an existing large file
+cdesign context get component/button              # header, props/defaults, slots, source/preview paths
+cdesign context for design/pages/home.html        # direct dependencies, without expanding source
+```
+
+The MCP `context` tool accepts the same operations as `action`, plus `query` and `offset`. IDs come from discovery results; heading IDs work with existing monolithic files without migration. Quoted IDs preserve `#` in shells. Lists return 20 entries at a time; reads return up to 6,000 characters. Follow the printed continuation command to retrieve more (offsets count entries for lists and characters for reads).
+
+Keep identity, universal constraints and source authority before the first `##` in `design-system.md`; this is the `#overview` topic. Put substantial rules into focused Markdown files when useful and link them from the entry point. Keep related rules together. Component header comments describe the API; optional nearby Markdown explains longer family decisions. Token values remain in `tokens.json`, queried through `tokens` commands.
+
+Discovery excludes imported `reference/`, `references/`, `exported-ds/`, vendor files and previews. Record preferred examples, supported alternatives, experiments and reference freshness in maintained guidance outside those folders. The target map lists direct dependencies and nearby documents, not inferred semantic relevance: search for task-specific patterns as needed.
+
+`cdesign context --full` and `cdesign open --full` explicitly request the old large output. Neither compact startup nor ordinary retrieval dumps whole pages, all skills or token catalogs. Reopening prints the compact directions again; no hidden session cache suppresses necessary context.
 
 ## Tokens
 
 `design/tokens.json` holds the tokens in the Claude Design shape: color (light and dark), type, spacing, radius, size, shadow, fontSize, duration and easing, each with a `usage` note. Drop a file extracted from Claude Design in as is.
 
-Agents never read the file. `cdesign open` prints a short digest of names, and they query the rest:
+Agents query token names, values and usage as needed; `open` does not print the token catalog:
 
 ```bash
 cdesign tokens search danger border      # names, values and usage of matching tokens
@@ -154,7 +175,13 @@ Components are plain HTML fragments under `components/` or `features/`, resolved
 
 ## Skills
 
-`skills/cdesign/SKILL.md` teaches the agent the structure, components and comment loop. `cdesign open` prints it, so nothing is installed per project. Design skills (visual style, taste) are installed separately in the agent itself.
+`cdesign skills` lists bundled skills without loading their bodies:
+
+- `cdesign skills get cdesign`: component syntax, viewer, comments and screenshots.
+- `cdesign skills get cdesign-system`: establish source authority and maintain focused guidance/contracts.
+- `cdesign skills get cdesign-review`: review alignment, responsive behavior, accessibility and preview coverage.
+
+These teach workflows, not an app-specific visual style. Nothing is installed per project.
 
 ## Data
 

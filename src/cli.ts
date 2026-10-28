@@ -5,6 +5,7 @@ import { serveDaemon, listHtml, DEFAULT_PORT } from "./server";
 import { screenshot } from "./shot";
 import { componentIndex, previewOf, sourceOfPreview } from "./render";
 import * as tk from "./tokens";
+import { context, guidanceFiles, startup } from "./context";
 import { beat, dataDir, ensureDataDir, daemonPath, projectId, readComments, readTunnelConfig, writeTunnelConfig, update, commentsPath, type Comment } from "./store";
 
 const [cmd = "help", ...rest] = process.argv.slice(2);
@@ -14,12 +15,19 @@ const flag = (n: string) => {
 };
 
 // ---------- skills (bundled only: they explain how to use cdesign) ----------
-function printSkills() {
+function printSkills(name?: string) {
   const dir = join(import.meta.dir, "..", "skills");
+  if (name && !readdirSync(dir).includes(name)) throw new Error(`Unknown skill: ${name}`);
   for (const d of readdirSync(dir)) {
     const f = join(dir, d, "SKILL.md");
     if (!existsSync(f)) continue;
     const body = readFileSync(f, "utf8").replace(/^---\n[\s\S]*?\n---\n?/, "").trim();
+    if (!name) {
+      const description = readFileSync(f, "utf8").match(/^description:\s*(.+)$/m)?.[1] ?? d;
+      console.log(`${d}: ${description}\n  Read: cdesign skills get ${d}`);
+      continue;
+    }
+    if (d !== name) continue;
     console.log(`\n=== SKILL: ${d} ===\n\n${body}\n`);
   }
 }
@@ -132,7 +140,7 @@ function findRoot(from = process.cwd()) {
 }
 
 /** What the user has open in the viewer right now (last active tab), or null when the daemon or the project is not running. */
-async function pageText(root: string) {
+async function pageText(root: string, compact = false) {
   const s = await liveDaemon();
   if (!s) return null;
   const id = projectId(root);
@@ -148,6 +156,7 @@ async function pageText(root: string) {
     let t = `Open in cdesign: ${r.file} (${base}/#${r.file})`;
     const e = r.selection;
     if (e) {
+      if (compact) return `${t}\nSelected: <${e.tag}> data-cd-id="${e.cdId}" in ${e.file}\nUse cdesign page for its selector, source and instance chain.`;
       t += `
 Selected element (picked by the user with the pointer tool; "this"/"here" refers to it): <${e.tag}> data-cd-id="${e.cdId}" in ${e.file}${e.uses.length ? `
   used in (component instance, innermost first): ${e.uses.join(" <- ")}` : ""}
@@ -191,15 +200,10 @@ switch (cmd) {
     }
     console.log(`cdesign viewer running: ${reg.url}\nproject: ${root}\n`);
     if (rest.includes("--tunnel")) await tunnel(reg).catch((e) => console.log(`tunnel not started: ${e.message}\n`));
-    printSkills();
-    printContext(root);
-    console.log(`=== LOOP ===
-Write/edit prototypes as .html files in ${root} (the viewer live-reloads).
-The user comments on elements in the viewer and presses Send, which delivers all comments as one batch.
-To receive it, run \`cdesign wait\` as a BACKGROUND command (Claude Code: Bash with run_in_background: true; do not block on it).
-It exits when the batch arrives and you are notified with the comments. Apply them all, run \`cdesign resolve <id...>\`, then start \`cdesign wait\` in the background again.
-If you cannot run background commands, run \`cdesign review\` when the user tells you they sent comments.
-One viewer process serves all projects and stops by itself when no viewer tab or listening agent is left.`);
+    console.log(startup());
+    const current = await pageText(root, true);
+    if (current) console.log(`\n${current}`);
+    if (rest.includes("--full")) { printSkills("cdesign"); printContext(root); }
     break;
   }
   case "tunnel": {
@@ -359,22 +363,25 @@ ${now}`);
     };
     put("design/design-system.md", `# Design system
 
-Source of truth for prototypes. Update it in the same edit as any token, style or component change.
+Entry point for the project's design guidance. Keep this overview short: identity, essential constraints, and source authority. Read relevant topics with \`cdesign context find|get\`.
+
+Describe the audience, visual identity, language and universal constraints here. Link existing product documentation instead of duplicating it.
 
 ## Tokens
 Source of truth: \`design/tokens.json\` (query it with \`cdesign tokens search|show\`, change it with \`cdesign tokens set|rm\`). Do not list tokens here; document rules for using them.
 
-## Typography and layout rules
+## Guidance
+Add focused documents under \`design/foundations/\` or \`design/patterns/\` when needed, and link them here. Keep related rules together. Label preferred examples, alternatives, work in progress and imported references explicitly; record authority and freshness when sources disagree.
 
 ## Components
 Files in \`design/components/<ui|shared|layout>/\` and \`design/features/<feature>/\`, each with a \`previews/<name>.preview.html\` in a \`previews/\` folder beside it. Used as \`<c-name prop="x">children</c-name>\`.
-| Component | Props | Slots | Notes |
-|---|---|---|---|
+Document short contracts in leading HTML comments: purpose, props/defaults, slots, states and dependencies. \`cdesign context get component/<name>\` returns the contract without CSS or page source. Put longer family guidance beside related components only when needed; link shared rules rather than repeating them.
 
 ## Prototypes
 Work in progress lives in \`design/prototype/\`. When one is done, ask the user whether to move it to \`components/\`, \`features/\` or \`pages/\`.
 
-## Patterns and rules
+## Maintenance
+Update the canonical topic when a shared rule or contract changes; update affected component previews in the same edit. Local copy or page composition changes do not require updating this overview. Query token values rather than copying them into prose. Run \`cdesign check\`.
 `);
     if (existsSync(join(root, "design/tokens.json"))) console.log("exists  design/tokens.json");
     else console.log(tk.init(root));
@@ -403,6 +410,8 @@ Work in progress lives in \`design/prototype/\`. When one is done, ask the user 
     const read = (f: string) => readFileSync(join(root, f), "utf8");
     const mdPath = join(dir, "design-system.md");
     const md = existsSync(mdPath) ? readFileSync(mdPath, "utf8") : "";
+    const docs = guidanceFiles(root).map(f => ({ file: f, text: read(f) }));
+    const documented = docs.map(d => d.text).join("\n");
     const problems: string[] = [], warnings: string[] = [];
     if (!md) problems.push("design/design-system.md is missing");
     const defined = new Set<string>(), used = new Map<string, string>();
@@ -417,7 +426,7 @@ Work in progress lives in \`design/prototype/\`. When one is done, ask the user 
       warnings.push(...tk.tokenWarnings(root));
       for (const f of files.filter((f) => f.endsWith(".html"))) warnings.push(...tk.hardcoded(f, read(f)));
     }
-    for (const v of defined) if (!hasTokens && md && !md.includes(v)) warnings.push(`${v} is defined but not documented in design-system.md`);
+    for (const v of defined) if (!hasTokens && md && !documented.includes(v)) warnings.push(`${v} is defined but not documented in design guidance`);
     const dups: string[] = [];
     const idx = componentIndex(root, dups);
     for (const n of new Set(dups)) warnings.push(`component name "${n}" is used by more than one file`);
@@ -429,7 +438,20 @@ Work in progress lives in \`design/prototype/\`. When one is done, ask the user 
     for (const f of files.filter((f) => f.endsWith(".html")))
       for (const m of read(f).matchAll(/<c-([\w-]+)/g)) if (!idx.has(m[1])) problems.push(`<c-${m[1]}> used in ${f} has no component file`);
     for (const [n, rel] of idx) if (!existsSync(join(root, previewOf(rel)))) warnings.push(`component "${n}" has no ${previewOf(rel)}`);
-    for (const n of idx.keys()) if (md && !md.includes(`c-${n}`) && !md.includes(n)) warnings.push(`component "${n}" is not documented in design-system.md`);
+    for (const [n, file] of idx) {
+      const hasContract = /^\s*<!--[\s\S]*?\b(?:props|slots|purpose|contract)\s*:/i.test(read(file));
+      if (md && !documented.includes(n) && !hasContract) warnings.push(`component "${n}" needs a header contract or design guidance`);
+    }
+    for (const doc of docs) {
+      const prose = doc.text.replace(/^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?^ {0,3}\1[ \t]*$/gm, "").replace(/`[^`\n]*`/g, "");
+      for (const match of prose.matchAll(/\[[^\]]*\]\((<[^>]*>|[^\s)]+)(?:\s+[^)]*)?\)/g)) {
+        const target = match[1].replace(/^<|>$/g, "").split("#")[0];
+        if (!target || /^(?:[a-z][\w+.-]*:|\/)/i.test(target)) continue;
+        let decoded: string;
+        try { decoded = decodeURIComponent(target); } catch { warnings.push(`${doc.file}: invalid link ${target}`); continue; }
+        if (!existsSync(resolve(dirname(join(root, doc.file)), decoded))) warnings.push(`${doc.file}: broken guidance link ${target}`);
+      }
+    }
     for (const p of problems) console.log("ERROR  " + p);
     for (const w of warnings) console.log("WARN   " + w);
     if (!problems.length && !warnings.length) console.log("design system in sync");
@@ -478,14 +500,18 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
     break;
   }
   case "skills":
-    printSkills();
+    printSkills(rest[0] === "get" ? rest[1] : undefined);
     break;
-  case "context":
-    printContext(resolve(rest[0] ?? "."));
+  case "context": {
+    const offset = Number(flag("--offset") ?? 0);
+    if (rest.includes("--full")) printContext(findRoot());
+    else try { console.log(context(findRoot(), rest[0] ?? "list", rest.slice(1).join(" "), offset)); }
+    catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }
     break;
+  }
   default:
     console.log(`cdesign <command>
-  open [dir] [--port n] [--no-browser] [--tunnel]  open the project in the viewer (one shared process), print skills + context
+  open [dir] [--port n] [--no-browser] [--tunnel] [--full]  open the viewer with compact agent directions; --full opts into the old guide/inventories
   tunnel [dir] | tunnel stop [dir]      share the project (random link with a secret): fixed domain if set, else a random cloudflared quick tunnel
   tunnel set --provider ngrok --domain <name.ngrok-free.dev> | --provider cloudflare --hostname <h> --token <t> [--port n] [--secret]
                                         use a fixed domain; tunnel show | tunnel unset
@@ -504,8 +530,9 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
   install-mcp [claude|codex|agy|all]    register the MCP server with agents found on this machine
   uninstall-mcp [claude|codex|agy|all]  remove it again
   update                                reinstall the latest version from GitHub
-  skills                                print the cdesign usage skill
-  context [dir]                         print tokens/components/pages found in project
+  skills [get <name>]                    list bundled skills, or read one
+  context [list|find <words>|get <id>|for <path>] [--offset n]
+                                        discover guidance/contracts; --full prints legacy inventories
   serve [dir] [--port n]                run the viewer in the foreground (it normally starts by itself)`);
 }
 void commentsPath;
