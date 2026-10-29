@@ -32,6 +32,7 @@
   };
   const fileOf = (el) => el.getAttribute("data-cd-file");
   const usesOf = (el) => {
+    if (el.hasAttribute("data-cd-uses")) { try { return JSON.parse(el.getAttribute("data-cd-uses")); } catch {} }
     const u = [];
     for (let e = el; e; e = e.parentElement) if (e.hasAttribute?.("data-cd-use")) u.push(e.getAttribute("data-cd-use"));
     return u;

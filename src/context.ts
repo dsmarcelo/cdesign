@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { componentIndex, previewOf } from "./render";
+import { previewOf } from "./render";
+import { components as componentIndex, tsxInfo, directComponents } from "./modes";
+import { readConfig } from "./project";
 
 type Entry = { id: string; title: string; file: string; body: string; kind: "doc" | "section" | "component" };
 const SKIP = new Set(["node_modules", ".git", ".cdesign", "vendor", "reference", "references", "exported-ds", "previews"]);
@@ -27,6 +29,11 @@ export function guidanceFiles(root: string): string[] {
 
 export function contract(root: string, file: string): string {
   const source = read(root, file);
+  if (file.endsWith(".tsx")) {
+    const info = tsxInfo(source, file);
+    const dependencies = directComponents(root, file, componentIndex(root));
+    return `Source: ${file}\nPreview: ${previewOf(file)}${existsSync(join(root, previewOf(file))) ? "" : " (missing)"}\n${info.header || "No JSDoc contract; inspect source before changing behavior."}\nProps: ${info.props.join("\n") || "inspect source"}\nDefaults: ${info.defaults.join(", ") || "none"}\nChildren/named content: React props\nDependencies: ${dependencies.join(", ") || "none"}`;
+  }
   const header = source.match(/^\s*((?:<!--[\s\S]*?-->\s*)+)/)?.[1]?.trim();
   const props = [...new Set([...source.matchAll(/\{\{\s*([\w-]+)\s*(?:\|([^}]*))?\}\}/g)].map(m => m[2] === undefined ? m[1] : `${m[1]}=${JSON.stringify(m[2])}`))];
   const slots = [...new Set([...source.matchAll(/<slot\b([^>]*)>/gi)].map(m => m[1].match(/\bname=["']([^"']+)["']/)?.[1] ?? "default"))];
@@ -72,11 +79,11 @@ export function context(root: string, action = "list", query = "", offset = 0): 
     const file = resolve(root, query), rel = relative(root, file);
     if (!query || outside(rel) || !existsSync(file) || !statSync(file).isFile() || outside(relative(realpathSync(root), realpathSync(file)))) throw new Error("Target must be a file inside this project");
     const source = readFileSync(file, "utf8");
-    const names = new Set([...source.matchAll(/<c-([\w-]+)/g)].map(m => m[1]));
+    const names = new Set(file.endsWith(".tsx") ? directComponents(root, query, componentIndex(root)) : [...source.matchAll(/<c-([\w-]+)/g)].map(m => m[1]));
     const own = all.find(e => e.kind === "component" && resolve(root, e.file) === file);
     const related = all.filter(e => e.kind === "doc" && (dirname(e.file) === relative(root, dirname(file)).split(sep).join("/") || e.id === "design-system"));
     const rows = [...(own ? [`Contract: ${own.id}`] : []), ...[...names].map(n => `Dependency: component/${n}`), ...related.map(e => `Guidance: ${e.id}`)];
-    return `${rel}\nShared setup: design/_head.html\n${list(rows, offset, `context for ${JSON.stringify(query)}`)}\nDependencies are references, not expanded source. Search for task-specific patterns with context find.`;
+    return `${rel}\nShared setup: ${readConfig(root).mode === "react" ? "design/styles.css, design/tokens.css" : "design/_head.html"}\n${list(rows, offset, `context for ${JSON.stringify(query)}`)}\nDependencies are references, not expanded source. Search for task-specific patterns with context find.`;
   }
   if (action !== "list" && action !== "find") throw new Error("Use context [list|find <words>|get <id>|for <path>] [--offset n]");
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
@@ -93,5 +100,5 @@ function list(rows: string[], offset: number, command: string): string {
 }
 
 export function startup(): string {
-  return `Reuse the project's identity, components and semantic tokens. Before editing, read cdesign context get "design-system#overview", then find only relevant guidance with cdesign context find <words> or context for <path>. Read component contracts with context get component/<name>; token values with tokens search <words>.\nUsage: cdesign skills get cdesign. Building/maintaining a system: skills get cdesign-system. Reviewing UI: skills get cdesign-review.\nComments: run cdesign wait in a background shell when supported; otherwise review when the user sends comments. Apply the batch, then resolve <ids>.\nUpdate canonical guidance only when shared rules/contracts change; update affected component previews and run cdesign check. Full inventories: cdesign context --full (explicit opt-in).`;
+  return `Reuse the project's identity, components and semantic tokens. Before editing, read cdesign context get "design-system#overview", then find only relevant guidance with cdesign context find <words> or context for <path>. Read component contracts with context get component/<name>; token values with tokens search <words>.\nUsage: cdesign skills get cdesign. Building/maintaining a system: skills get cdesign-system. Reviewing UI: skills get cdesign-review. Converting HTML/React: skills get cdesign-convert.\nComments: run cdesign wait in a background shell when supported; otherwise review when the user sends comments. Apply the batch, then resolve <ids>.\nUpdate canonical guidance only when shared rules/contracts change; update affected component previews and run cdesign check. Full inventories: cdesign context --full (explicit opt-in).`;
 }

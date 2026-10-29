@@ -97,11 +97,16 @@ test("MCP exposes the same targeted context and discoverable skills", async () =
   const transport = new StdioClientTransport({ command: process.execPath, args: [join(import.meta.dir, "../src/cli.ts"), "mcp"], cwd: root, stderr: "pipe" });
   try {
     await client.connect(transport);
-    expect((await client.listTools()).tools.some(t => t.name === "context")).toBe(true);
+    const tools = (await client.listTools()).tools;
+    expect(tools.some(t => t.name === "context")).toBe(true);
+    const open = tools.find(t => t.name === "open")!;
+    expect(open.inputSchema.properties?.mode).toEqual({ type: "string", enum: ["react", "html"] });
+    expect(open.inputSchema.properties?.tailwind).toMatchObject({ type: "boolean" });
     const result = await client.callTool({ name: "context", arguments: { action: "get", query: "component/button" } });
     expect(JSON.stringify(result.content)).toContain('label=');
     const skills = await client.callTool({ name: "run", arguments: { args: "skills" } });
     expect(JSON.stringify(skills.content)).toContain("skills get cdesign-system");
+    expect(JSON.stringify(skills.content)).toContain("skills get cdesign-convert");
     expect(JSON.stringify(skills.content)).not.toContain("## Files and components");
   } finally { await client.close(); }
 });

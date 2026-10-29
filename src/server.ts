@@ -1,6 +1,8 @@
 import { watch, readdirSync, statSync, writeFileSync, mkdirSync, existsSync, rmSync, type FSWatcher } from "node:fs";
 import { basename, isAbsolute, join, resolve, relative, sep } from "node:path";
-import { renderPage, snippetFor } from "./render";
+import { adapter, listPages, sourceSnippet, tailwindCss, errorDocument, insideProject } from "./modes";
+import { readConfig, configure, type SetupOptions } from "./project";
+import { invalidateReact, reactAsset } from "./react";
 import { daemonPath, dataDir, ensureDataDir, homeDir, listening, projectId, readComments, readProjects, readTunnelConfig, update, writeProjects, type Comment } from "./store";
 
 const UI = join(import.meta.dir, "..", "ui");
@@ -73,6 +75,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     })));
     p.watchers.push(quiet(watch(root, { recursive: true }, (_e, f) => {
       if (!f || f.split(sep).some((s) => SKIP.has(s))) return;
+      invalidateReact(root);
       clearTimeout(t);
       t = setTimeout(() => push(p, "reload"), 80);
     })));
@@ -83,6 +86,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
   function removeProject(p: Project) {
     for (const w of p.watchers) w.close();
     for (const c of p.clients) try { c.close(); } catch { /* already closed */ }
+    invalidateReact(p.root);
     projects.delete(p.id);
     persist();
   }
@@ -212,13 +216,26 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
 
     // ----- daemon-level API -----
     if (p === "/__cd/projects" && req.method === "GET") return json(remote ? { current: via!.id, remote: true, projects: [...projects.values()].map((q) => ({ id: q.id, name: basename(q.root), url: `/?project=${q.id}`, tabs: q.clients.size })) } : list(project));
-    if (via && (p.startsWith("/__cd/projects") || p === "/__cd/shutdown")) return new Response("forbidden", { status: 403 });
+    if (via && (p.startsWith("/__cd/projects") || p === "/__cd/shutdown" || p === "/__cd/setup")) return new Response("forbidden", { status: 403 });
+    if (p === "/__cd/setup" && req.method === "GET") {
+      const root = url.searchParams.get("root") ?? "";
+      if (!isAbsolute(root) || !existsSync(root) || !statSync(root).isDirectory()) return json({ error: "root must be an existing absolute folder" }, 400);
+      try {
+        const config = readConfig(root);
+        return json({ config, existing: existsSync(join(root, "design/cdesign.json")) || existsSync(join(root, "design/design-system.md")) || config.mode === "html" });
+      } catch (e) { return json({ error: String(e) }, 400); }
+    }
     if (p === "/__cd/projects" && req.method === "POST") {
-      const b = (await req.json().catch(() => ({}))) as { root?: string };
+      const b = (await req.json().catch(() => ({}))) as { root?: string; mode?: SetupOptions["mode"]; tailwind?: boolean };
       const root = b.root ? resolve(b.root) : "";
       if (!root || !isAbsolute(root) || !existsSync(root) || !statSync(root).isDirectory()) return json({ error: "root must be an existing folder" }, 400);
-      if (!existsSync(join(root, "design", "design-system.md")))
-        Bun.spawnSync([process.execPath, join(import.meta.dir, "cli.ts"), "init", root], { stdio: ["ignore", "ignore", "ignore"] });
+      try {
+        configure(root, { ...(b.mode === undefined ? {} : { mode: b.mode }), ...(b.tailwind === undefined ? {} : { tailwind: b.tailwind }) });
+        if (!existsSync(join(root, "design", "design-system.md"))) {
+          const init = Bun.spawnSync([process.execPath, join(import.meta.dir, "cli.ts"), "init", root], { stdio: ["ignore", "pipe", "pipe"] });
+          if (init.exitCode) throw new Error(init.stderr.toString());
+        }
+      } catch (e) { return json({ error: String(e) }, 400); }
       const a = addProject(root);
       lastActive = Date.now();
       return json({ id: a.id, root: a.root, url: `http://${a.id}.localhost:${server.port}/`, tabs: a.clients.size });
@@ -255,7 +272,16 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     const tab = (id: string) => project!.tabs.get(id) ?? (project!.tabs.set(id, { file: null, at: 0, selection: null }), project!.tabs.get(id)!);
     const current = () => [...project!.tabs.values()].filter((t) => t.file).sort((a, b) => b.at - a.at)[0] ?? null;
 
-    if (p === "/__cd/files") return json(listHtml(root));
+    if (p === "/__cd/files") return json(listPages(root));
+    if (p === "/__cd/config") return json(readConfig(root));
+    if (p.startsWith("/__cd/react/")) {
+      const asset = await reactAsset(root, p);
+      return asset ? new Response(asset, { headers: { "cache-control": "no-store" } }) : new Response("not found", { status: 404 });
+    }
+    if (p === "/__cd/tailwind.css") {
+      try { return new Response(await tailwindCss(root), { headers: { "content-type": "text/css", "cache-control": "no-store" } }); }
+      catch (e) { return new Response(String(e), { status: 500 }); }
+    }
 
     if (p === "/__cd/events") {
       let ctrl!: ReadableStreamDefaultController;
@@ -301,7 +327,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       }
       let snippet = "";
       try {
-        snippet = snippetFor(await Bun.file(join(root, b.selection.file)).text(), b.selection.cdId);
+        snippet = sourceSnippet(root, b.selection.file, b.selection.cdId);
       } catch {}
       t.selection = { ...b.selection, uses: b.selection.uses ?? [], snippet };
       return json({ ok: true });
@@ -316,7 +342,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       if (!b.file || !b.cdId || !b.text?.trim()) return json({ error: "file, cdId, text required" }, 400);
       let snippet = "";
       try {
-        snippet = snippetFor(await Bun.file(join(root, b.file)).text(), b.cdId);
+        snippet = sourceSnippet(root, b.file, b.cdId);
       } catch {}
       const c: Comment = {
         id: Math.random().toString(36).slice(2, 8),
@@ -359,8 +385,11 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     if (!abs.startsWith(root + sep) && abs !== root) return new Response("forbidden", { status: 403 });
     const f = Bun.file(abs);
     if (!(await f.exists())) return new Response("not found", { status: 404 });
-    if (abs.endsWith(".html") && p.startsWith("/p/")) {
-      const html = renderPage(root, rel);
+    if (!insideProject(root, rel)) return new Response("forbidden", { status: 403 });
+    if (/\.(html|tsx)$/.test(abs) && p.startsWith("/p/")) {
+      if (!listPages(root).includes(rel)) return new Response("not a preview entry for this mode", { status: 404 });
+      let html: string;
+      try { html = await adapter(root).render(root, rel); } catch (e) { html = errorDocument(e); }
       const tag = url.searchParams.has("raw") ? "" : `<script src="/__cd/overlay.js"></script>`; // raw: screenshots, no commenting overlay
       const body = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, tag + "</body>") : html + tag;
       return new Response(body, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });

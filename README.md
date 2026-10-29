@@ -1,10 +1,10 @@
 # cdesign
 
-A lightweight viewer for HTML prototypes, built for coding agents. The agent writes prototypes, you comment on any element in the browser, and the agent receives the comment with the exact file and line to change. The finished prototypes are references another agent can use to build the real code (React, Astro, …).
+A lightweight viewer for React TSX and HTML prototypes, built for coding agents. The agent writes prototypes, you comment on any element in the browser, and the agent receives the comment with the exact file and line to change. The finished prototypes are references another agent can use to build the real code (React, Astro, …).
 
 ## How it works
 
-- **Viewer:** `cdesign open` serves your project's `.html` files with live reload, a folder tree, and a comment mode.
+- **Viewer:** `cdesign open` serves React TSX pages/previews or HTML files with live reload, a folder tree, and a comment mode.
 - **Element ids:** the server stamps every element with `data-cd-id="line:col"` at serve time. Your files are never modified.
 - **Comments to the agent:** a comment carries the file, element id, selector, the element's source and your text. Comments stay drafts until you press **Send to agent**, which delivers them all as one batch to an agent running `cdesign wait`.
 - **Context on demand:** `cdesign open` returns short directions and the current target. Agents retrieve relevant guidance, component contracts and skills as needed; nothing is installed per project.
@@ -32,7 +32,7 @@ Register or remove the MCP server later with `cdesign install-mcp [claude|codex|
 In any project:
 
 ```bash
-cdesign init     # once: scaffold design/
+cdesign init     # once: scaffold design/ (React + Tailwind by default)
 cdesign open     # start the viewer with compact agent directions
 ```
 
@@ -60,6 +60,37 @@ Tell your agent to run `cdesign open`. Then in the viewer, press `C`, click elem
 | `context [list\|find <words>\|get <id>\|for <path>] [--offset n]` | Discover guidance, read a topic/contract, or map direct dependencies. `--full` opts into legacy inventories |
 | `serve [dir] [--port n]` | Run the viewer in the foreground (it normally starts by itself) |
 
+## React or HTML mode
+
+New projects default to **React with Tailwind CSS**. First-time terminal setup and the viewer's Add folder flow offer React/HTML and Tailwind/plain CSS choices. Noninteractive setup uses the defaults; MCP `open` accepts `mode` and `tailwind` options.
+
+```bash
+cdesign init --mode react --tailwind     # default
+cdesign open --mode react --no-tailwind  # React with plain CSS
+cdesign init --mode html --no-tailwind   # HTML fragments
+```
+
+Choices persist in `design/cdesign.json` (`version: 1`, `mode: "react" | "html"`, `tailwind: boolean`). Reopening preserves them. Existing unconfigured HTML projects retain HTML mode. Explicit flags update settings without converting or deleting source.
+
+React mode supports **TSX only**. Pages in `design/pages/`, experiments in `design/prototype/`, and `previews/Name.preview.tsx` files must default-export a component. Reusable components live under `design/components/` and `design/features/`; they are not page entries. Imports, typed props, hooks, CSS and local asset imports work. React is bundled by cdesign rather than installed into the host application. Host dependencies must be browser-compatible; framework server features are outside the preview runtime.
+
+```tsx
+// design/pages/Home.tsx
+import { useState } from "react";
+export default function Home() {
+  const [count, setCount] = useState(0);
+  return <button className="rounded-md p-4" onClick={() => setCount(count + 1)}>
+    Clicked {count} times
+  </button>;
+}
+```
+
+`design/styles.css` supplies shared styles and can be extended with local CSS imports. Tokens load automatically. Tailwind utilities (including exported semantic tokens) compile locally when enabled; no CDN or host Tailwind installation is required. Use complete utility names in source. With Tailwind disabled, author ordinary CSS. React component contracts use leading JSDoc and `NameProps` types; context maps direct local imports. JSX annotations are generated from original source locations. Build/runtime errors appear in the preview.
+
+### Convert existing designs
+
+Read `cdesign skills get cdesign-convert` to convert HTML → React TSX or React TSX → HTML. The agent preserves components, assets, tokens, supported behavior and previews, verifies matching screenshots and interactions, and reports unsupported adaptations. Partial conversion leaves the active mode unchanged; whole-project conversion switches it after verification. Original files are retained unless removal is authorized.
+
 `open` scaffolds `design/` if it does not exist yet.
 
 Comment flow: `draft` (in the viewer) → `queued` (Send) → `sent` (agent ran `cdesign review`) → `done` (`cdesign resolve`). The agent is never interrupted: it reads the batch when you tell it to.
@@ -74,7 +105,7 @@ Register the MCP server once, user-wide, and any agent that starts in any projec
 
 A single background process serves every project (default port 4747, localhost only; its address is kept in `~/.cdesign/daemon.json`). Each project has its own address, `http://<project>.localhost:4747/`, and the header has a project switcher (add a folder, close a project). Agents address their own project from the folder they run in, so several agents on several projects do not mix. The process stops by itself after 2 minutes with no viewer tab open and no agent running `cdesign wait` (`CDESIGN_IDLE_SECONDS` changes this), so nothing is left behind; the next `cdesign open` starts it again.
 
-## Project structure
+## Project structure (HTML mode)
 
 ```
 design/
@@ -100,7 +131,7 @@ design/
 
 Every folder keeps its previews in its own `previews/` subfolder. Prototypes start in `prototype/`; when one is done, the agent asks whether to move it to `components/`, `features/` or `pages/`. Moved files stay editable.
 
-Update canonical guidance when shared rules or contracts change; local copy and composition edits need no overview update. Short component contracts live in leading HTML comments. Add longer family guidance only when needed. `cdesign check` accepts documentation across maintained design Markdown and component headers, and checks relative guidance file links (not heading anchors). It checks structure, not semantic agreement or rendered quality.
+Update canonical guidance when shared rules or contracts change; local copy and composition edits need no overview update. Short component contracts live in leading HTML comments (or JSDoc for React TSX). Add longer family guidance only when needed. `cdesign check` accepts documentation across maintained design Markdown and component headers, and checks relative guidance file links (not heading anchors). It checks structure, not semantic agreement or rendered quality.
 
 ## Targeted context
 
@@ -153,7 +184,7 @@ cdesign tokens export css -o src/styles/tokens.css                 # plain CSS v
 
 The viewer header has a Light/Dark button, and a button at each end hides or shows the file list (left) and the comments panel (right); both choices are remembered. It sets `data-theme` on the previewed page (remembered across reloads, and it starts from your system theme), so the dark values from `tokens.json` can be reviewed in place.
 
-## Components
+## Components (HTML mode)
 
 Components are plain HTML fragments under `components/` or `features/`, resolved by filename (unique across folders) and used as `<c-name>` tags. Each has a `previews/<name>.preview.html` in a `previews/` folder beside it showing all variants, sizes and states; `cdesign check` warns when it is missing (`cdesign check --fix` moves old side-by-side previews into `previews/`).
 

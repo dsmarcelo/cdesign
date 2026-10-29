@@ -6,6 +6,8 @@ description: Review cdesign prototypes for design-system alignment, responsive b
 
 Scope the review to the requested target. Use `cdesign page` for a vague location, `context for <path>` to map direct dependencies, and `context find`/`get` for relevant rules and contracts. Do not load the entire library or imported reference bundles by default.
 
+Read `design/cdesign.json` to identify React TSX versus HTML mode and Tailwind versus plain CSS. React entries must use TSX; component contracts use JSDoc and typed props, and previews use `.preview.tsx`. HTML contracts/previews retain their existing conventions.
+
 Run `cdesign check` for undefined tokens/components, missing previews, contract documentation and broken guidance file links. Its success does not prove visual consistency or accessibility.
 
 Inspect the rendered target with `cdesign shot` or MCP screenshot. Prefer an element capture for a component change. Check relevant viewport sizes, themes and states; batch fixes revealed by one inspection before capturing again. Screenshots cannot prove keyboard operation or screen-reader behavior; use interaction/source checks where available and report limits.

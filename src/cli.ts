@@ -1,9 +1,12 @@
 #!/usr/bin/env bun
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { serveDaemon, listHtml, DEFAULT_PORT } from "./server";
+import { serveDaemon, DEFAULT_PORT } from "./server";
 import { screenshot } from "./shot";
-import { componentIndex, previewOf, sourceOfPreview } from "./render";
+import { previewOf, sourceOfPreview } from "./render";
+import { components as componentIndex, listPages, adapter, tsxInfo } from "./modes";
+import { relocateImports } from "./tsx";
+import { setup, readConfig, type SetupOptions } from "./project";
 import * as tk from "./tokens";
 import { context, guidanceFiles, startup } from "./context";
 import { beat, dataDir, ensureDataDir, daemonPath, projectId, readComments, readTunnelConfig, writeTunnelConfig, update, commentsPath, type Comment } from "./store";
@@ -13,6 +16,15 @@ const flag = (n: string) => {
   const i = rest.indexOf(n);
   return i < 0 ? undefined : rest.splice(i, 2)[1];
 };
+
+function setupOptions(): SetupOptions {
+  const hasMode = rest.includes("--mode"), mode = flag("--mode");
+  if (hasMode && mode !== "react" && mode !== "html") throw new Error("--mode must be react or html");
+  const yes = rest.includes("--tailwind"), no = rest.includes("--no-tailwind");
+  if (yes && no) throw new Error("Choose --tailwind or --no-tailwind");
+  for (const f of ["--tailwind", "--no-tailwind"]) { const i = rest.indexOf(f); if (i >= 0) rest.splice(i, 1); }
+  return { ...(mode ? { mode: mode as "react" | "html" } : {}), ...(yes || no ? { tailwind: yes } : {}) };
+}
 
 // ---------- skills (bundled only: they explain how to use cdesign) ----------
 function printSkills(name?: string) {
@@ -61,16 +73,16 @@ function printContext(root: string) {
   const ds = join(root, "design", "design-system.md");
   console.log("=== DESIGN SYSTEM (design/design-system.md: source of truth, keep it in sync with every change) ===");
   console.log(existsSync(ds) ? readFileSync(ds, "utf8").trim() + "\n" : "missing. Run `cdesign init` to scaffold design/, then create the design system with the design-system skill.\n");
-  const comps2 = [...componentIndex(root)].map(([n, p]) => `<c-${n}> -> ${p}`);
-  show("Prototype components (use as <c-name prop=\"…\">children</c-name>)", comps2.map((x) => "  " + x));
+  const comps2 = [...componentIndex(root)].map(([n, p]) => `${readConfig(root).mode === "react" ? n : `<c-${n}>`} -> ${p}`);
+  show("Prototype components", comps2.map((x) => "  " + x));
   if (hasTokens) console.log(tk.digest(root));
   console.log("=== PROJECT CONTEXT (reuse these, do not invent new tokens/components) ===");
   show("Project CSS custom properties", tokens);
   show("Tailwind config", tw);
   show("Components", comps);
   show("Pages / routes", pages);
-  show("Prototypes in progress (design/prototype/)", files.filter((f) => f.startsWith("design/prototype/") && f.endsWith(".html") && !f.includes("/_")));
-  show("Existing prototypes (.html)", listHtml(root));
+  show("Prototypes in progress (design/prototype/)", files.filter((f) => f.startsWith("design/prototype/") && /\.(html|tsx)$/.test(f) && !f.includes("/_")));
+  show("Preview entries", listPages(root));
 }
 
 // ---------- daemon lifecycle (one viewer process for every project) ----------
@@ -186,12 +198,15 @@ switch (cmd) {
     break;
   }
   case "open": {
+    const options = setupOptions();
     const port = flag("--port");
     const quiet = rest.includes("--no-browser");
     const dirArg = rest.find((a) => !a.startsWith("--"));
     const root = dirArg ? resolve(dirArg) : findRoot();
     const scaffolded = !existsSync(join(root, "design", "design-system.md"));
+    const config = await setup(root, options);
     const reg = await register(root, port); // scaffolds design/ when missing
+    console.log(`mode: ${config.mode}; Tailwind CSS: ${config.tailwind ? "enabled" : "disabled"}`);
     if (scaffolded) console.log("(design/ did not exist: scaffolded it. Create the design system next.)");
     try { rmSync(join(dataDir(root), "server.json")); } catch { /* legacy per-project server file */ }
     if (!quiet && !reg.tabs) {
@@ -223,7 +238,7 @@ switch (cmd) {
       if (provider === "cloudflare" && !token) fail("--provider cloudflare needs --token <tunnel token> (Zero Trust > Networks > Tunnels)");
       if (!(port > 1023 && port < 65536)) fail("--port must be between 1024 and 65535");
       const secret = withSecret ? crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "") : undefined; // stable access secret (opt-in): the private link stays the same
-      writeTunnelConfig(provider === "ngrok" ? { provider, domain, port, secret } : { provider, domain, token: token!, port, secret });
+      writeTunnelConfig(provider === "ngrok" ? { provider, domain, port, secret } : { provider: "cloudflare", domain, token: token!, port, secret });
       console.log(`fixed tunnel domain saved: https://${domain} (${provider})
 Run \`cdesign tunnel\` to share the viewer (all your open projects, switchable from the header) at it.${secret ? "\nThe link carries a ?t=… secret that stays the same until you run `tunnel set` again." : `\nNo secret: anyone who knows https://${domain} can view your open projects and send comments to your agent while the tunnel runs. Add --secret to require one.`}${provider === "cloudflare" ? `
 In the Cloudflare dashboard the tunnel's public hostname must be ${domain} -> http://localhost:${port}.` : `
@@ -353,11 +368,17 @@ ${now}`);
     break;
   }
   case "init": {
+    const options = setupOptions();
     const root = resolve(rest[0] ?? ".");
+    const config = await setup(root, options);
+    console.log(`mode: ${config.mode}; Tailwind CSS: ${config.tailwind ? "enabled" : "disabled"}`);
     const put = (rel: string, body: string) => {
       const f = join(root, rel);
       if (existsSync(f)) return console.log(`exists  ${rel}`);
       mkdirSync(join(f, ".."), { recursive: true });
+      if (rel === "design/design-system.md" && config.mode === "react") {
+        body = body.replace(/## Components[\s\S]*?## Prototypes/, `## Components\nTSX only: React components in \`design/components/<ui|shared|layout>/\` and \`design/features/<feature>/\`. Default-export preview entries at \`previews/<Name>.preview.tsx\` beside components. Use imports, typed Props and children/named props. Document contracts in leading JSDoc. Shared styles: \`design/styles.css\`; tokens: \`design/tokens.css\`. Tailwind CSS is ${config.tailwind ? "enabled" : "disabled"}.\n\n## Prototypes`);
+      }
       writeFileSync(f, body);
       console.log(`created ${rel}`);
     };
@@ -390,6 +411,7 @@ Update the canonical topic when a shared rule or contract changes; update affect
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="stylesheet" href="/design/tokens.css">
 `);
+    if (config.mode === "react") put("design/styles.css", "/* Shared React styles. Tokens are loaded by cdesign. */\nbody { margin: 0; font-family: system-ui, sans-serif; }\n");
     mkdirSync(join(root, "design/pages"), { recursive: true });
     for (const d of ["components/ui", "components/shared", "components/layout", "features", "prototype"]) mkdirSync(join(root, "design", d), { recursive: true });
     break;
@@ -399,20 +421,22 @@ Update the canonical topic when a shared rule or contract changes; update affect
     const root = resolve(rest.filter((a) => a !== "--fix")[0] ?? ".");
     const dir = join(root, "design");
     if (fix && existsSync(dir))
-      for (const f of walk(dir, root).filter((f) => f.endsWith(".preview.html") && !/(^|\/)previews\//.test(f))) {
-        const to = previewOf(f.replace(/\.preview\.html$/, ".html"));
+      for (const f of walk(dir, root).filter((f) => /\.preview\.(html|tsx)$/.test(f) && !/(^|\/)previews\//.test(f))) {
+        const to = previewOf(f.replace(/\.preview\.(html|tsx)$/, ".$1"));
         if (existsSync(join(root, to))) continue;
         mkdirSync(dirname(join(root, to)), { recursive: true });
+        if (f.endsWith(".tsx")) writeFileSync(join(root, f), relocateImports(readFileSync(join(root, f), "utf8"), join(root, f), join(root, to)));
         renameSync(join(root, f), join(root, to));
         console.log(`moved   ${f} -> ${to}`);
       }
-    const files = existsSync(dir) ? walk(dir, root).filter((f) => /\.(html|css)$/.test(f)) : [];
+    const reactMode = readConfig(root).mode === "react";
+    const files = existsSync(dir) ? walk(dir, root).filter((f) => (reactMode ? /\.(tsx|css)$/ : /\.(html|css)$/).test(f)) : [];
     const read = (f: string) => readFileSync(join(root, f), "utf8");
     const mdPath = join(dir, "design-system.md");
     const md = existsSync(mdPath) ? readFileSync(mdPath, "utf8") : "";
     const docs = guidanceFiles(root).map(f => ({ file: f, text: read(f) }));
     const documented = docs.map(d => d.text).join("\n");
-    const problems: string[] = [], warnings: string[] = [];
+    const problems: string[] = await adapter(root).diagnostics(root), warnings: string[] = [];
     if (!md) problems.push("design/design-system.md is missing");
     const defined = new Set<string>(), used = new Map<string, string>();
     for (const f of files) {
@@ -424,22 +448,22 @@ Update the canonical topic when a shared rule or contract changes; update affect
     const hasTokens = tk.loadTokens(root) !== null;
     if (hasTokens) {
       warnings.push(...tk.tokenWarnings(root));
-      for (const f of files.filter((f) => f.endsWith(".html"))) warnings.push(...tk.hardcoded(f, read(f)));
+      for (const f of files.filter((f) => /\.(html|tsx)$/.test(f))) warnings.push(...tk.hardcoded(f, read(f)));
     }
     for (const v of defined) if (!hasTokens && md && !documented.includes(v)) warnings.push(`${v} is defined but not documented in design guidance`);
     const dups: string[] = [];
     const idx = componentIndex(root, dups);
     for (const n of new Set(dups)) warnings.push(`component name "${n}" is used by more than one file`);
     for (const f of files) {
-      if (!f.endsWith(".preview.html")) continue;
+      if (!/\.preview\.(html|tsx)$/.test(f)) continue;
       if (!/(^|\/)previews\//.test(f)) warnings.push(`${f} must live in a previews/ folder (run \`cdesign check --fix\`)`);
       else if (!existsSync(join(root, sourceOfPreview(f)))) warnings.push(`${f} has no ${sourceOfPreview(f)}`);
     }
-    for (const f of files.filter((f) => f.endsWith(".html")))
+    for (const f of files.filter((f) => !reactMode && f.endsWith(".html")))
       for (const m of read(f).matchAll(/<c-([\w-]+)/g)) if (!idx.has(m[1])) problems.push(`<c-${m[1]}> used in ${f} has no component file`);
     for (const [n, rel] of idx) if (!existsSync(join(root, previewOf(rel)))) warnings.push(`component "${n}" has no ${previewOf(rel)}`);
     for (const [n, file] of idx) {
-      const hasContract = /^\s*<!--[\s\S]*?\b(?:props|slots|purpose|contract)\s*:/i.test(read(file));
+      const hasContract = file.endsWith(".tsx") ? !!tsxInfo(read(file), file).header : /^\s*<!--[\s\S]*?\b(?:props|slots|purpose|contract)\s*:/i.test(read(file));
       if (md && !documented.includes(n) && !hasContract) warnings.push(`component "${n}" needs a header contract or design guidance`);
     }
     for (const doc of docs) {
@@ -511,7 +535,7 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
   }
   default:
     console.log(`cdesign <command>
-  open [dir] [--port n] [--no-browser] [--tunnel] [--full]  open the viewer with compact agent directions; --full opts into the old guide/inventories
+  open [dir] [--mode react|html] [--tailwind|--no-tailwind] [--port n] [--no-browser] [--tunnel] [--full]  open the viewer with compact agent directions; --full opts into the old guide/inventories
   tunnel [dir] | tunnel stop [dir]      share the project (random link with a secret): fixed domain if set, else a random cloudflared quick tunnel
   tunnel set --provider ngrok --domain <name.ngrok-free.dev> | --provider cloudflare --hostname <h> --token <t> [--port n] [--secret]
                                         use a fixed domain; tunnel show | tunnel unset
@@ -523,7 +547,7 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
   wait [--timeout s]                    run in the background: exits with the batch when the user presses Send
   resolve <id...>                       mark comments done
   comments [--all]                      list pending comments
-  init [dir]                            scaffold design/ (design-system.md, tokens, _head, pages, components, features, prototype)
+  init [dir] [--mode react|html] [--tailwind|--no-tailwind]  scaffold design/ (design-system.md, tokens, _head, pages, components, features, prototype)
   check                                 verify tokens/components are defined and documented
   tokens <sub>                          query/change design/tokens.json, export css or tailwind (run: cdesign tokens)
   mcp                                   MCP server (stdio): tells agents how to use cdesign

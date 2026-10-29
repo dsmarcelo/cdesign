@@ -6,9 +6,9 @@ import { readFileSync } from "node:fs";
 
 const CLI = join(import.meta.dir, "cli.ts");
 
-const INSTRUCTIONS = `cdesign is a local viewer for HTML prototypes and mockups, with element-level comments from the user.
+const INSTRUCTIONS = `cdesign is a local viewer for React (TSX) and HTML prototypes and mockups, with element-level comments from the user.
 Use it whenever the user mentions cdesign, asks to design, prototype or mock up UI, or asks you to apply design comments.
-Start with \`open\`: it scaffolds design/ if missing and returns compact directions and the current target. Use \`context\` to find relevant guidance and component contracts; do not load all documents. Use \`run\` with "skills get cdesign" for the usage guide, "skills get cdesign-system" to build/maintain a system, or "skills get cdesign-review" for a review.
+Start with \`open\`: it scaffolds design/ if missing and returns compact directions and the current target. Use \`context\` to find relevant guidance and component contracts; do not load all documents. Use \`run\` with "skills get cdesign" for the usage guide, "skills get cdesign-system" to build/maintain a system, or "skills get cdesign-review" for a review. For HTML/React conversion, read "skills get cdesign-convert". New projects default to React with Tailwind CSS; existing projects keep their mode.
 When the user is vague about location ("this page", "change this", "here", "this button"), call \`page\` before asking anything: it returns the page open in the viewer and the element the user selected with the pointer tool. \`open\` reuses the shared viewer process (one for all projects, chosen by the folder you run in), so never ask the user for a localhost link.
 Never read design/tokens.json directly (it is huge); query it with \`run\` ("tokens search <words>").`;
 
@@ -27,7 +27,7 @@ const tools = [
   {
     name: "open",
     description: "Start the viewer (scaffolds design/ if missing); return compact directions and the current page/selection. Call first, then retrieve relevant context.",
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: { type: "object", properties: { mode: { type: "string", enum: ["react", "html"] }, tailwind: { type: "boolean", description: "Enable or disable Tailwind CSS; new React projects default to enabled." } } },
   },
   {
     name: "context",
@@ -85,10 +85,10 @@ const mcp = new Server({ name: "cdesign", version: "0.1.0" }, { capabilities: { 
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
-  const a = (req.params.arguments ?? {}) as { action?: string; query?: string; offset?: number; ids?: string[]; args?: string; page?: string; selected?: boolean; selector?: string; width?: number; theme?: string; format?: string; y?: number; full?: boolean };
+  const a = (req.params.arguments ?? {}) as { mode?: "react" | "html"; tailwind?: boolean; action?: string; query?: string; offset?: number; ids?: string[]; args?: string; page?: string; selected?: boolean; selector?: string; width?: number; theme?: string; format?: string; y?: number; full?: boolean };
   let text: string;
   switch (req.params.name) {
-    case "open": text = await cli(["open"]); break;
+    case "open": text = await cli(["open", ...(a.mode ? ["--mode", a.mode] : []), ...(a.tailwind === undefined ? [] : [a.tailwind ? "--tailwind" : "--no-tailwind"])]); break;
     case "context": text = await cli(["context", a.action ?? "list", ...(a.query ? [a.query] : []), "--offset", String(a.offset ?? 0)]); break;
     case "page": text = await cli(["page"]); break;
     case "screenshot": {

@@ -165,7 +165,7 @@ async function files() {
   if (cur !== had) report();
   $("#files").innerHTML = "";
   draw(tree(l), $("#files"), "");
-  if (!l.length) $("#files").textContent = "No .html files";
+  if (!l.length) $("#files").textContent = "No preview entries. Add a page or component preview.";
 }
 const frames = () => [$("#fr"), $("#fr2")];
 const load = () => { if (cur) { $("#fr").src = "/p/" + cur; if (view === "split") $("#fr2").src = "/p/" + cur; } };
@@ -303,7 +303,21 @@ frames().forEach((f) => f.addEventListener("load", () => { sync(); applyTheme();
 async function addFolder() {
   const root = prompt("Absolute path of the project folder");
   if (!root) return;
-  const r = await fetch("/__cd/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ root }) });
+  const setupResponse = await fetch("/__cd/setup?root=" + encodeURIComponent(root));
+  const setup = await setupResponse.json();
+  if (!setupResponse.ok) return alert(setup.error);
+  const options = {};
+  if (!setup.existing) {
+    const mode = prompt("Project mode: react or html", "react");
+    if (mode === null) return;
+    if (!["react", "html"].includes(mode.trim().toLowerCase())) return alert("Choose react or html");
+    options.mode = mode.trim().toLowerCase();
+    const tailwind = prompt("Use Tailwind CSS? yes or no", "yes");
+    if (tailwind === null) return;
+    if (!["yes", "no", "y", "n"].includes(tailwind.trim().toLowerCase())) return alert("Choose yes or no");
+    options.tailwind = ["yes", "y"].includes(tailwind.trim().toLowerCase());
+  }
+  const r = await fetch("/__cd/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ root, ...options }) });
   const j = await r.json();
   if (!r.ok) return toast(j.error || "could not add folder");
   location.href = j.url;

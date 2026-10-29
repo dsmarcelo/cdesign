@@ -17,11 +17,11 @@ function walk(n: N, fn: (n: N) => void) {
 }
 
 const COMPONENT_DIRS = new Set(["components", "features"]);
-export const isPreview = (name: string) => name.endsWith(".preview.html");
+export const isPreview = (name: string) => /\.preview\.(html|tsx)$/.test(name);
 /** `x/button.html` -> `x/previews/button.preview.html` */
-export const previewOf = (rel: string) => rel.replace(/(^|\/)([^/]+)\.html$/, "$1previews/$2.preview.html");
+export const previewOf = (rel: string) => rel.replace(/(^|\/)([^/]+)\.(html|tsx)$/, "$1previews/$2.preview.$3");
 /** `x/previews/button.preview.html` -> `x/button.html` */
-export const sourceOfPreview = (rel: string) => rel.replace(/(^|\/)previews\/([^/]+)\.preview\.html$/, "$1$2.html");
+export const sourceOfPreview = (rel: string) => rel.replace(/(^|\/)previews\/([^/]+)\.preview\.(html|tsx)$/, "$1$2.$3");
 
 /** component name -> project-relative path, for every .html under a `components/` or `features/` folder (previews excluded). Duplicate names are pushed to `dups`. */
 export function componentIndex(root: string, dups: string[] = []): Map<string, string> {

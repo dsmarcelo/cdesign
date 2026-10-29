@@ -100,6 +100,16 @@ async function capture(wsUrl: string, o: ShotOpts): Promise<ShotResult> {
     if (nav.errorText) throw new Error(`could not load ${o.url}: ${nav.errorText}`);
     await loaded;
     if (o.theme) await ev(`document.documentElement.setAttribute("data-theme", ${JSON.stringify(o.theme)})`);
+    await ev(`new Promise((resolve, reject) => {
+      const start = Date.now();
+      const check = () => {
+        if (window.__cdReady !== false) return resolve();
+        if (Date.now() - start > 15000) return reject(new Error('React preview did not become ready'));
+        setTimeout(check, 25);
+      }; check();
+    })`);
+    const previewError = await ev(`document.getElementById('__cd-error')?.textContent`);
+    if (previewError) throw new Error(previewError);
     // fonts and images settle, then two frames so layout/transitions are done
     await ev(`Promise.all([document.fonts.ready, ...[...document.images].map(i => i.decode().catch(() => {}))]).then(() => new Promise(r => setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(r)), 150)))`);
 
