@@ -1,5 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import postcss from "postcss";
+import { readConfig } from "./project";
 
 // design/tokens.json uses the Claude Design shape:
 //   color:  { themes, tokens: [{ name, value: { light, dark }, usage }] }
@@ -22,6 +24,31 @@ const PREFIX: Record<string, string> = { spacing: "space-", radius: "radius-", s
 
 export const tokensPath = (root: string) => join(root, "design", "tokens.json");
 export const cssPath = (root: string) => join(root, "design", "tokens.css");
+
+export const tailwindPath = (root: string) => join(root, "design", "tailwind.css");
+export const hasTailwindTokens = (root: string) => readConfig(root).tailwind && existsSync(tailwindPath(root));
+
+function cssRows(root: string): Row[] {
+  const out: Row[] = [];
+  const ast = postcss.parse(readFileSync(tailwindPath(root), "utf8"));
+  ast.walkDecls(/^--/, d => {
+    const name = d.prop.slice(2);
+    const prefix = name.split("-")[0];
+    const section = ({ color: "color", spacing: "spacing", radius: "radius", shadow: "shadow", text: "fontSize", font: "type", ease: "easing", duration: "duration" } as Record<string, string>)[prefix] ?? "custom";
+    out.push({ section, name: section === "color" ? name.slice(6) : name, value: d.value, usage: d.parent?.type === "rule" ? d.parent.selector : "@theme" });
+  });
+  return out;
+}
+
+/** One-time migration; existing editable stylesheets are never overwritten. */
+export function initTailwind(root: string): string {
+  if (existsSync(tailwindPath(root))) return "exists  design/tailwind.css";
+  const doc = loadTokens(root);
+  mkdirSync(dirname(tailwindPath(root)), { recursive: true });
+  const theme = doc ? buildTailwind(doc).replace(/\/\*[\s\S]*?\*\//, "/* Shared design tokens and themes. Edit this file directly. */") : '@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));\n@theme {\n  --font-sans: system-ui, sans-serif;\n}\n';
+  writeFileSync(tailwindPath(root), '@import "tailwindcss";\n\n' + theme + (doc ? '\n/* Compatibility for existing components migrated from JSON tokens. */\n' + buildCss({ ...doc, color: undefined }).replace(/\/\*[\s\S]*?\*\//, '') : ''));
+  return "created design/tailwind.css";
+}
 
 export function loadTokens(root: string): Doc | null {
   try { return JSON.parse(readFileSync(tokensPath(root), "utf8")); } catch { return null; }
@@ -65,6 +92,7 @@ function compact(names: string[]): string {
 }
 
 export function digest(root: string): string {
+  if (hasTailwindTokens(root)) return "=== DESIGN TOKENS (design/tailwind.css) ===\nEditable Tailwind v4 entry: tokens in @theme, themes in CSS. Query with tokens search|show; edit the stylesheet directly.\n";
   const doc = loadTokens(root);
   if (!doc) return "";
   const size = Math.round(readFileSync(tokensPath(root)).length / 1024);
@@ -87,8 +115,8 @@ export function digest(root: string): string {
 // ---------- queries ----------
 export function search(root: string, terms: string[], limit: number): string {
   const doc = loadTokens(root);
-  if (!doc) return "no design/tokens.json (run `cdesign init`)";
-  const all = rows(doc);
+  if (!doc && !hasTailwindTokens(root)) return "no design tokens (run `cdesign init`)";
+  const all = hasTailwindTokens(root) ? cssRows(root) : rows(doc!);
   const hit = all.filter((r) => terms.every((t) => `${r.section} ${r.name} ${r.value} ${r.usage}`.toLowerCase().includes(t.toLowerCase())));
   const shown = hit.slice(0, limit).map((r) => `[${r.section}] ${line(r)}`);
   return (shown.join("\n") || "no matches") + (hit.length > limit ? `\n… ${hit.length - limit} more (use --all)` : "");
@@ -96,8 +124,8 @@ export function search(root: string, terms: string[], limit: number): string {
 
 export function show(root: string, section?: string, prefix?: string): string {
   const doc = loadTokens(root);
-  if (!doc) return "no design/tokens.json (run `cdesign init`)";
-  const all = rows(doc);
+  if (!doc && !hasTailwindTokens(root)) return "no design tokens (run `cdesign init`)";
+  const all = hasTailwindTokens(root) ? cssRows(root) : rows(doc!);
   if (!section) return [...new Set(all.map((r) => r.section))].map((s) => `${s} (${all.filter((r) => r.section === s).length})`).join("\n");
   const out = all.filter((r) => r.section === section && (!prefix || r.name.startsWith(prefix)));
   return out.map(line).join("\n") || `nothing in "${section}"${prefix ? ` with prefix "${prefix}"` : ""}`;
@@ -105,6 +133,7 @@ export function show(root: string, section?: string, prefix?: string): string {
 
 // ---------- writes ----------
 export function set(root: string, target: string, f: Record<string, string>): string {
+  if (hasTailwindTokens(root)) return "Edit design/tailwind.css directly; tokens set/rm is for legacy JSON projects.";
   const doc = loadTokens(root) ?? ({} as Doc);
   const [section, ...restPath] = target.split("/");
   let name = restPath.join("/");
@@ -150,6 +179,7 @@ export function set(root: string, target: string, f: Record<string, string>): st
 }
 
 export function remove(root: string, target: string): string {
+  if (hasTailwindTokens(root)) return "Edit design/tailwind.css directly; tokens set/rm is for legacy JSON projects.";
   const doc = loadTokens(root);
   if (!doc) return "no design/tokens.json";
   const [section, ...p] = target.split("/");
@@ -229,9 +259,15 @@ ${darkBlocks(doc)}${utils ? "\n" + utils + "\n" : ""}`;
 
 export function exportTokens(root: string, kind: string, out?: string): string {
   const doc = loadTokens(root);
-  if (!doc) return "no design/tokens.json (run `cdesign init`)";
+  if (!doc && !hasTailwindTokens(root)) return "no design tokens (run `cdesign init`)";
   if (kind !== "css" && kind !== "tailwind") return "usage: cdesign tokens export <css|tailwind> [-o path]";
-  const text = kind === "css" ? buildCss(doc) : buildTailwind(doc);
+  if (hasTailwindTokens(root)) {
+    const text = readFileSync(tailwindPath(root), "utf8");
+    if (kind !== "tailwind") return "Tailwind projects: export tailwind, or compile design/tailwind.css with Tailwind for plain CSS.";
+    if (!out) return text;
+    mkdirSync(dirname(out), { recursive: true }); writeFileSync(out, text); return `wrote ${out} (tailwind)`;
+  }
+  const text = kind === "css" ? buildCss(doc!) : buildTailwind(doc!);
   if (!out) return text;
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, text);
@@ -240,6 +276,7 @@ export function exportTokens(root: string, kind: string, out?: string): string {
 
 // ---------- checks ----------
 export function tokenWarnings(root: string): string[] {
+  if (hasTailwindTokens(root)) { cssRows(root); return []; }
   const doc = loadTokens(root);
   if (!doc) return [];
   const w: string[] = [];

@@ -6,6 +6,7 @@ import { screenshot } from "./shot";
 import { previewOf, sourceOfPreview } from "./render";
 import { components as componentIndex, listPages, adapter, tsxInfo } from "./modes";
 import { relocateImports } from "./tsx";
+import { componentPreview } from "./previews";
 import { setup, readConfig, type SetupOptions } from "./project";
 import * as tk from "./tokens";
 import { context, guidanceFiles, startup } from "./context";
@@ -60,7 +61,7 @@ function printContext(root: string) {
   const files = walk(root, root);
   const css = files.filter((f) => /\.(css|scss)$/.test(f));
   const tokens: string[] = [];
-  const hasTokens = tk.loadTokens(root) !== null;
+  const hasTokens = tk.hasTailwindTokens(root) || tk.loadTokens(root) !== null;
   for (const f of css) {
     if (hasTokens && f === "design/tokens.css") continue; // generated; the digest below covers it
     const vars = [...readFileSync(join(root, f), "utf8").matchAll(/^\s*(--[\w-]+)\s*:/gm)].map((m) => m[1]);
@@ -377,8 +378,9 @@ ${now}`);
       if (existsSync(f)) return console.log(`exists  ${rel}`);
       mkdirSync(join(f, ".."), { recursive: true });
       if (rel === "design/design-system.md" && config.mode === "react") {
-        body = body.replace(/## Components[\s\S]*?## Prototypes/, `## Components\nTSX only: React components in \`design/components/<ui|shared|layout>/\` and \`design/features/<feature>/\`. Default-export preview entries at \`previews/<Name>.preview.tsx\` beside components. Use imports, typed Props and children/named props. Document contracts in leading JSDoc. Shared styles: \`design/styles.css\`; tokens: \`design/tokens.css\`. Tailwind CSS is ${config.tailwind ? "enabled" : "disabled"}.\n\n## Prototypes`);
+        body = body.replace(/## Components[\s\S]*?## Prototypes/, `## Components\nTSX only: React components in \`design/components/<ui|shared|layout>/\` and \`design/features/<feature>/\`. Add a named \`Preview\` export in each component file; opening it renders the examples, not the reusable component without props. Separate default-export entries at \`previews/<Name>.preview.tsx\` remain supported for larger showcases. Inline previews take precedence. Use imports, typed Props and children/named props. Document contracts in leading JSDoc. Shared styles: \`design/styles.css\`; tokens: \`design/tokens.css\`. Tailwind CSS is ${config.tailwind ? "enabled" : "disabled"}.\n\n## Prototypes`);
       }
+      if (rel === "design/design-system.md" && config.tailwind) body = body.replace(/Shared styles:.*?Tailwind CSS is enabled\./, "Style components with Tailwind utilities in TSX. Shared tokens and themes live in \x60design/tailwind.css\x60. Use complete utility strings and variant maps; do not create a CSS file for each component.").replace(/Source of truth:.*?Do not list tokens here; document rules for using them\./, "Source of truth: \x60design/tailwind.css\x60. Edit its @theme tokens and theme rules directly; query with \x60cdesign tokens search|show\x60. Document token usage rules here.");
       writeFileSync(f, body);
       console.log(`created ${rel}`);
     };
@@ -404,14 +406,15 @@ Work in progress lives in \`design/prototype/\`. When one is done, ask the user 
 ## Maintenance
 Update the canonical topic when a shared rule or contract changes; update affected component previews in the same edit. Local copy or page composition changes do not require updating this overview. Query token values rather than copying them into prose. Run \`cdesign check\`.
 `);
-    if (existsSync(join(root, "design/tokens.json"))) console.log("exists  design/tokens.json");
+    if (config.tailwind) console.log(tk.initTailwind(root));
+    else if (existsSync(join(root, "design/tokens.json"))) console.log("exists  design/tokens.json");
     else console.log(tk.init(root));
     put("design/_head.html", `<!-- injected into every prototype's <head>: tokens, fonts, Tailwind, resets -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<link rel="stylesheet" href="/design/tokens.css">
+${config.tailwind ? "" : '<link rel="stylesheet" href="/design/tokens.css">'}
 `);
-    if (config.mode === "react") put("design/styles.css", "/* Shared React styles. Tokens are loaded by cdesign. */\nbody { margin: 0; font-family: system-ui, sans-serif; }\n");
+    if (config.mode === "react" && !config.tailwind) put("design/styles.css", "/* Shared React styles. Tokens are loaded by cdesign. */\nbody { margin: 0; font-family: system-ui, sans-serif; }\n");
     mkdirSync(join(root, "design/pages"), { recursive: true });
     for (const d of ["components/ui", "components/shared", "components/layout", "features", "prototype"]) mkdirSync(join(root, "design", d), { recursive: true });
     break;
@@ -445,7 +448,7 @@ Update the canonical topic when a shared rule or contract changes; update affect
       for (const m of t.matchAll(/var\(\s*(--[\w-]+)/g)) used.set(m[1], f);
     }
     for (const [v, f] of used) if (!defined.has(v)) problems.push(`${v} used in ${f} but never defined`);
-    const hasTokens = tk.loadTokens(root) !== null;
+    const hasTokens = tk.hasTailwindTokens(root) || tk.loadTokens(root) !== null;
     if (hasTokens) {
       warnings.push(...tk.tokenWarnings(root));
       for (const f of files.filter((f) => /\.(html|tsx)$/.test(f))) warnings.push(...tk.hardcoded(f, read(f)));
@@ -461,7 +464,10 @@ Update the canonical topic when a shared rule or contract changes; update affect
     }
     for (const f of files.filter((f) => !reactMode && f.endsWith(".html")))
       for (const m of read(f).matchAll(/<c-([\w-]+)/g)) if (!idx.has(m[1])) problems.push(`<c-${m[1]}> used in ${f} has no component file`);
-    for (const [n, rel] of idx) if (!existsSync(join(root, previewOf(rel)))) warnings.push(`component "${n}" has no ${previewOf(rel)}`);
+    for (const [n, rel] of idx) {
+      if (reactMode ? !componentPreview(root, rel) : !existsSync(join(root, previewOf(rel))))
+        warnings.push(`component "${n}" has no ${reactMode ? `named Preview export or ${previewOf(rel)}` : previewOf(rel)}`);
+    }
     for (const [n, file] of idx) {
       const hasContract = file.endsWith(".tsx") ? !!tsxInfo(read(file), file).header : /^\s*<!--[\s\S]*?\b(?:props|slots|purpose|contract)\s*:/i.test(read(file));
       if (md && !documented.includes(n) && !hasContract) warnings.push(`component "${n}" needs a header contract or design guidance`);
@@ -496,6 +502,7 @@ Update the canonical topic when a shared rule or contract changes; update affect
     else if (sub === "show") console.log(tk.show(root, pos[0], pos[1]));
     else if (sub === "set") console.log(tk.set(root, pos[0] ?? "", opts));
     else if (sub === "rm") console.log(tk.remove(root, pos[0] ?? ""));
+    else if (sub === "build" && tk.hasTailwindTokens(root)) console.log("design/tailwind.css is compiled automatically; edit it directly.");
     else if (sub === "build") { const d = tk.loadTokens(root); if (d) { writeFileSync(tk.cssPath(root), tk.buildCss(d)); console.log("wrote design/tokens.css"); } else console.log("no design/tokens.json"); }
     else if (sub === "export") console.log(tk.exportTokens(root, pos[0] ?? "", opts.o ? resolve(opts.o) : undefined));
     else console.log(`cdesign tokens search <words> [--all] | show [section] [prefix] | set <section>/<name> --value v [--light v --dark v] --usage text | rm <section>/<name> | build | export <css|tailwind> [-o path]

@@ -6,7 +6,7 @@ description: Review cdesign prototypes for design-system alignment, responsive b
 
 Scope the review to the requested target. Use `cdesign page` for a vague location, `context for <path>` to map direct dependencies, and `context find`/`get` for relevant rules and contracts. Do not load the entire library or imported reference bundles by default.
 
-Read `design/cdesign.json` to identify React TSX versus HTML mode and Tailwind versus plain CSS. React entries must use TSX; component contracts use JSDoc and typed props, and previews use `.preview.tsx`. HTML contracts/previews retain their existing conventions.
+Read `design/cdesign.json` to identify React TSX versus HTML mode and Tailwind versus plain CSS. React entries must use TSX; component contracts use JSDoc and typed props. Component previews preferably use a same-file named `Preview` export; separate default-export `previews/Name.preview.tsx` entries remain supported. Verify the effective preview (inline takes precedence when opening a component) and supported variants/states. HTML contracts/previews retain their existing conventions.
 
 Run `cdesign check` for undefined tokens/components, missing previews, contract documentation and broken guidance file links. Its success does not prove visual consistency or accessibility.
 
@@ -20,3 +20,9 @@ Evaluate against the project's own rules:
 - Header contracts and previews matching supported behavior; comparisons and experiments clearly distinguished from preferred examples.
 
 Report concrete findings with file/element, impact and suggested correction. If asked to review only, do not edit. If authorized to fix, update the affected implementation, canonical guidance when rules change, and previews; rerun relevant checks. Preserve the product's identity and scope.
+
+## Tailwind source and component styling
+
+When Tailwind is enabled, `design/tailwind.css` is the canonical, editable Tailwind v4 entry. Define shared tokens in `@theme` and theme overrides in this file. Query with `cdesign tokens search|show`; edit the stylesheet directly. Do not maintain a parallel tokens.json source. Run `cdesign init` to migrate a legacy JSON project once; an existing tailwind.css is preserved.
+
+Style components with utilities in TSX (or HTML), keeping complete literal class strings in variant and size maps. Do not create a paired CSS file for each component or recreate utilities as semantic CSS selectors. Add custom CSS only for a specific need utilities cannot reasonably express; keep shared rules in the root stylesheet. No CDN runtime or host Tailwind installation is required. Plain CSS projects retain tokens.json and generated tokens.css.

@@ -4,7 +4,9 @@ import { createHash } from "node:crypto";
 import { compile } from "@tailwindcss/node";
 import { instrument } from "./tsx";
 import { projectFiles, readConfig } from "./project";
-import { buildTailwind, loadTokens } from "./tokens";
+import { buildTailwind, loadTokens, hasTailwindTokens, tailwindPath } from "./tokens";
+import { componentPreview, isReactComponent } from "./previews";
+import { previewOf } from "./render";
 
 const runtime = `import React from 'react';
 export const Fragment = React.Fragment;
@@ -38,7 +40,8 @@ const themeScript = `<script>try{var t=localStorage.getItem('cd-theme');if(t)doc
 export async function tailwindCss(root: string, extraSources: string[] = [], extraCss = ""): Promise<string> {
   const sources = projectFiles(root, join(root, "design")).filter(f => /\.(tsx|ts|html|css)$/.test(f)).map(f => readFileSync(join(root, f), "utf8"));
   const tokens = loadTokens(root);
-  const compiler = await compile(`@import "tailwindcss" source(none);\n${tokens ? buildTailwind(tokens) : '@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));'}\n${extraCss}`, { base: import.meta.dir, onDependency() {} });
+  const entry = hasTailwindTokens(root) ? readFileSync(tailwindPath(root), "utf8") : null;
+  const compiler = await compile((entry ?? `@import "tailwindcss" source(none);\n${tokens ? buildTailwind(tokens) : '@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));'}`) + `\n${extraCss}`, { base: entry !== null ? join(root, "design") : import.meta.dir, customCssResolver: async (id) => id === "tailwindcss" ? Bun.resolveSync("tailwindcss/index.css", import.meta.dir) : undefined, onDependency() {} });
   return compiler.build([...new Set([...sources, ...extraSources].join("\n").split(/[\s"'`<>={}]+/))]);
 }
 
@@ -66,13 +69,18 @@ export function renderReact(root: string, file: string): Promise<Bundle> {
 }
 
 async function buildReact(root: string, file: string): Promise<Bundle> {
-  const config = readConfig(root), entry = resolve(root, file), sources: string[] = [];
+  const preview = isReactComponent(file) ? componentPreview(root, file) : { file, inline: false };
+  if (!preview) return {
+    html: `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><main id="__cd-empty"><h1>No component preview yet</h1><p>Add a named <code>Preview</code> export to <code>${escape(file)}</code>, or create <code>${escape(previewOf(file))}</code> with a default export.</p><p>cdesign does not render reusable components without example props.</p></main><script>window.__cdReady=true;</script></body></html>`,
+    assets: new Map(),
+  };
+  const config = readConfig(root), entry = resolve(root, preview.file), sources: string[] = [];
   const id = createHash("sha256").update(root + file + Date.now() + Math.random()).digest("hex").slice(0, 16);
   const prefix = `/__cd/react/${id}/`;
   const styles = existsSync(join(root, "design/styles.css")) ? `import ${JSON.stringify(join(root, "design/styles.css"))};` : "";
   const entrySource = `import React from 'react';
 import {createRoot} from 'react-dom/client';
-import Page from ${JSON.stringify(entry)};
+import ${preview.inline ? "{Preview as Page}" : "Page"} from ${JSON.stringify(entry)};
 ${styles}
 class Boundary extends React.Component {
   state = {error: null};
@@ -109,7 +117,7 @@ createRoot(document.getElementById('__cd-root')).render(React.createElement(Boun
     assets.set(prefix + "tailwind.css", new Blob([await tailwindCss(root, sources, bundledCss.join("\n"))], { type: "text/css" }));
     css = `<link rel="stylesheet" href="${prefix}tailwind.css">`;
   }
-  const tokens = existsSync(join(root, "design/tokens.css")) ? '<link rel="stylesheet" href="/design/tokens.css">' : "";
+  const tokens = !config.tailwind && existsSync(join(root, "design/tokens.css")) ? '<link rel="stylesheet" href="/design/tokens.css">' : "";
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${themeScript}${tokens}${css}</head><body><div id="__cd-root"></div><script>window.__cdReady=false;function cdError(e){var p=document.getElementById('__cd-error')||document.createElement('pre');p.id='__cd-error';p.style.cssText='white-space:pre-wrap;color:#b91c1c;padding:24px';p.textContent=String(e);document.body.appendChild(p);window.__cdReady=true}window.addEventListener('error',e=>cdError(e.error||e.message));window.addEventListener('unhandledrejection',e=>cdError(e.reason));</script><script type="module" src="${prefix}page.js" onerror="cdError('Failed to load React preview')"></script></body></html>`;
   return { html, assets };
 }

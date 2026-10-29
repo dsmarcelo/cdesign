@@ -18,7 +18,7 @@ Capture the source at matching desktop/mobile widths and light/dark themes with 
 - Replace `<c-name>` with imports and React component calls. Convert the default slot to `children` and named slots to typed `ReactNode` props. Preserve fallback content and component variants.
 - Translate attributes (`className`, `htmlFor`, boolean properties, SVG attributes), inline style strings to style objects, and DOM scripts/event handlers to React state, callbacks, refs and effects. Preserve cleanup and accessibility. Avoid direct DOM mutation of React-managed content.
 - Move shared `_head.html` styles and fonts into `design/styles.css` or appropriate imports; preserve applicable metadata and script dependencies deliberately. The React renderer loads tokens and shared styles; `_head.html` is HTML-only.
-- Create `previews/Name.preview.tsx` beside components with the same variants, sizes and interactive states. Reuse semantic tokens and local assets. Never copy generated `data-cd-*` attributes.
+- Prefer a named `Preview` export in each component file with the same variants, sizes and interactive states. Use a separate default-export `previews/Name.preview.tsx` for larger showcases or heavy preview-only dependencies; both formats are supported. Reuse semantic tokens and local assets. Never copy generated `data-cd-*` attributes.
 
 ## React TSX → cdesign HTML
 
@@ -35,3 +35,9 @@ Retain Tailwind utilities when enabled in the target; cdesign compiles them loca
 Run `cdesign check` in the target staging project. Compare before/after screenshots at identical widths/themes and exercise the recorded interactions in a browser; screenshots alone do not verify behavior. Fix discrepancies before calling the conversion complete. If a check cannot run, explicitly report what remains unverified and preserve the original configuration/files.
 
 Copy verified target files back without overwriting existing targets; update imports, preview paths, maintained guidance and contracts. For a whole-project conversion, set `design/cdesign.json` to the target mode and requested Tailwind preference only after this verification, then reopen and rerun checks/screenshots. Retain original files unless their removal was authorized. Report converted targets, any adaptations, unresolved portions and validation performed. Generated annotations belong to the renderer, not authored source.
+
+## Tailwind source and component styling
+
+When Tailwind is enabled, `design/tailwind.css` is the canonical, editable Tailwind v4 entry. Define shared tokens in `@theme` and theme overrides in this file. Query with `cdesign tokens search|show`; edit the stylesheet directly. Do not maintain a parallel tokens.json source. Run `cdesign init` to migrate a legacy JSON project once; an existing tailwind.css is preserved.
+
+Style components with utilities in TSX (or HTML), keeping complete literal class strings in variant and size maps. Do not create a paired CSS file for each component or recreate utilities as semantic CSS selectors. Add custom CSS only for a specific need utilities cannot reasonably express; keep shared rules in the root stylesheet. No CDN runtime or host Tailwind installation is required. Plain CSS projects retain tokens.json and generated tokens.css.

@@ -14,8 +14,9 @@ Record which source governs tokens, shared behavior and visual decisions. When a
 ## Organize for retrieval
 - Keep `design/design-system.md` a short entry point: identity, universal constraints, source authority and links to focused guidance. Put essential rules before the first `##` so `design-system#overview` retrieves them together.
 - Split substantial guidance into `design/foundations/*.md` (semantic color, typography, geometry, interaction) and `design/patterns/*.md` (forms, shells, feedback) when useful. Keep tightly coupled rules together, including responsive sizing and composition. Do not create empty topic files.
-- Give each rule one canonical home and link it elsewhere. Prose explains token meaning and application; exact values live in tokens.json and are queried/changed through `cdesign tokens`.
+- Give each rule one canonical home and link it elsewhere. Prose explains token meaning and application; exact values live in design/tailwind.css for Tailwind projects, or tokens.json for plain CSS projects.
 - Keep concise component contracts in leading JSDoc for React TSX, with typed `NameProps`, or leading HTML comments for HTML mode: `Purpose:`, `Props:` with defaults and supported values, `Slots:`, plus relevant states, accessibility and dependencies. Extraction can find typed props/defaults and imports in TSX, or template props and slots in HTML but cannot infer the full API or behavior.
+- Prefer same-file named `Preview` exports for React component examples, covering supported variants, sizes and interactive states. Separate default-export `previews/Name.preview.tsx` files remain supported for larger showcases or preview-only dependencies. Inline previews take precedence when opening a component; HTML preview conventions are unchanged.
 - Add longer Markdown guidance beside a component family only when it conveys decisions that the header/source does not. Avoid a duplicate Markdown API for every component.
 - Label preferred examples, supported alternatives, experiments and imported references in linked guidance. Do not infer preference from version numbers or modification time. `design/reference/`, `design/references/`, `exported-ds/`, vendor runtimes and previews are excluded from guidance discovery; document pointers and authority in maintained Markdown outside them.
 - Use relative Markdown links for maintained documents and examples. `cdesign check` checks local file targets; it does not validate heading anchors or prove semantic agreement.
@@ -28,3 +29,9 @@ When a monolithic file becomes hard to navigate, move existing sections without 
 Run `cdesign check`; review relevant rendered states and sizes. Check contract vs implementation where behavior changed. Report source conflicts or unsupported checks instead of claiming the system is fully verified.
 
 For HTML ↔ React conversion, read `cdesign skills get cdesign-convert`. Changing the project configuration does not migrate source.
+
+## Tailwind source and component styling
+
+When Tailwind is enabled, `design/tailwind.css` is the canonical, editable Tailwind v4 entry. Define shared tokens in `@theme` and theme overrides in this file. Query with `cdesign tokens search|show`; edit the stylesheet directly. Do not maintain a parallel tokens.json source. Run `cdesign init` to migrate a legacy JSON project once; an existing tailwind.css is preserved.
+
+Style components with utilities in TSX (or HTML), keeping complete literal class strings in variant and size maps. Do not create a paired CSS file for each component or recreate utilities as semantic CSS selectors. Add custom CSS only for a specific need utilities cannot reasonably express; keep shared rules in the root stylesheet. No CDN runtime or host Tailwind installation is required. Plain CSS projects retain tokens.json and generated tokens.css.

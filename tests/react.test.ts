@@ -6,6 +6,7 @@ import { configure, readConfig } from "../src/project";
 import { adapter, components, listPages, sourceSnippet } from "../src/modes";
 import { context } from "../src/context";
 import { invalidateReact, renderReact } from "../src/react";
+import { instrument, tsxInfo } from "../src/tsx";
 
 const roots: string[] = [];
 export function fixture() {
@@ -32,7 +33,7 @@ test("new setup defaults to React and Tailwind, reuses settings, and preserves l
   expect(readConfig(explicit.root)).toEqual({version: 1, mode: "html", tailwind: false});
 });
 
-test("React discovers explicit entries only, with contracts, imports and JSX snippets", () => {
+test("React discovers components and explicit entries, with contracts, imports and JSX snippets", () => {
   const {root, put} = fixture(); configure(root);
   put("design/design-system.md", "# Example");
   const source = '/** Purpose: Button. States: idle and pressed. */\nexport interface ButtonProps { label?: string }\nexport default function Button({label = "Save"}: ButtonProps) { return <button>{label}</button>; }';
@@ -40,7 +41,7 @@ test("React discovers explicit entries only, with contracts, imports and JSX sni
   put("design/components/ui/previews/Button.preview.tsx", 'import Button from "../Button"; export default function Preview(){return <Button/>}');
   put("design/pages/Home.tsx", 'import Button from "../components/ui/Button"; export default function Home(){return <Button/>}');
   put("design/pages/Ignore.jsx", "export default () => <div/>");
-  expect(listPages(root)).toEqual(["design/components/ui/previews/Button.preview.tsx", "design/pages/Home.tsx"]);
+  expect(listPages(root)).toEqual(["design/components/ui/Button.tsx", "design/components/ui/previews/Button.preview.tsx", "design/pages/Home.tsx"]);
   expect(components(root).get("Button")).toBe("design/components/ui/Button.tsx");
   expect(context(root, "get", "component/Button")).toContain('label = "Save"');
   expect(context(root, "get", "component/Button")).toContain("ButtonProps");
@@ -73,8 +74,7 @@ test("bundles hooks, assets and CSS without host dependencies; rebuilds imports;
 
 test("Tailwind compiles utilities, variants and exported semantic tokens locally", async () => {
   const {root, put} = fixture(); run(root, "init");
-  const token = run(root, "tokens", "set", "color/brand", "--light", "#123456", "--dark", "#abcdef", "--usage", "Brand color");
-  expect(token.exitCode).toBe(0);
+  put("design/tailwind.css", '@import "tailwindcss"; @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *)); @theme { --color-brand: #123456; } [data-theme="dark"] { --color-brand: #abcdef; }');
   put("design/styles.css", ".custom { @apply p-4; }");
   put("design/pages/Home.tsx", 'export default function Home(){return <main className="p-4 bg-brand dark:p-8 hover:opacity-50 custom">Hello</main>}');
   const bundle = await renderReact(root, "design/pages/Home.tsx");
@@ -104,4 +104,100 @@ test("checks reject JSX and malformed TSX, retain inactive originals, and repair
   expect(readFileSync(join(root, "design/pages/Original.html"), "utf8")).toBe(before);
   expect(listPages(root)).toContain("design/pages/Original.html");
   expect(listPages(root)).not.toContain("design/pages/Bad.tsx");
+});
+
+test("detects explicit runtime Preview exports without matching comments, nested declarations or types", () => {
+  for (const source of [
+    "export function Preview(){return <button/>}",
+    "export const Preview = () => <button/>;",
+    "export class Preview {}",
+    "function Examples(){return <button/>} export {Examples as Preview};",
+    'export {Examples as Preview} from "./Examples";',
+  ]) expect(tsxInfo(source, "Button.tsx").preview).toBe(true);
+  for (const source of [
+    "// export function Preview(){}\nexport function Button(){}",
+    'const example = "export const Preview = 1";',
+    "function Preview(){}",
+    "export default function Preview(){}",
+    "export function Button(){function Preview(){} return <button/>}",
+    "export interface Preview {}",
+    "export type Preview = {};",
+    "export declare const Preview: unknown;",
+    "type Preview = {}; export type {Preview};",
+    "type Preview = {}; export {type Preview};",
+  ]) expect(tsxInfo(source, "Button.tsx").preview).toBe(false);
+});
+
+test("inline previews work with named component exports, contracts, checks and original source locations", async () => {
+  const {root, put} = fixture(); run(root, "init", "--no-tailwind");
+  const file = "design/components/ui/Button.tsx";
+  const source = `/** Purpose: Button. */
+interface ButtonProps { label: string }
+export function Button({label}: ButtonProps) { return <button>{label}</button>; }
+export function Preview() { return <section><Button label="Inline example"/><Button label="Disabled example"/></section>; }`;
+  put(file, source);
+  put("design/features/account/Avatar.tsx", '/** Purpose: Avatar. */ export const Avatar = () => <span/>; export const Preview = () => <Avatar/>;');
+  put("design/components/ui/_Hidden.tsx", "export const Preview = () => <div/>;");
+  expect(listPages(root)).toContain(file);
+  expect(listPages(root)).toContain("design/features/account/Avatar.tsx");
+  expect(listPages(root)).not.toContain("design/components/ui/_Hidden.tsx");
+  expect([...components(root).keys()]).toEqual(["Button", "Avatar"]);
+  const contract = context(root, "get", "component/Button");
+  expect(contract).toContain(`Preview: ${file} (named Preview export)`);
+  expect(contract).toContain("ButtonProps"); expect(contract).not.toContain("(missing)");
+  const bundle = await renderReact(root, file);
+  expect(bundle.html).not.toContain('<pre id="__cd-error"');
+  const js = await [...bundle.assets.values()].find(b => /javascript/.test(b.type))!.text();
+  expect(js).toContain("Inline example"); expect(js).toContain(file);
+  const buttonLoc = `3:${source.split("\n")[2].indexOf("<button>") + 1}`;
+  const instanceLoc = `4:${source.split("\n")[3].indexOf("<Button") + 1}`;
+  expect(sourceSnippet(root, file, buttonLoc)).toBe("<button>{label}</button>");
+  expect(sourceSnippet(root, file, instanceLoc)).toBe('<Button label="Inline example"/>');
+  expect(instrument(source, file)).toContain(`${file}:${instanceLoc}`);
+  const checked = run(root, "check");
+  expect(checked.stdout.toString()).toBe("design system in sync\n"); expect(checked.exitCode).toBe(0);
+  expect(readFileSync(join(root, "design/design-system.md"), "utf8")).toContain("named `Preview` export");
+});
+
+test("component opening prefers inline previews, falls back to sidecars and never guesses component props", async () => {
+  const {root, put} = fixture(); run(root, "init", "--no-tailwind");
+  const file = "design/components/ui/Button.tsx", sidecar = "design/components/ui/previews/Button.preview.tsx";
+  const source = '/** Purpose: Button. */ export default function Button({label}:{label:string}){return <button>{label}</button>}';
+  put(file, source);
+  let bundle = await renderReact(root, file);
+  expect(bundle.html).toContain("No component preview yet"); expect(bundle.assets.size).toBe(0);
+  expect(context(root, "get", "component/Button")).toContain("missing named Preview export");
+  expect(run(root, "check").stdout.toString()).toContain('component "Button" has no named Preview export or');
+  put(sidecar, 'import Button from "../Button"; export default function Preview(){return <Button label="Sidecar example"/>}');
+  expect(components(root).size).toBe(1);
+  expect(context(root, "get", "component/Button")).toContain(`Preview: ${sidecar}`);
+  bundle = await renderReact(root, file);
+  expect(bundle.html).not.toContain('<pre id="__cd-error"');
+  expect(await [...bundle.assets.values()].find(b => /javascript/.test(b.type))!.text()).toContain("Sidecar example");
+  put(file, source + '\nexport function Preview(){return <Button label="Inline example"/>}');
+  bundle = await renderReact(root, file);
+  const js = await [...bundle.assets.values()].find(b => /javascript/.test(b.type))!.text();
+  expect(js).toContain("Inline example"); expect(js).not.toContain("Sidecar example");
+  expect((await renderReact(root, sidecar)).html).not.toContain('<pre id="__cd-error"');
+  expect(run(root, "check").exitCode).toBe(0);
+});
+
+test("pages and prototypes keep rendering their default export even with a named Preview", async () => {
+  const {root, put} = fixture(); configure(root, {tailwind: false});
+  for (const file of ["design/pages/Home.tsx", "design/prototype/Experiment.tsx"]) {
+    put(file, 'export default function Page(){return <main>Page default</main>} export function Preview(){return <aside>Not the page</aside>}');
+    const bundle = await renderReact(root, file);
+    expect(bundle.html).not.toContain('<pre id="__cd-error"');
+    const js = await [...bundle.assets.values()].find(b => /javascript/.test(b.type))!.text();
+    expect(js).toContain("Page default"); expect(js).not.toContain("Not the page");
+  }
+});
+
+test("broken inline previews are checked and recover after edits", async () => {
+  const {root, put} = fixture(); configure(root, {tailwind: false});
+  const file = "design/components/ui/Badge.tsx";
+  put(file, 'export function Preview(){return <Missing/>} import Missing from "./Missing";');
+  expect((await adapter(root).diagnostics(root)).some(e => e.startsWith(file + ":"))).toBe(true);
+  put(file, "export const Preview = () => <span>Recovered</span>;");
+  expect(await adapter(root).diagnostics(root)).toEqual([]);
 });

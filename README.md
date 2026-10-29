@@ -72,7 +72,7 @@ cdesign init --mode html --no-tailwind   # HTML fragments
 
 Choices persist in `design/cdesign.json` (`version: 1`, `mode: "react" | "html"`, `tailwind: boolean`). Reopening preserves them. Existing unconfigured HTML projects retain HTML mode. Explicit flags update settings without converting or deleting source.
 
-React mode supports **TSX only**. Pages in `design/pages/`, experiments in `design/prototype/`, and `previews/Name.preview.tsx` files must default-export a component. Reusable components live under `design/components/` and `design/features/`; they are not page entries. Imports, typed props, hooks, CSS and local asset imports work. React is bundled by cdesign rather than installed into the host application. Host dependencies must be browser-compatible; framework server features are outside the preview runtime.
+React mode supports **TSX only**. Pages in `design/pages/` and experiments in `design/prototype/` must default-export a component. Reusable components live under `design/components/` and `design/features/` and can use named or default exports. Add a named `Preview` export in the same component file: opening that file in cdesign renders the examples, while normal imports still use the reusable component. Imports, typed props, hooks, CSS and local asset imports work. React is bundled by cdesign rather than installed into the host application. Host dependencies must be browser-compatible; framework server features are outside the preview runtime.
 
 ```tsx
 // design/pages/Home.tsx
@@ -85,7 +85,26 @@ export default function Home() {
 }
 ```
 
-`design/styles.css` supplies shared styles and can be extended with local CSS imports. Tokens load automatically. Tailwind utilities (including exported semantic tokens) compile locally when enabled; no CDN or host Tailwind installation is required. Use complete utility names in source. With Tailwind disabled, author ordinary CSS. React component contracts use leading JSDoc and `NameProps` types; context maps direct local imports. JSX annotations are generated from original source locations. Build/runtime errors appear in the preview.
+```tsx
+// design/components/ui/Button.tsx
+/** Purpose: Button with explicit example states. */
+interface ButtonProps { children: React.ReactNode; disabled?: boolean }
+
+export function Button({ children, disabled }: ButtonProps) {
+  return <button disabled={disabled}>{children}</button>;
+}
+
+export function Preview() {
+  return <div className="flex gap-4 p-8">
+    <Button>Save</Button>
+    <Button disabled>Disabled</Button>
+  </div>;
+}
+```
+
+`Preview` is an ordinary React component: use hooks, wrappers and providers for realistic examples. It is not a separate reusable component in cdesign's inventory. A separate `previews/Name.preview.tsx` with a default export remains supported for larger showcases or heavy preview-only dependencies. When opening a component, cdesign prefers its inline `Preview`, falls back to its sidecar, or shows a helpful empty state; it never guesses required props. Sidecars remain directly openable. Pages keep using their default export, even if they also export `Preview`. `cdesign context` and `check` recognize either preview format, and selection/comments preserve implementation and preview call-site locations. Same-file imports are part of the component module, so use a sidecar when preview-only dependencies should stay separate.
+
+In Tailwind mode, `design/tailwind.css` is the editable root entry: put tokens in `@theme`, theme overrides and shared rules here. Use utilities and complete variant maps in component TSX; do not create paired component CSS files. Run `cdesign init` once to migrate legacy JSON tokens without overwriting an existing stylesheet. Token search/show reads the stylesheet; edit it directly. Plain CSS mode uses `design/styles.css` and generated `design/tokens.css`. Tailwind utilities (including exported semantic tokens) compile locally when enabled; no CDN or host Tailwind installation is required. Use complete utility names in source. With Tailwind disabled, author ordinary CSS. React component contracts use leading JSDoc and `NameProps` types; context maps direct local imports. JSX annotations are generated from original source locations. Build/runtime errors appear in the preview.
 
 ### Convert existing designs
 
@@ -112,7 +131,8 @@ design/
   design-system.md        short entry point: identity, essentials, authority and links
   foundations/            optional focused guidance (color, typography, interaction)
   patterns/               optional guidance (forms, page shells, feedback)
-  tokens.json             design tokens (source of truth, query with `cdesign tokens`)
+  tailwind.css            Tailwind entry, editable tokens and themes (Tailwind mode)
+  tokens.json             plain CSS token source (plain CSS mode)
   tokens.css              generated from tokens.json
   _head.html              injected into every page's <head> (tokens, fonts, Tailwind)
   pages/                  real app screens, one per .html file
@@ -154,7 +174,7 @@ Discovery excludes imported `reference/`, `references/`, `exported-ds/`, vendor 
 
 ## Tokens
 
-`design/tokens.json` holds the tokens in the Claude Design shape: color (light and dark), type, spacing, radius, size, shadow, fontSize, duration and easing, each with a `usage` note. Drop a file extracted from Claude Design in as is.
+For plain CSS and legacy projects, `design/tokens.json` holds the tokens in the Claude Design shape: color (light and dark), type, spacing, radius, size, shadow, fontSize, duration and easing, each with a `usage` note. Drop a file extracted from Claude Design in as is.
 
 Agents query token names, values and usage as needed; `open` does not print the token catalog:
 

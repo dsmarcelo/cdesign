@@ -31,7 +31,16 @@ export function tsxInfo(source: string, file: string) {
     ts.forEachChild(node, visit);
   };
   visit(sf);
-  return { header: source.match(/^\s*(\/\*\*[\s\S]*?\*\/)/)?.[1] ?? "", imports, props, defaults };
+  const preview = sf.statements.some(node => {
+    if (ts.isExportDeclaration(node)) return !node.isTypeOnly && node.exportClause && ts.isNamedExports(node.exportClause)
+      && node.exportClause.elements.some(e => !e.isTypeOnly && e.name.text === "Preview");
+    if (!ts.canHaveModifiers(node)) return false;
+    const modifiers = ts.getModifiers(node);
+    if (!modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword) || modifiers.some(m => m.kind === ts.SyntaxKind.DefaultKeyword || m.kind === ts.SyntaxKind.DeclareKeyword)) return false;
+    if (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) return node.name?.text === "Preview";
+    return ts.isVariableStatement(node) && node.declarationList.declarations.some(d => ts.isIdentifier(d.name) && d.name.text === "Preview");
+  });
+  return { header: source.match(/^\s*(\/\*\*[\s\S]*?\*\/)/)?.[1] ?? "", imports, props, defaults, preview };
 }
 
 export function directComponents(root: string, file: string, index: Map<string, string>): string[] {

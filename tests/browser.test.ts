@@ -22,7 +22,7 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
   mkdirSync(home, {recursive: true});
   const put = (file: string, body: string) => { mkdirSync(dirname(join(root, file)), {recursive: true}); writeFileSync(join(root, file), body); };
   const init = Bun.spawnSync([process.execPath, cli, "init"], {cwd: root}); expect(init.exitCode).toBe(0);
-  const button = '/** Purpose: Stateful button. */\nimport {useState} from "react";\nexport default function Button(){ const [n,setN]=useState(0); return <button className="p-4 bg-red-500" onClick={()=>setN(n+1)}>Count {n}</button>}';
+  const button = '/** Purpose: Stateful button. */\nimport {useState} from "react";\nexport default function Button(){ const [n,setN]=useState(0); return <button className="p-4 bg-red-500" onClick={()=>setN(n+1)}>Count {n}</button>}\nexport function Preview(){const [wide,setWide]=useState(false);return <section style={{padding:wide?32:8}}><input type="checkbox" onChange={()=>setWide(!wide)}/><Button/><Button/></section>}';
   put("design/components/ui/Button.tsx", button);
   put("design/pages/Home.tsx", 'import Button from "../components/ui/Button"; export default function Home(){return <main><Button/><Button/></main>}');
   const daemon = Bun.spawn([process.execPath, cli, "serve", root, "--port", "0"], {env: {...process.env, CDESIGN_HOME: home, CDESIGN_IDLE_SECONDS: "300"}, stdout: "ignore", stderr: "pipe"});
@@ -57,6 +57,7 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
     await navigate("/p/design/pages/Home.tsx", "button");
     expect(await ev("getComputedStyle(document.querySelector('button')).padding")).toBe("16px");
     expect(await ev("document.querySelectorAll('button').length")).toBe(2);
+    expect(await ev("document.querySelector('input')===null")).toBe(true);
     await ev("document.querySelector('button').click()");
     await until(() => ev("document.querySelector('button').textContent==='Count 1'"));
     expect(await ev("document.querySelectorAll('button')[1].textContent")).toBe("Count 0");
@@ -76,12 +77,32 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
     expect(readFileSync(join(root, attrs.file), "utf8")).toBe(button);
     const shot = await screenshot({url:base+"/p/design/pages/Home.tsx?raw=1",width:390,theme:"dark",format:"png",maxEdge:1568,maxHeight:1600,y:0});
     expect(shot.data.length).toBeGreaterThan(100);
-    // Viewer reloads after an imported component edit, preserving the active entry.
+    // The component itself opens its authored preview, with hooks and same-file instance locations.
+    await navigate("/p/design/components/ui/Button.tsx", "button");
+    expect(await ev("document.querySelectorAll('button').length")).toBe(2);
+    await ev("document.querySelector('input').click();document.querySelector('button').click()");
+    await until(() => ev("document.querySelector('button').textContent==='Count 1' && getComputedStyle(document.querySelector('section')).padding==='32px'"));
+    const inline = await ev("({file:document.querySelector('button').dataset.cdFile,id:document.querySelector('button').dataset.cdId,uses:JSON.parse(document.querySelector('button').dataset.cdUses)})");
+    expect(inline.file).toBe(attrs.file); expect(inline.id).toBe(attrs.id);
+    expect(inline.uses[0]).toMatch(/^design\/components\/ui\/Button\.tsx:4:/);
+    await ev(`fetch('/__cd/page',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({tabId:'inline',file:'design/components/ui/Button.tsx'})})`);
+    await ev("window.postMessage({cd:'mode',mode:'select',tab:'inline'},'*')");
+    await Bun.sleep(50); await ev("document.querySelector('button').click()");
+    const inlineSelection = await until(async () => ((await (await fetch(`${base}/__cd/page?tab=inline`)).json()) as any).selection);
+    expect(inlineSelection.snippet).toContain("setN(n+1)"); expect(inlineSelection.uses).toEqual(inline.uses);
+    await ev("window.postMessage({cd:'mode',mode:'comment',tab:'inline'},'*')");
+    await Bun.sleep(50); await ev("document.querySelector('button').click()");
+    await ev("document.querySelector('.__cd-pop textarea').value='Inline preview feedback';document.querySelector('.__cd-pop .go').click()");
+    const inlineComments = await until(async () => {const c = await (await fetch(`${base}/__cd/comments`)).json() as any[]; return c.find(c => c.text === 'Inline preview feedback');});
+    expect(inlineComments.file).toBe(attrs.file); expect(inlineComments.uses).toEqual(inline.uses);
+    const inlineShot = await screenshot({url:base+"/p/design/components/ui/Button.tsx?raw=1",width:390,theme:"dark",format:"png",maxEdge:1568,maxHeight:1600,y:0});
+    expect(inlineShot.data.length).toBeGreaterThan(100);
+    // Viewer reloads an inline preview after a component edit, preserving the active entry.
     await navigate("/", "#fr");
     await until(() => ev("!!document.querySelector('#fr').contentDocument?.querySelector('button')"));
     put("design/components/ui/Button.tsx", button.replace("Count ", "Updated "));
     await until(() => ev("document.querySelector('#fr').contentDocument?.querySelector('button')?.textContent==='Updated 0'"));
-    put("design/components/ui/Button.tsx", 'export default function Button(){throw new Error("Deliberate runtime failure")}');
+    put("design/components/ui/Button.tsx", button.replace('return <button', 'throw new Error("Deliberate runtime failure"); return <button'));
     await until(() => ev("document.querySelector('#fr').contentDocument?.querySelector('#__cd-error')?.textContent.includes('Deliberate runtime failure')"));
     put("design/components/ui/Button.tsx", button);
     await until(() => ev("document.querySelector('#fr').contentDocument?.querySelector('button')?.textContent==='Count 0'"));
