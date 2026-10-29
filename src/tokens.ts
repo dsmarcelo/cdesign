@@ -31,13 +31,21 @@ export const hasTailwindTokens = (root: string) => readConfig(root).tailwind && 
 function cssRows(root: string): Row[] {
   const out: Row[] = [];
   const ast = postcss.parse(readFileSync(tailwindPath(root), "utf8"));
+  const usage = (node: postcss.ChildNode) => {
+    const prev = node.prev();
+    return prev?.type === "comment" ? prev.text.replace(/^\s*\* ?/gm, "").trim() : "";
+  };
   ast.walkDecls(/^--/, d => {
     const name = d.prop.slice(2);
     const prefix = name.split("-")[0];
     const section = ({ color: "color", spacing: "spacing", radius: "radius", shadow: "shadow", text: "fontSize", font: "type", ease: "easing", duration: "duration" } as Record<string, string>)[prefix] ?? "custom";
-    out.push({ section, name: section === "color" ? name.slice(6) : name, value: d.value, usage: d.parent?.type === "rule" ? d.parent.selector : "@theme" });
+    out.push({ section, name: section === "color" ? name.slice(6) : name, value: d.value, usage: usage(d), context: d.parent?.type === "rule" ? d.parent.selector : "@theme" });
   });
-  return out;
+  ast.walkAtRules("utility", rule => {
+    if (rule.params.startsWith("type-")) out.push({ section: "type", name: rule.params.slice(5), value: rule.nodes?.filter(n => n.type === "decl").map(n => n.toString()).join("; ") ?? "", usage: usage(rule), context: "@utility" });
+  });
+  const descriptions = new Map(out.filter(r => r.usage).map(r => [r.section + "/" + r.name, r.usage]));
+  return out.map(r => ({ ...r, usage: r.usage || descriptions.get(r.section + "/" + r.name) || "" }));
 }
 
 /** One-time migration; existing editable stylesheets are never overwritten. */
@@ -63,7 +71,7 @@ const fmt = (v: Tok["value"]) => (isThemed(v) ? `light ${v.light}  dark ${v.dark
 const varName = (section: string, name: string) => (section === "color" ? `--color-${name}` : `--${name}`);
 const styles = (doc: Doc) => (doc.type?.groups ?? []).flatMap((g) => g.styles.map((s) => ({ ...s, group: g.name, family: s.family ?? g.family ?? "sans" })));
 
-type Row = { section: string; name: string; value: string; usage: string };
+type Row = { section: string; name: string; value: string; usage: string; context?: string };
 function rows(doc: Doc): Row[] {
   const out: Row[] = [];
   if (doc.color) for (const t of doc.color.tokens) out.push({ section: "color", name: t.name, value: fmt(t.value), usage: t.usage ?? "" });
@@ -71,7 +79,7 @@ function rows(doc: Doc): Row[] {
   for (const s of styles(doc)) out.push({ section: "type", name: s.name, value: `${s.family} ${s.fontSize}/${s.lineHeight} w${s.fontWeight}${s.letterSpacing ? ` ls ${s.letterSpacing}` : ""}`, usage: s.usage ?? "" });
   return out;
 }
-const line = (r: Row) => `${r.name}  ${r.value}${r.usage ? `  - ${r.usage}` : ""}`;
+const line = (r: Row) => `${r.name}  ${r.value}${r.usage ? `  - ${r.usage}` : ""}${r.context ? `  (${r.context})` : ""}`;
 
 // ---------- digest: what `cdesign open` prints instead of the whole file ----------
 function compact(names: string[]): string {
@@ -235,7 +243,7 @@ export function buildTailwind(doc: Doc): string {
   for (const t of doc.spacing?.tokens ?? []) plain.push([`--${t.name}`, String(t.value)]);
   for (const t of doc.duration?.tokens ?? []) plain.push([`--${t.name}`, String(t.value)]);
   const utils = styles(doc).map((s) => `@utility type-${s.name} {\n  ${typeDecls(s, (f) => `var(--font-${f})`)}\n}`).join("\n");
-  return `/* ${HEADER}
+  const output = `/* ${HEADER}
  * Tailwind v4. Use after \`@import "tailwindcss";\`
  *   colors   bg-background-primary text-foreground-primary border-border-default ...
  *   radius   rounded-md  | shadow  shadow-sm | easing  ease-standard | font  font-sans
@@ -255,6 +263,22 @@ ${decls(theme)}
 ${decls(plain)}
 }
 ${darkBlocks(doc)}${utils ? "\n" + utils + "\n" : ""}`;
+  // Keep human meaning adjacent to the declarations, including exported styles.
+  const descriptions = new Map<string, string>();
+  for (const t of doc.color?.tokens ?? []) if (t.usage) descriptions.set("--color-" + t.name, t.usage);
+  const namespaces: Record<string, [string, string]> = {
+    fontSize: ["font-", "text-"], radius: ["radius-", "radius-"],
+    shadow: ["shadow-", "shadow-"], easing: ["ease-", "ease-"],
+    size: ["size-", "spacing-"], spacing: ["", ""], duration: ["", ""],
+  };
+  for (const [section, [from, to]] of Object.entries(namespaces))
+    for (const t of doc[section]?.tokens ?? []) if (t.usage) descriptions.set("--" + to + strip(t.name, from), t.usage);
+  const ast = postcss.parse(output);
+  const comment = (text: string) => postcss.comment({ text: text.replace(/\*\//g, "* /") });
+  ast.walkDecls(/^--/, d => { const text = descriptions.get(d.prop); if (text) d.before(comment(text)); });
+  const typeUsage = new Map(styles(doc).map(s => [s.name, s.usage]));
+  ast.walkAtRules("utility", rule => { const text = typeUsage.get(rule.params.replace(/^type-/, "")); if (text) rule.before(comment(text)); });
+  return ast.toString();
 }
 
 export function exportTokens(root: string, kind: string, out?: string): string {
@@ -276,7 +300,9 @@ export function exportTokens(root: string, kind: string, out?: string): string {
 
 // ---------- checks ----------
 export function tokenWarnings(root: string): string[] {
-  if (hasTailwindTokens(root)) { cssRows(root); return []; }
+  if (hasTailwindTokens(root)) {
+    return [...new Set(cssRows(root).filter(r => (r.section === "color" || r.context === "@utility") && !r.usage.trim()).map(r => `token ${r.section}/${r.name} has no usage: add a preceding CSS comment in design/tailwind.css`))];
+  }
   const doc = loadTokens(root);
   if (!doc) return [];
   const w: string[] = [];

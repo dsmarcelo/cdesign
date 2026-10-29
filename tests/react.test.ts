@@ -74,7 +74,7 @@ test("bundles hooks, assets and CSS without host dependencies; rebuilds imports;
 
 test("Tailwind compiles utilities, variants and exported semantic tokens locally", async () => {
   const {root, put} = fixture(); run(root, "init");
-  put("design/tailwind.css", '@import "tailwindcss"; @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *)); @theme { --color-brand: #123456; } [data-theme="dark"] { --color-brand: #abcdef; }');
+  put("design/tailwind.css", '@import "tailwindcss"; @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *)); @theme { /* Brand color for primary actions. */ --color-brand: #123456; } [data-theme="dark"] { --color-brand: #abcdef; }');
   put("design/styles.css", ".custom { @apply p-4; }");
   put("design/pages/Home.tsx", 'export default function Home(){return <main className="p-4 bg-brand dark:p-8 hover:opacity-50 custom">Hello</main>}');
   const bundle = await renderReact(root, "design/pages/Home.tsx");

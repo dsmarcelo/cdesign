@@ -237,3 +237,5 @@ These teach workflows, not an app-specific visual style. Nothing is installed pe
 ## Data
 
 Comments are stored in `<project>/.cdesign/comments.json`. `.cdesign/` holds only local state (comments, screenshots, agent status); cdesign puts a `.gitignore` containing `*` inside it automatically, so nothing there is committed and you don't need to edit your own `.gitignore`.
+
+Tailwind tokens retain their meaning as CSS comments immediately preceding declarations; typography utilities use a preceding comment on `@utility type-*`. For example, `/* Raised surfaces: inputs and sidebar. Pair with foreground-primary. */ --color-background-secondary: #fff;`. `cdesign tokens search|show` includes these notes and searches their text. Theme overrides inherit the base note. `cdesign check` warns about undocumented color tokens and typography utilities. JSON migration preserves usage notes; verify values, themes, descriptions and typography before removing old files. Existing stylesheets are preserved and need manual reconciliation if migrated with an older cdesign version.

@@ -53,3 +53,39 @@ test("migration preserves legacy variables and CSS becomes authoritative", async
   expect(tokens.search(root, ["brand"], 25)).toContain("red");
   expect(tokens.search(root, ["brand"], 25)).not.toContain("#123456");
 });
+
+test("migration preserves searchable usage for colors, scales and typography", async () => {
+  const root = fixture();
+  tokens.init(root);
+  tokens.set(root, "color/surface", {light: "#ffffff", dark: "#161618", usage: "Raised surfaces for sidebar and inputs."});
+  tokens.set(root, "spacing/12", {value: "12px", usage: "Compact control padding."});
+  tokens.set(root, "type/body", {size: "14px", line: "20px", weight: "400", usage: "Body copy for product descriptions."});
+  tokens.initTailwind(root);
+  expect(tokens.search(root, ["sidebar"], 25)).toContain("Raised surfaces for sidebar");
+  expect(tokens.search(root, ["sidebar"], 25)).toContain("#161618");
+  expect(tokens.search(root, ["padding"], 25)).toContain("space-12");
+  expect(tokens.show(root, "type")).toContain("Body copy for product descriptions");
+  expect(tokens.tokenWarnings(root)).toEqual([]);
+  expect(await tailwindCss(root, ["bg-surface type-body"])).toContain(".bg-surface");
+});
+
+test("usage comments support multiline notes and warn once per undocumented semantic token", () => {
+  const root = fixture();
+  writeFileSync(tokens.tailwindPath(root), `@import "tailwindcss";
+@theme {
+  /*
+   * Raised surface.
+   * Pair with foreground-primary.
+   */
+  --color-surface: white;
+  --color-missing: red;
+}
+[data-theme="dark"] { --color-surface: black; --color-missing: pink; }
+`);
+  expect(tokens.search(root, ["pair"], 25)).toContain("foreground-primary");
+  expect(tokens.tokenWarnings(root)).toHaveLength(1);
+  expect(tokens.tokenWarnings(root)[0]).toContain("color/missing");
+  const original = readFileSync(tokens.tailwindPath(root), "utf8");
+  tokens.initTailwind(root);
+  expect(readFileSync(tokens.tailwindPath(root), "utf8")).toBe(original);
+});
