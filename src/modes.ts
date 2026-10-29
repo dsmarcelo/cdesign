@@ -58,7 +58,13 @@ const react: RenderAdapter = {
     return errors;
   },
 };
-export const adapter = (root: string): RenderAdapter => readConfig(root).mode === "react" ? react : html;
+export const adapter = (root: string): RenderAdapter => ({
+  pages: root => [...html.pages(root), ...react.pages(root)].sort(),
+  components: readConfig(root).mode === "react" ? react.components : html.components,
+  render: (root, file) => (file.endsWith(".tsx") ? react : html).render(root, file),
+  snippet: readConfig(root).mode === "react" ? react.snippet : html.snippet,
+  diagnostics: readConfig(root).mode === "react" ? react.diagnostics : html.diagnostics,
+});
 export const listPages = (root: string) => adapter(root).pages(root);
 export const components = (root: string, dups?: string[]) => adapter(root).components(root, dups);
 export const sourceSnippet = (root: string, file: string, id: string) => insideProject(root, file) ? (file.endsWith(".tsx") ? jsxSnippet : snippetFor)(readFileSync(resolve(root, file), "utf8"), id) : "";

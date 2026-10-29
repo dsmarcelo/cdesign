@@ -103,7 +103,7 @@ test("checks reject JSX and malformed TSX, retain inactive originals, and repair
   configure(root, {mode: "html"});
   expect(readFileSync(join(root, "design/pages/Original.html"), "utf8")).toBe(before);
   expect(listPages(root)).toContain("design/pages/Original.html");
-  expect(listPages(root)).not.toContain("design/pages/Bad.tsx");
+  expect(listPages(root)).toContain("design/pages/Bad.tsx");
 });
 
 test("detects explicit runtime Preview exports without matching comments, nested declarations or types", () => {
