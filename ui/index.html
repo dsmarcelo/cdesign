@@ -57,29 +57,27 @@
   #pick h2{margin:0 0 8px;font-size:16px} #pick .f{border:1px solid var(--line);color:#fafafa} #pick small{color:var(--mut)}
   #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#fafafa;color:#111;padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:80vw}
   #toast.on{opacity:1}
-  #bar{display:contents} #more,#bb{display:none}
+  #bar{display:contents} #more,#bb,#pill{display:none}
   @media (max-width:700px){
-    body{grid-template-columns:1fr;grid-template-rows:44px 1fr}
-    header{grid-column:1;position:relative}
-    header b{margin-right:auto}
-    #more{display:inline-flex} #more.on{background:var(--acc);border-color:var(--acc)}
-    #bar{display:none;position:absolute;top:100%;left:0;right:0;z-index:20;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+    body{grid-template-columns:1fr;grid-template-rows:1fr}
+    header{grid-column:1;padding:0;height:0;border:0}
+    header>:not(#bar){display:none}
+    #bar{display:none;position:fixed;left:12px;right:12px;bottom:calc(72px + env(safe-area-inset-bottom));z-index:20;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 12px;background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 24px #0006}
     body.bar #bar{display:flex}
-    #bar #proj{flex:1 1 140px;max-width:none} #bar #agent{flex:1 1 100%;order:-1;margin:0}
-    aside.l,aside.r{position:fixed;top:44px;bottom:0;z-index:10;width:min(300px,85vw)}
-    aside.l{left:0} aside.r{right:0}
-    main{grid-area:2/1;padding:0}
-    iframe{border:0;border-radius:0}
-    aside.l,aside.r{padding-bottom:calc(8px + env(safe-area-inset-bottom))}
-    body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
-    aside.l,aside.r{top:calc(44px + env(safe-area-inset-top));bottom:env(safe-area-inset-bottom)}
+    #bar #proj{flex:1 1 140px;max-width:none} #bar #agent{flex:1 1 100%;order:-1;margin:0} #bar #bb{display:none}
+    aside.l,aside.r{position:fixed;top:env(safe-area-inset-top);bottom:env(safe-area-inset-bottom);z-index:10;width:min(300px,85vw);padding-bottom:72px}
     aside.l{left:env(safe-area-inset-left)} aside.r{right:env(safe-area-inset-right)}
-    #bb{display:inline-flex}
-    body.bb{grid-template-rows:1fr 44px}
-    body.bb header{grid-area:2/1;border-bottom:0;border-top:1px solid var(--line)}
-    body.bb main{grid-area:1/1}
-    body.bb #bar{top:auto;bottom:100%;border-bottom:0;border-top:1px solid var(--line)}
-    body.bb aside.l,body.bb aside.r{top:env(safe-area-inset-top);bottom:calc(44px + env(safe-area-inset-bottom))}
+    main{grid-area:1/1;padding:0}
+    iframe{border:0;border-radius:0}
+    body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+    #pill{display:flex;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));z-index:30;gap:2px;padding:4px;border-radius:999px;background:#000;border:1px solid #3f3f46;box-shadow:0 6px 20px #0006}
+    #pill button{background:none;border:0;border-radius:999px;padding:10px 14px;line-height:0;color:#fafafa}
+    #pill button svg{width:18px;height:18px}
+    #pill{touch-action:none;cursor:grab} body.pdrag #pill{cursor:grabbing} body.pdrag iframe{pointer-events:none}
+    #pill button.on{background:#3f3f46}
+    html[data-theme=light] #pill{background:#fff;border-color:#d4d4d8;box-shadow:0 6px 20px #0003}
+    html[data-theme=light] #pill button{color:#18181b}
+    html[data-theme=light] #pill button.on{background:#e4e4e7}
   }
 </style>
 <header>
@@ -104,6 +102,11 @@
   <div class="dev" id="d2"><iframe id="fr2"></iframe></div>
 </div></main>
 <aside class="r" id="cm"></aside>
+<div id="pill">
+  <button id="pl" title="Files"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M6 3v10"/></svg></button>
+  <button id="pr" title="Reload page"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.7-4M13.5 2.5v3h-3"/></svg></button>
+  <button id="pt" title="Tools"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg></button>
+</div>
 <div id="pick"></div>
 <div id="toast"></div>
 <script>
@@ -221,10 +224,57 @@ function panel(btn, cls, key, toggleIt) {
   document.body.classList.toggle(cls, hidden(key));
   $(btn).classList.toggle("on", !hidden(key));
 }
-const panels = () => { panel("#tl", "hl", "cd-hide-l"); panel("#tr", "hr", "cd-hide-r"); };
+const pillSync = () => { $("#pl").classList.toggle("on", !hidden("cd-hide-l")); $("#pt").classList.toggle("on", document.body.classList.contains("bar")); };
+const panels = () => { panel("#tl", "hl", "cd-hide-l"); panel("#tr", "hr", "cd-hide-r"); pillSync(); };
 $("#tl").onclick = () => { if (mob.matches) mstate["cd-hide-r"] = true; panel("#tl", "hl", "cd-hide-l", true); panels(); };
 $("#tr").onclick = () => { if (mob.matches) mstate["cd-hide-l"] = true; panel("#tr", "hr", "cd-hide-r", true); panels(); };
-$("#more").onclick = () => $("#more").classList.toggle("on", document.body.classList.toggle("bar"));
+$("#more").onclick = () => { $("#more").classList.toggle("on", document.body.classList.toggle("bar")); pillSync(); };
+$("#pl").onclick = () => $("#tl").click();
+$("#pt").onclick = () => $("#more").click();
+$("#pr").onclick = () => location.reload();
+// the pill is draggable; its position (as a fraction of the screen, so it survives rotation) persists in localStorage
+const pill = $("#pill");
+function placePill() {
+  let pos = null;
+  try { pos = JSON.parse(localStorage.getItem("cd-pill")); } catch {}
+  const r = pill.getBoundingClientRect(), W = innerWidth, H = innerHeight;
+  if (pos) {
+    const x = Math.max(4, Math.min(W - r.width - 4, pos.x * W - r.width / 2)), y = Math.max(4, Math.min(H - r.height - 4, pos.y * H - r.height / 2));
+    Object.assign(pill.style, { left: x + "px", top: y + "px", bottom: "auto", transform: "none" });
+  }
+  placeBar();
+}
+// the tools panel opens above the pill when it sits in the lower half of the screen, below it otherwise
+function placeBar() {
+  const b = pill.getBoundingClientRect(), bar = $("#bar").style;
+  if (b.top + b.height / 2 > innerHeight / 2) Object.assign(bar, { bottom: innerHeight - b.top + 8 + "px", top: "auto" });
+  else Object.assign(bar, { top: b.bottom + 8 + "px", bottom: "auto" });
+}
+pill.onpointerdown = (e) => {
+  const r = pill.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top, x0 = e.clientX, y0 = e.clientY;
+  let moved = false;
+  pill.setPointerCapture(e.pointerId);
+  pill.onpointermove = (m) => {
+    if (!moved && Math.hypot(m.clientX - x0, m.clientY - y0) < 6) return;
+    moved = true;
+    document.body.classList.add("pdrag");
+    const x = Math.max(4, Math.min(innerWidth - r.width - 4, m.clientX - dx)), y = Math.max(4, Math.min(innerHeight - r.height - 4, m.clientY - dy));
+    Object.assign(pill.style, { left: x + "px", top: y + "px", bottom: "auto", transform: "none" });
+    placeBar();
+  };
+  pill.onpointerup = pill.onpointercancel = () => {
+    pill.onpointermove = pill.onpointerup = pill.onpointercancel = null;
+    document.body.classList.remove("pdrag");
+    if (!moved) return;
+    const b = pill.getBoundingClientRect();
+    try { localStorage.setItem("cd-pill", JSON.stringify({ x: (b.left + b.width / 2) / innerWidth, y: (b.top + b.height / 2) / innerHeight })); } catch {}
+    const eat = (c) => c.stopPropagation(); // a drag must not also click the button under the finger
+    pill.addEventListener("click", eat, true);
+    setTimeout(() => pill.removeEventListener("click", eat, true), 0);
+  };
+};
+addEventListener("resize", () => mob.matches && placePill());
+placePill();
 const bb = () => { let on = false; try { on = localStorage.getItem("cd-bar-bottom") === "1"; } catch {} document.body.classList.toggle("bb", on); $("#bb").textContent = on ? "Toolbar: bottom" : "Toolbar: top"; return on; };
 $("#bb").onclick = () => { try { localStorage.setItem("cd-bar-bottom", bb() ? "0" : "1"); } catch {} bb(); };
 bb();
