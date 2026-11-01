@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import qrcode from "qrcode-terminal";
 import { serveDaemon, DEFAULT_PORT } from "./server";
 import { screenshot } from "./shot";
 import { previewOf, sourceOfPreview } from "./render";
@@ -142,6 +143,7 @@ async function tunnel(reg: { id: string; port: number }, stop = false) {
   const b = (await r.json()) as { url?: string; error?: string };
   if (!r.ok) throw new Error(b.error ?? "tunnel failed");
   console.log(stop ? "tunnel stopped" : `tunnel (anyone with this link can view and comment; it stops with the viewer or \`cdesign tunnel stop\`):\n${b.url}\n`);
+  if (!stop && b.url) qrcode.generate(b.url, { small: true }, (qr) => console.log(qr + "\n"));
 }
 
 /** The project an agent is working in: nearest parent with a design/ folder, else cwd. */
