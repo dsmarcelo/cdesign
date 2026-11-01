@@ -35,6 +35,9 @@
   #stage{display:flex;gap:12px;justify-content:center;width:100%;height:100%;min-width:0}
   .dev{position:relative;height:100%;width:100%;min-width:0} #d2{display:none}
   body.split #d1{width:390px;flex:0 1 390px} body.split #d2{display:block;flex:1 1 0;width:auto}
+  #devs{display:none} body.phone #devs{display:inline-flex}
+  body.phone #stage{justify-content:flex-start;align-items:flex-start} body.phone #stage:not(.fit){} body.phone #d1{flex:none;margin:0 auto}
+  body.phone #fr{border:0;border-radius:0;width:var(--dw);height:var(--dh);transform:scale(var(--ds,1));transform-origin:0 0}
   body.resp #stage{justify-content:flex-start;align-items:flex-start} body.resp #d1{flex:none}
   .rh{display:none;position:absolute;z-index:3;touch-action:none} body.resp .rh{display:block}
   .rh::after{content:"";position:absolute;background:var(--mut);border-radius:2px;opacity:.5} .rh:hover::after,body.drag .rh::after{opacity:1;background:var(--acc)}
@@ -87,7 +90,7 @@
   <div id="bar">
   <select id="proj" title="Switch project"></select>
   <span id="agent" title="Is an agent running `cdesign wait`?"></span>
-  <span id="w" class="grp"><button class="ic on" data-w="100%" title="Full width"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3" width="12.5" height="8" rx="1.5"/><path d="M5.5 13.5h5"/></svg></button><button class="ic" data-w="768px" title="Tablet (768px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="1.75" width="10" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="390px" title="Mobile (390px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="resp" title="Responsive: drag the edges to resize width and height"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="2.75" width="9.5" height="9.5" rx="1.5"/><path d="M14.25 7.5v6.75H7.5M10.5 14.25l3.75-3.75"/></svg></button><button class="ic" data-w="split" title="Split: mobile on the left, full width on the right"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3.25" width="4" height="9.5" rx="1"/><rect x="7.75" y="3.25" width="6.5" height="9.5" rx="1"/></svg></button></span>
+  <span id="w" class="grp"><button class="ic on" data-w="100%" title="Full width"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3" width="12.5" height="8" rx="1.5"/><path d="M5.5 13.5h5"/></svg></button><button class="ic" data-w="768px" title="Tablet (768px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="1.75" width="10" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="phone" title="Phone: pick a device, exact screen size"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="resp" title="Responsive: drag the edges to resize width and height"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="2.75" width="9.5" height="9.5" rx="1.5"/><path d="M14.25 7.5v6.75H7.5M10.5 14.25l3.75-3.75"/></svg></button><button class="ic" data-w="split" title="Split: mobile on the left, full width on the right"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3.25" width="4" height="9.5" rx="1"/><rect x="7.75" y="3.25" width="6.5" height="9.5" rx="1"/></svg></button></span><span id="devs" class="grp"><select id="dev" title="Phone screen size (CSS px)"></select><button id="rot" class="ic" title="Rotate screen"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5" transform="rotate(45 8 8)"/></svg></button><button id="fit" title="Real size / fit height">Real size</button></span>
   <button id="bb" title="Move the toolbar to the bottom/top of the screen">Toolbar: top</button>
   <button id="theme" title="Toggle light/dark preview">Light</button>
   <button id="sel" class="ic" title="Select element for the agent (S)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M3.5 2.5l9 4.2-3.9 1.3-1.3 3.9z"/><path d="M8.6 8l3 3.2"/></svg></button>
@@ -307,12 +310,35 @@ $("#sel").onclick = () => setMode("select");
 let view = "100%", rs = { w: 800, h: 600 };
 const store = (k, v) => { try { sessionStorage.setItem(k, v); } catch { /* storage unavailable */ } };
 const dim = () => { $("#dim").textContent = `${Math.round(rs.w)} × ${Math.round(rs.h)}`; };
-const size = () => { const d = $("#d1"); d.style.width = view === "resp" ? rs.w + "px" : view === "split" ? "" : view; d.style.height = view === "resp" ? rs.h + "px" : ""; dim(); };
+const DEVICES = { // screen sizes in CSS px (portrait): w x h
+  "iPhone 18": [402, 874], // 6.3" 1206x2622 @3x
+  "iPhone Duo inner": [626, 890], // 7.6" 1878x2670 @3x (estimated, Apple publishes pixels only)
+  "iPhone Duo outer": [466, 678], // 5.4" 1398x2034 @3x (estimated)
+  "Galaxy Z Fold cover (thin)": [360, 840], // 6.5" 1080x2520 @3x
+};
+let dev = "iPhone 18", fit = false, rot = false;
+for (const k in DEVICES) $("#dev").add(new Option(`${k} · ${DEVICES[k][0]}×${DEVICES[k][1]}`, k));
+const phone = () => {
+  const [w, h] = rot ? [...DEVICES[dev]].reverse() : DEVICES[dev], d = $("#d1"), f = $("#fr");
+  const s = fit ? Math.min(1, ($("main").clientHeight - 24) / h) : 1;
+  f.style.setProperty("--dw", w + "px"); f.style.setProperty("--dh", h + "px"); f.style.setProperty("--ds", s);
+  d.style.width = Math.round(w * s) + "px"; d.style.height = Math.round(h * s) + "px";
+  $("#dev").value = dev; $("#fit").textContent = fit ? "Fit height" : "Real size";
+};
+$("#dev").onchange = () => { dev = $("#dev").value; store("cd-dev", dev); phone(); };
+$("#rot").onclick = () => { rot = !rot; store("cd-rot", rot ? "1" : ""); phone(); };
+$("#fit").onclick = () => { fit = !fit; store("cd-fit", fit ? "1" : ""); phone(); };
+addEventListener("resize", () => view === "phone" && fit && phone());
+const size = () => {
+  if (view === "phone") return phone();
+  { const f = $("#fr"); f.style.removeProperty("--dw"); f.style.removeProperty("--dh"); f.style.removeProperty("--ds"); }
+  const d = $("#d1"); d.style.width = view === "resp" ? rs.w + "px" : view === "split" ? "" : view; d.style.height = view === "resp" ? rs.h + "px" : ""; dim(); };
 const setWidth = (w) => {
   if (w === "resp" && view !== "resp") { const r = $("#d1").getBoundingClientRect(); if (!rs.set) rs = { w: Math.round(r.width) || rs.w, h: Math.round(r.height) || rs.h }; }
   view = w;
   document.querySelectorAll("#w button").forEach((x) => x.classList.toggle("on", x.dataset.w === w));
   document.body.classList.toggle("resp", w === "resp");
+  document.body.classList.toggle("phone", w === "phone");
   document.body.classList.toggle("split", w === "split");
   size();
   if (w === "split") { if (cur) $("#fr2").src = "/p/" + cur; } else if ($("#fr2").src && $("#fr2").src !== "about:blank") $("#fr2").src = "about:blank";
@@ -320,6 +346,7 @@ const setWidth = (w) => {
 };
 document.querySelectorAll("#w button").forEach((b) => (b.onclick = () => setWidth(b.dataset.w)));
 try { const r = (sessionStorage.getItem("cd-resp") || "").split("x").map(Number); if (r[0] >= 200 && r[1] >= 200) rs = { w: r[0], h: r[1], set: true }; } catch { /* storage unavailable */ }
+try { const v = sessionStorage.getItem("cd-dev"); if (DEVICES[v]) dev = v; fit = !!sessionStorage.getItem("cd-fit"); rot = !!sessionStorage.getItem("cd-rot"); } catch { /* storage unavailable */ }
 try { const w = sessionStorage.getItem("cd-width"); if (w && document.querySelector(`#w button[data-w="${w}"]`)) setWidth(w); } catch { /* storage unavailable */ }
 // drag the edges of the responsive frame (iframes ignore the pointer meanwhile so the drag is not swallowed)
 for (const [id, dx, dy] of [["rx", 1, 0], ["ry", 0, 1], ["rxy", 1, 1]]) {
