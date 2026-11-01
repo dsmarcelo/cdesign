@@ -97,9 +97,45 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
     expect(inlineComments.file).toBe(attrs.file); expect(inlineComments.uses).toEqual(inline.uses);
     const inlineShot = await screenshot({url:base+"/p/design/components/ui/Button.tsx?raw=1",width:390,theme:"dark",format:"png",maxEdge:1568,maxHeight:1600,y:0});
     expect(inlineShot.data.length).toBeGreaterThan(100);
-    // Viewer reloads an inline preview after a component edit, preserving the active entry.
+    // Page history belongs to the viewer, including its initial page and both split frames.
     await navigate("/", "#fr");
     await until(() => ev("!!document.querySelector('#fr').contentDocument?.querySelector('button')"));
+    const initial = await ev("location.hash.slice(1)");
+    expect(initial).toBe("design/components/ui/Button.tsx");
+    const homePage = "design/pages/Home.tsx";
+    const viewerState = async (file: string, split = false) => {
+      await until(() => ev(`location.hash.slice(1)===${JSON.stringify(file)} &&
+        document.querySelector('#files .sel')?.title===${JSON.stringify(file)} &&
+        ${JSON.stringify(split ? ['#fr', '#fr2'] : ['#fr'])}.every(id => {
+          const f = document.querySelector(id);
+          return f.contentWindow.location.pathname==='/p/'+${JSON.stringify(file)} && !!f.contentDocument?.querySelector('button');
+        })`));
+      await until(async () => ((await (await fetch(`${base}/__cd/page`)).json()) as any).file === file);
+    };
+    const selectPage = (file: string) => ev(`document.querySelector('#files button[title="${file}"]').click()`);
+    const browserHistory = async (offset: number) => {
+      const h = await cmd("Page.getNavigationHistory");
+      await cmd("Page.navigateToHistoryEntry", {entryId: h.entries[h.currentIndex + offset].id});
+    };
+    await selectPage(homePage); await viewerState(homePage);
+    await selectPage(initial); await viewerState(initial);
+    await browserHistory(-1); await viewerState(homePage);
+    await browserHistory(-1); await viewerState(initial);
+    await browserHistory(1); await viewerState(homePage);
+    await ev("document.querySelector('#fr').contentWindow.history.back()"); await viewerState(initial);
+    await browserHistory(1); await viewerState(homePage);
+    const historyLength = await ev("history.length");
+    await ev("document.querySelector('#w button[data-w=split]').click()"); await viewerState(homePage, true);
+    expect(await ev("history.length")).toBe(historyLength);
+    await selectPage(initial); await viewerState(initial, true);
+    await browserHistory(-1); await viewerState(homePage, true);
+    await ev("document.querySelector('#fr2').contentWindow.history.back()"); await viewerState(initial, true);
+    await browserHistory(1); await viewerState(homePage, true);
+    await ev("document.querySelector('#w button[data-w=resp]').click()");
+    await until(() => ev("document.querySelector('#fr2').contentWindow.location.href==='about:blank'"));
+    expect(await ev("history.length")).toBe(historyLength);
+    await browserHistory(-1); await viewerState(initial);
+    // Viewer reloads an inline preview after a component edit, preserving the active entry.
     put("design/components/ui/Button.tsx", button.replace("Count ", "Updated "));
     await until(() => ev("document.querySelector('#fr').contentDocument?.querySelector('button')?.textContent==='Updated 0'"));
     put("design/components/ui/Button.tsx", button.replace('return <button', 'throw new Error("Deliberate runtime failure"); return <button'));

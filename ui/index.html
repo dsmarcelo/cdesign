@@ -168,13 +168,18 @@ async function files() {
   const l = await (await fetch("/__cd/files")).json();
   const had = cur;
   if (!cur || !l.includes(cur)) cur = l[0] ?? null;
-  if (cur !== had) report();
+  if (cur !== had) {
+    if (cur) history.replaceState(null, "", "#" + cur);
+    report();
+  }
   $("#files").innerHTML = "";
   draw(tree(l), $("#files"), "");
   if (!l.length) $("#files").textContent = "No preview entries. Add a page or component preview.";
 }
 const frames = () => [$("#fr"), $("#fr2")];
-const load = () => { if (cur) { $("#fr").src = "/p/" + cur; if (view === "split") $("#fr2").src = "/p/" + cur; } };
+// Only the viewer hash adds history entries; frame loads must not compete with it.
+const loadFrame = (f, url) => f.contentWindow.location.replace(url);
+const load = () => { if (cur) { loadFrame($("#fr"), "/p/" + cur); if (view === "split") loadFrame($("#fr2"), "/p/" + cur); } };
 const send = (m) => frames().forEach((f) => f.contentWindow?.postMessage(m, "*"));
 const sync = () => { send({ cd: "mode", mode, tab: tabId }); send({ cd: "pins" }); };
 
@@ -341,7 +346,7 @@ const setWidth = (w) => {
   document.body.classList.toggle("phone", w === "phone");
   document.body.classList.toggle("split", w === "split");
   size();
-  if (w === "split") { if (cur) $("#fr2").src = "/p/" + cur; } else if ($("#fr2").src && $("#fr2").src !== "about:blank") $("#fr2").src = "about:blank";
+  if (w === "split") { if (cur) loadFrame($("#fr2"), "/p/" + cur); } else loadFrame($("#fr2"), "about:blank");
   store("cd-width", w);
 };
 document.querySelectorAll("#w button").forEach((b) => (b.onclick = () => setWidth(b.dataset.w)));
