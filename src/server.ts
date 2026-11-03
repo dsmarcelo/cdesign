@@ -291,7 +291,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
         let server = websitePreviews.get(root);
         if (!server) {server=previewWebsite(result.directory);websitePreviews.set(root,server);}
         return json({directory:result.directory,url:`http://127.0.0.1:${server.port}/${options.name}/`});
-      } catch (e) {return json({error:String(e)},400);} finally {websiteJobs.delete(root);}
+      } catch (e) {return json({error:e instanceof Error ? e.message : String(e)},400);} finally {websiteJobs.delete(root);}
     }
     if (p === "/__cd/files") return json(listPages(root));
     if (p === "/__cd/config") return json(readConfig(root));

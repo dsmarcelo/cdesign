@@ -39,6 +39,26 @@ export async function vercelCommand(args: string[], cwd: string) {
   } finally {clearTimeout(timer);}
 }
 
+/** Current noninteractive CLI output wraps the deployment in an agent result. */
+export function deploymentURL(output: string): string {
+  const text = output.trim();
+  let candidate: unknown;
+  if (text.startsWith("{")) {
+    const result = JSON.parse(text);
+    if (result.status && result.status !== "ok") throw new Error(result.message || result.error?.message || `Vercel deployment status: ${result.status}`);
+    const deployment = result.deployment ?? result;
+    if (deployment.readyState && deployment.readyState !== "READY") throw new Error(`Vercel deployment is ${deployment.readyState}, not READY`);
+    candidate = deployment.url;
+  } else {
+    candidate = text.split(/\s+/).reverse().find(s => /^https:\/\/[a-z0-9.-]+\.vercel\.app\/?$/i.test(s));
+  }
+  if (typeof candidate === 'string') {
+    const url = new URL(candidate.startsWith('https://') ? candidate : `https://${candidate}`);
+    if (url.protocol === 'https:' && url.hostname.endsWith('.vercel.app') && !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash) return url.origin;
+  }
+  throw new Error("Vercel finished but returned no recognized deployment URL. The website may already be live; check Vercel deployment status.");
+}
+
 /** The directory lock serializes CLI and daemon publications, including artifact assembly. */
 export async function publishWebsite(root: string, options: WebsiteOptions, run = vercelCommand) {
   websiteName(options.name);
@@ -76,9 +96,8 @@ export async function publishWebsite(root: string, options: WebsiteOptions, run 
     writeFileSync(join(deploy,".vercel/project.json"),JSON.stringify(link));
     // Inspect resolves the existing link without permitting implicit project creation.
     await run(["project","inspect","--non-interactive"],deploy);
-    const result = await run(["deploy","--prebuilt","--prod","--yes","--non-interactive"],deploy);
-    const deployment = result.split(/\s+/).reverse().find(s=>/^https:\/\/[a-z0-9.-]+\.vercel\.app\/?$/i.test(s));
-    if (!deployment) throw new Error("Vercel returned no deployment URL. Check Vercel status before retrying.");
+    const result = await run(["deploy","--prebuilt","--prod","--yes","--non-interactive","--json"],deploy);
+    const deployment = deploymentURL(result);
     const published: Published = {root,url:`${config.origin}/${options.name}/`,publishedAt:new Date().toISOString(),deployment};
     const snapshot = join(config.directory,"sites",options.name), next = snapshot+'.next', previous = snapshot+'.previous';
     mkdirSync(join(config.directory,"sites"),{recursive:true});

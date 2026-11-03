@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { exportWebsite, websitePages, previewWebsite } from '../src/export';
-import { configurePublisher, publishWebsite } from '../src/publish';
+import { configurePublisher, publishWebsite, deploymentURL } from '../src/publish';
 
 const dirs: string[]=[];
 const fixture=()=>{const root=mkdtempSync(join(tmpdir(),'cdesign-export-'));dirs.push(root);const put=(file:string,body:string)=>{mkdirSync(dirname(join(root,file)),{recursive:true});writeFileSync(join(root,file),body);};put('design/cdesign.json',JSON.stringify({version:1,mode:'react',tailwind:false}));return {root,put};};
@@ -62,7 +62,7 @@ test('publisher preserves other websites, rejects collisions and keeps the previ
  publisher.put('.vercel/project.json',JSON.stringify({projectId:'prj_test',orgId:'team_test'}));configurePublisher(publisher.root,'https://example.vercel.app');
  a.put('design/pages/home.tsx','export default ()=> <h1>A</h1>');b.put('design/pages/home.tsx','export default ()=> <h1>B</h1>');
  const calls:string[][]=[];
- const run=async(args:string[],cwd:string)=>{calls.push(args);if(args[0]==='deploy')expect(existsSync(join(cwd,'.vercel/output/config.json'))).toBe(true);return args[0]==='deploy'?'https://example-123.vercel.app':'';};
+ const run=async(args:string[],cwd:string)=>{calls.push(args);if(args[0]==='deploy')expect(existsSync(join(cwd,'.vercel/output/config.json'))).toBe(true);return args[0]==='deploy'?JSON.stringify({status:'ok',deployment:{url:'https://example-123.vercel.app',readyState:'READY'}}):'';};
  await publishWebsite(a.root,{name:'alpha',start:'design/pages/home.tsx'},run);
  await publishWebsite(b.root,{name:'beta',start:'design/pages/home.tsx'},async(args,cwd)=>{if(args[0]==='deploy')expect(existsSync(join(cwd,'.vercel/output/static/alpha/index.html'))).toBe(true);return run(args,cwd);});
  expect(calls.some(a=>a.includes('--prebuilt')&&a.includes('--prod'))).toBe(true);
@@ -72,4 +72,17 @@ test('publisher preserves other websites, rejects collisions and keeps the previ
  await expect(publishWebsite(b.root,{name:'alpha',start:'design/pages/home.tsx'},run)).rejects.toThrow('another local project');
  expect(existsSync(join(publisher.root,'publish.lock'))).toBe(false);
  }finally{if(oldHome===undefined)delete process.env.CDESIGN_HOME;else process.env.CDESIGN_HOME=oldHome;}
+});
+
+
+test('deployment URL parser handles noninteractive JSON, plain JSON and legacy stdout without accepting failed results',()=>{
+ const url='https://example-123.vercel.app';
+ expect(deploymentURL(JSON.stringify({status:'ok',deployment:{url,readyState:'READY'},message:'Ready'}))).toBe(url);
+ expect(deploymentURL(JSON.stringify({url,readyState:'READY'}))).toBe(url);
+ expect(deploymentURL(url+'\n')).toBe(url);
+ expect(deploymentURL(JSON.stringify({status:'ok',deployment:{url:'example-123.vercel.app',readyState:'READY'}}))).toBe(url);
+ expect(()=>deploymentURL(JSON.stringify({status:'error',message:'Upload failed',deployment:{url}}))).toThrow('Upload failed');
+ expect(()=>deploymentURL(JSON.stringify({url,readyState:'ERROR'}))).toThrow('ERROR');
+ expect(()=>deploymentURL(JSON.stringify({status:'ok',message:url}))).toThrow('no recognized deployment URL');
+ expect(()=>deploymentURL(JSON.stringify({url:'https://vercel.app.attacker.example/'}))).toThrow('no recognized deployment URL');
 });
