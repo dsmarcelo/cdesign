@@ -198,7 +198,7 @@ switch (cmd) {
   case "publish": {
     if (cmd === "publish" && rest[0] === "setup") {
       const directory = flag("--project-dir"), origin = flag("--origin");
-      if (!directory || !origin) throw new Error("Usage: cdesign publish setup --project-dir <linked-folder> --origin https://cdesign.vercel.app");
+      if (!directory || !origin) throw new Error("Usage: cdesign publish setup --project-dir <linked-folder> --origin https://cdesign-ds.vercel.app");
       console.log(configurePublisher(directory, origin)); break;
     }
     const name = flag("--name"), start = flag("--start"), selected = flag("--pages"), out = flag("--out"), port = flag("--port");
@@ -566,7 +566,7 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
     break;
   }
   default:
-    console.log("cdesign export [dir] [--name slug] [--start design/pages/Home.tsx] [--pages file,file] [--out dir] [--preview]\ncdesign publish [dir] [--name slug] [--start file]\ncdesign publish setup --project-dir <linked-folder> --origin https://cdesign.vercel.app");
+    console.log("cdesign export [dir] [--name slug] [--start design/pages/Home.tsx] [--pages file,file] [--out dir] [--preview]\ncdesign publish [dir] [--name slug] [--start file]\ncdesign publish setup --project-dir <linked-folder> --origin https://cdesign-ds.vercel.app");
     console.log(`cdesign <command>
   open [dir] [--mode react|html] [--tailwind|--no-tailwind] [--port n] [--no-browser] [--tunnel] [--full]  open the viewer with compact agent directions; --full opts into the old guide/inventories
   tunnel [dir] | tunnel stop [dir]      share the project (random link with a secret): fixed domain if set, else a random cloudflared quick tunnel

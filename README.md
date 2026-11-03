@@ -264,10 +264,10 @@ mkdir -p ~/.cdesign/publisher
 cd ~/.cdesign/publisher
 vercel login
 vercel link
-cdesign publish setup --project-dir ~/.cdesign/publisher --origin https://cdesign.vercel.app
+cdesign publish setup --project-dir ~/.cdesign/publisher --origin https://cdesign-ds.vercel.app
 ```
 
-Choose or create the shared project during `vercel link`, and use its actual assigned production domain in `--origin` (`cdesign.vercel.app` is subject to availability). The CLI's existing login is used; cdesign does not store Vercel tokens in project files. Publishing runs locally and is unavailable through viewer tunnels.
+Choose or create the shared project during `vercel link`, and use its actual assigned production domain in `--origin` (`cdesign-ds.vercel.app` is subject to availability). The CLI's existing login is used; cdesign does not store Vercel tokens in project files. Publishing runs locally and is unavailable through viewer tunnels.
 
 Publishing assembles all saved website artifacts and sends only prebuilt static output to Vercel. The publisher folder keeps the last successful artifacts and deployment URLs, serializes publication across processes, and rejects names already used by another local project. Failed builds or deployments keep the previous saved artifacts. Back up this folder: every publication needs the previous websites to preserve them. This workflow supports one publishing computer; it does not synchronize a registry across machines. To roll back a deployment, use Vercel's deployment dashboard.
 

@@ -143,7 +143,7 @@ let websiteInfo, websiteBusy = false;
 const websiteOptions = () => ({name:$("#website-name").value.trim(),start:$("#website-start").value,pages:[...document.querySelectorAll("#website-pages input:checked")].map(x=>x.value)});
 function websiteAddress() {
   const options=websiteOptions();
-  $("#website-address").textContent=(websiteInfo?.publishing.origin || "https://cdesign.vercel.app")+"/"+options.name+"/";
+  $("#website-address").textContent=(websiteInfo?.publishing.origin || "https://cdesign-ds.vercel.app")+"/"+options.name+"/";
   $("#website-publish").textContent=websiteInfo?.publishing.previous?.name===options.name ? "Update website" : "Publish website";
   $("#website-publish").disabled=websiteBusy || !websiteInfo?.publishing.configured;
 }

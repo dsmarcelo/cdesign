@@ -13,7 +13,7 @@ export function publisherConfig(): PublisherConfig | undefined { return read(con
 export function configurePublisher(directory: string, origin: string) {
   directory = resolve(directory);
   const url = new URL(origin);
-  if (url.protocol !== "https:" || url.pathname !== "/" || url.search || url.hash || url.username || url.password) throw new Error("Publisher origin must be an HTTPS origin, e.g. https://cdesign.vercel.app");
+  if (url.protocol !== "https:" || url.pathname !== "/" || url.search || url.hash || url.username || url.password) throw new Error("Publisher origin must be an HTTPS origin, e.g. https://cdesign-ds.vercel.app");
   const link = read<{projectId?: string; orgId?: string}>(join(directory,".vercel/project.json"), {});
   if (!link.projectId || !link.orgId) throw new Error(`First run vercel link in ${directory}, choosing the shared cdesign project`);
   const config: PublisherConfig = {directory, origin:url.origin, projectId:link.projectId, orgId:link.orgId};
@@ -25,7 +25,7 @@ export function publishingStatus(root: string, name?: string) {
   const records = config ? read<Record<string,Published>>(join(config.directory,"sites.json"),{}) : {};
   const previous = Object.entries(records).find(([slug, p]) => p.root === root && (!name || slug === name));
   return { configured:!!config, origin:config?.origin, previous: previous ? {name:previous[0],...previous[1]} : undefined,
-    setup: `mkdir -p "${publisherDirectory()}"\ncd "${publisherDirectory()}"\nvercel login\nvercel link\ncdesign publish setup --project-dir "${publisherDirectory()}" --origin https://cdesign.vercel.app` };
+    setup: `mkdir -p "${publisherDirectory()}"\ncd "${publisherDirectory()}"\nvercel login\nvercel link\ncdesign publish setup --project-dir "${publisherDirectory()}" --origin https://cdesign-ds.vercel.app` };
 }
 export async function vercelCommand(args: string[], cwd: string) {
   const binary = Bun.which("vercel");
@@ -43,7 +43,7 @@ export async function vercelCommand(args: string[], cwd: string) {
 export async function publishWebsite(root: string, options: WebsiteOptions, run = vercelCommand) {
   websiteName(options.name);
   const config = publisherConfig();
-  if (!config) throw new Error("Publishing is not configured. Run cdesign publish setup --project-dir <linked-folder> --origin https://cdesign.vercel.app");
+  if (!config) throw new Error("Publishing is not configured. Run cdesign publish setup --project-dir <linked-folder> --origin https://cdesign-ds.vercel.app");
   mkdirSync(config.directory, {recursive:true});
   const lock = join(config.directory,"publish.lock");
   try {mkdirSync(lock);} catch {throw new Error(`A publication is already running. If it was interrupted, remove ${lock} after checking no publisher is active.`);}
