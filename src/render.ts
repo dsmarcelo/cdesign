@@ -127,15 +127,15 @@ function expand(parent: N, root: string, idx: Map<string, string>, stack: string
   }
 }
 
-const headPartial = (root: string) => {
-  for (const p of ["design/_head.html", "design/prototype/_head.html", "design/prototypes/_head.html"]) {
+const headPartial = (root: string, output = false) => {
+  for (const p of (output ? ["design/_head.html"] : ["design/_head.html", "design/prototype/_head.html", "design/prototypes/_head.html"])) {
     const f = join(root, p);
     if (existsSync(f)) return readFileSync(f, "utf8");
   }
 };
 
 /** Fully rendered page: components expanded, ids stamped, shared head injected. */
-export function renderPage(root: string, rel: string): string {
+export function renderPage(root: string, rel: string, output = false): string {
   const idx = componentIndex(root);
   const styles: Styles = new Map();
   const src = normalize(readFileSync(join(root, rel), "utf8"));
@@ -163,8 +163,12 @@ export function renderPage(root: string, rel: string): string {
   // shared head partial first, then each used component's <style> once, then the page's own head
   // viewer's light/dark choice (same origin, so the shell's localStorage is readable) before first paint
   const pre: N[] = [...(parseFragment(`<script>try{var t=localStorage.getItem("cd-theme");if(t)document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>`).childNodes as N[])];
-  const head = headPartial(root);
-  if (head) pre.push(...(parseFragment(head).childNodes as N[]));
+  const head = headPartial(root, output);
+  if (head) {
+    const fragment = parseFragment(head);
+    if (output) walk(fragment, n => { if (n.tagName) setAttr(n, "data-cd-file", "design/_head.html"); });
+    pre.push(...(fragment.childNodes as N[]));
+  }
   for (const nodes of styles.values()) pre.push(...nodes);
   if (pre.length) {
     let h: N;

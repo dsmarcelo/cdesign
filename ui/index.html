@@ -84,6 +84,11 @@
     html[data-theme=light] #pill button{color:#18181b}
     html[data-theme=light] #pill button.on{background:#e4e4e7}
   }
+  #website-dialog{width:min(560px,calc(100vw - 32px));max-height:85vh;overflow:auto;border:1px solid #52525b;border-radius:12px;background:var(--bg,#18181b);color:var(--fg,#fafafa);padding:24px}
+  #website-dialog::backdrop{background:#0008} #website-form{display:grid;gap:16px} #website-form h2,#website-form p{margin:0}
+  #website-form>label{display:grid;gap:6px} #website-form input:not([type=checkbox]),#website-form select{width:100%;padding:8px}
+  #website-pages{display:grid;gap:8px;max-height:220px;overflow:auto} #website-pages label{display:flex;align-items:center;gap:8px}
+  #website-form footer{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px} #website-status{white-space:pre-wrap;overflow-wrap:anywhere} #website-instructions{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
 </style>
 <header>
   <button id="tl" class="ic on" title="Hide/show files"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M6 3v10"/></svg></button>
@@ -94,6 +99,7 @@
   <span id="agent" title="Is an agent running `cdesign wait`?"></span>
   <span id="w" class="grp"><button class="ic on" data-w="100%" title="Full width"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3" width="12.5" height="8" rx="1.5"/><path d="M5.5 13.5h5"/></svg></button><button class="ic" data-w="768px" title="Tablet (768px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="1.75" width="10" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="phone" title="Phone: pick a device, exact screen size"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="resp" title="Responsive: drag the edges to resize width and height"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="2.75" width="9.5" height="9.5" rx="1.5"/><path d="M14.25 7.5v6.75H7.5M10.5 14.25l3.75-3.75"/></svg></button><button class="ic" data-w="split" title="Split: mobile on the left, full width on the right"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3.25" width="4" height="9.5" rx="1"/><rect x="7.75" y="3.25" width="6.5" height="9.5" rx="1"/></svg></button></span><span id="devs" class="grp"><select id="dev" title="Phone screen size (CSS px)"></select><button id="rot" class="ic" title="Rotate screen"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5" transform="rotate(45 8 8)"/></svg></button><button id="fit" title="Real size / fit height">Real size</button></span>
   <button id="bb" title="Move the toolbar to the bottom/top of the screen">Toolbar: top</button>
+  <button id="website">Export website</button>
   <button id="theme" title="Toggle light/dark preview">Light</button>
   <button id="sel" class="ic" title="Select element for the agent (S)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M3.5 2.5l9 4.2-3.9 1.3-1.3 3.9z"/><path d="M8.6 8l3 3.2"/></svg></button>
   <button id="mode">Comment (C)</button>
@@ -112,6 +118,19 @@
 </div>
 <div id="pick"></div>
 <div id="toast"></div>
+<dialog id="website-dialog" aria-labelledby="website-title">
+  <form id="website-form">
+    <h2 id="website-title">Export website</h2>
+    <label>Website name <input id="website-name" required pattern="[a-z0-9][a-z0-9-]*" maxlength="63"></label>
+    <label>Starting page <select id="website-start" required></select></label>
+    <fieldset><legend>Pages to include</legend><div id="website-pages"></div></fieldset>
+    <p id="website-address"></p>
+    <p id="website-status" role="status" aria-live="polite"></p>
+    <details id="website-setup"><summary>Set up Vercel publishing</summary><p>Link a dedicated shared Vercel project once in your terminal. Replace the origin with its assigned domain.</p><pre id="website-instructions"></pre></details>
+    <p id="website-result" hidden><a id="website-open" target="_blank" rel="noopener">Open website</a> <button id="website-copy" type="button">Copy link</button></p>
+    <footer><button id="website-close" type="button">Close</button><button id="website-preview" type="button">Export &amp; preview</button><button id="website-publish" class="go" type="submit">Publish website</button></footer>
+  </form>
+</dialog>
 <script>
 const $ = (s) => document.querySelector(s);
 let cur = location.hash.slice(1) || null, mode = null; // mode: null | "select" | "comment"
@@ -119,6 +138,54 @@ const tabId = Math.random().toString(36).slice(2, 10);
 // tell the server which page this tab shows; the agent reads it through `cdesign page`
 const report = () => fetch("/__cd/page", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tabId, file: cur }), keepalive: true }).catch(() => {});
 function setCur(p) { cur = p; if (location.hash.slice(1) !== p) location.hash = p; files(); load(); report(); }
+
+let websiteInfo, websiteBusy = false;
+const websiteOptions = () => ({name:$("#website-name").value.trim(),start:$("#website-start").value,pages:[...document.querySelectorAll("#website-pages input:checked")].map(x=>x.value)});
+function websiteAddress() {
+  const options=websiteOptions();
+  $("#website-address").textContent=(websiteInfo?.publishing.origin || "https://cdesign.vercel.app")+"/"+options.name+"/";
+  $("#website-publish").textContent=websiteInfo?.publishing.previous?.name===options.name ? "Update website" : "Publish website";
+  $("#website-publish").disabled=websiteBusy || !websiteInfo?.publishing.configured;
+}
+$("#website").onclick=async()=>{
+  try {
+    const response=await fetch("/__cd/website"); const data=await response.json(); if(!response.ok)throw Error(data.error);
+    websiteInfo=data; $("#website-name").value=data.name; $("#website-start").replaceChildren(); $("#website-pages").replaceChildren();
+    for(const page of data.pages){
+      $("#website-start").add(new Option(page.replace("design/pages/",""),page));
+      const label=document.createElement("label"), check=document.createElement("input"); check.type="checkbox";check.value=page;check.checked=data.selected.includes(page);
+      check.onchange=()=>{const option=[...$("#website-start").options].find(o=>o.value===page);option.disabled=!check.checked;if(!websiteOptions().pages.includes($("#website-start").value))$("#website-start").value=websiteOptions().pages[0] || "";};
+      label.append(check,document.createTextNode(page.replace("design/pages/","")));$("#website-pages").append(label);
+    }
+    $("#website-start").value=data.start || "";
+    for(const option of $("#website-start").options)option.disabled=!data.selected.includes(option.value);
+    $("#website-instructions").textContent=data.publishing.setup;$("#website-setup").hidden=data.publishing.configured;
+    const previous=data.publishing.previous;$("#website-status").textContent=previous ? "Last published: "+new Date(previous.publishedAt).toLocaleString() : data.pages.length ? "Choose a starting page, then preview or publish." : "No pages found in design/pages.";
+    $("#website-result").hidden=!previous;if(previous)$("#website-open").href=previous.url;
+    websiteAddress();$("#website-dialog").showModal();
+  }catch(e){toast(String(e));}
+};
+$("#website-name").oninput=websiteAddress;
+$("#website-close").onclick=()=>$("#website-dialog").close();
+$("#website-dialog").addEventListener("cancel",e=>{if(websiteBusy)e.preventDefault();});
+$("#website-copy").onclick=()=>navigator.clipboard.writeText($("#website-open").href).then(()=>toast("Link copied"),()=>toast("Copy the address from Open website"));
+async function websiteRun(action){
+  if(websiteBusy || !$("#website-form").reportValidity())return;
+  const options=websiteOptions();if(!options.pages.includes(options.start)){$("#website-status").textContent="Select the starting page in Pages to include.";return;}
+  websiteBusy=true; for(const control of $("#website-form").querySelectorAll("input,select,button"))control.disabled=true;
+  $("#website-status").textContent=action==="publish" ? "Building and publishing website…" : "Building website…";$("#website-result").hidden=true;
+  try{
+    const response=await fetch("/__cd/website/"+action,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(options)});
+    const result=await response.json();if(!response.ok)throw Error(result.error);
+    $("#website-open").href=result.url;$("#website-result").hidden=false;
+    $("#website-copy").hidden=action!=="publish";
+    $("#website-status").textContent=action==="publish" ? "Published. Anyone with the link can view this website." : "Export ready. This preview is available on this computer; publish to get a shareable link.";
+    if(action==="publish")websiteInfo.publishing.previous={name:options.name,...result};
+  }catch(e){$("#website-status").textContent=String(e);}
+  finally{websiteBusy=false;for(const control of $("#website-form").querySelectorAll("input,select,button"))control.disabled=false;for(const option of $("#website-start").options)option.disabled=!websiteOptions().pages.includes(option.value);websiteAddress();}
+}
+$("#website-preview").onclick=()=>websiteRun("export");
+$("#website-form").onsubmit=e=>{e.preventDefault();websiteRun("publish");};
 
 // folders start closed; the ones the user opens stay open across redraws and reloads of this tab (sessionStorage: per tab, gone when it closes)
 const opened = new Set((() => { try { return JSON.parse(sessionStorage.getItem("cd-opened") || "[]"); } catch { return []; } })());
@@ -375,7 +442,7 @@ for (const [id, dx, dy] of [["rx", 1, 0], ["ry", 0, 1], ["rxy", 1, 1]]) {
   };
 }
 addEventListener("keydown", (e) => {
-  if (/input|textarea/i.test(e.target.tagName)) return;
+  if ($("#website-dialog").open || /input|textarea/i.test(e.target.tagName)) return;
   if (e.key === "c") setMode("comment");
   if (e.key === "s") setMode("select");
   if (e.key === "Escape") send({ cd: "clear" });

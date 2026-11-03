@@ -5,6 +5,10 @@ import { readConfig, configure, type SetupOptions } from "./project";
 import { invalidateReact, reactAsset } from "./react";
 import { daemonPath, dataDir, ensureDataDir, homeDir, listening, projectId, readComments, readProjects, readTunnelConfig, update, writeProjects, type Comment } from "./store";
 
+import { exportWebsite, previewWebsite, websiteDefaults, saveWebsite, type WebsiteOptions } from "./export";
+import { publishWebsite, publishingStatus } from "./publish";
+const websitePreviews = new Map<string, ReturnType<typeof previewWebsite>>();
+const websiteJobs = new Set<string>();
 const UI = join(import.meta.dir, "..", "ui");
 const SKIP = new Set(["node_modules", ".git", ".cdesign", "dist"]);
 
@@ -272,6 +276,23 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     const tab = (id: string) => project!.tabs.get(id) ?? (project!.tabs.set(id, { file: null, at: 0, selection: null }), project!.tabs.get(id)!);
     const current = () => [...project!.tabs.values()].filter((t) => t.file).sort((a, b) => b.at - a.at)[0] ?? null;
 
+    if (p === "/__cd/website" || p === "/__cd/website/export" || p === "/__cd/website/publish") {
+      if (via || remote) return json({error:"Website publishing is available only in the local viewer"},403);
+      if (p === "/__cd/website" && req.method === "GET") return json({...websiteDefaults(root), publishing:publishingStatus(root)});
+      if (req.method !== "POST") return json({error:"Method not allowed"},405);
+      if (websiteJobs.has(root)) return json({error:"An export or publication is already running for this project"},409);
+      websiteJobs.add(root);
+      try {
+        const b = await req.json() as WebsiteOptions;
+        if (typeof b.name !== 'string' || typeof b.start !== 'string' || b.pages !== undefined && (!Array.isArray(b.pages) || b.pages.some(x=>typeof x!=='string'))) return json({error:"Invalid website options"},400);
+        const options = {name:b.name,start:b.start,pages:b.pages};
+        if (p.endsWith("/publish")) return json(await publishWebsite(root,options));
+        const result = await exportWebsite(root,options); saveWebsite(root,options);
+        let server = websitePreviews.get(root);
+        if (!server) {server=previewWebsite(result.directory);websitePreviews.set(root,server);}
+        return json({directory:result.directory,url:`http://127.0.0.1:${server.port}/${options.name}/`});
+      } catch (e) {return json({error:String(e)},400);} finally {websiteJobs.delete(root);}
+    }
     if (p === "/__cd/files") return json(listPages(root));
     if (p === "/__cd/config") return json(readConfig(root));
     if (p.startsWith("/__cd/react/")) {

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 
-export type ProjectConfig = { version: 1; mode: "react" | "html"; tailwind: boolean };
+export type ProjectConfig = { version: 1; mode: "react" | "html"; tailwind: boolean; website?: { name: string; start: string; pages?: string[] } };
 export type SetupOptions = Partial<Pick<ProjectConfig, "mode" | "tailwind">>;
 export const configPath = (root: string) => join(root, "design/cdesign.json");
 const SKIP = new Set(["node_modules", ".git", ".cdesign", "dist", ".next", ".astro", "build"]);

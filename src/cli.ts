@@ -2,6 +2,8 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import qrcode from "qrcode-terminal";
+import { exportWebsite, previewWebsite, websiteDefaults, saveWebsite } from "./export";
+import { configurePublisher, publishWebsite } from "./publish";
 import { serveDaemon, DEFAULT_PORT } from "./server";
 import { screenshot } from "./shot";
 import { previewOf, sourceOfPreview } from "./render";
@@ -192,6 +194,27 @@ const batchText = (batch: Comment[], again = false) =>
 
 // ---------- commands ----------
 switch (cmd) {
+  case "export":
+  case "publish": {
+    if (cmd === "publish" && rest[0] === "setup") {
+      const directory = flag("--project-dir"), origin = flag("--origin");
+      if (!directory || !origin) throw new Error("Usage: cdesign publish setup --project-dir <linked-folder> --origin https://cdesign.vercel.app");
+      console.log(configurePublisher(directory, origin)); break;
+    }
+    const name = flag("--name"), start = flag("--start"), selected = flag("--pages"), out = flag("--out"), port = flag("--port");
+    const preview = rest.includes("--preview");
+    const root = resolve(rest.find(a => !a.startsWith("--")) ?? findRoot());
+    const defaults = websiteDefaults(root);
+    const options = { name:name ?? defaults.name, start:start ?? defaults.start, pages:selected ? selected.split(",") : defaults.selected };
+    if (!options.start) throw new Error("No pages found in design/pages");
+    if (cmd === "publish") console.log((await publishWebsite(root, options)).url);
+    else {
+      const result = await exportWebsite(root, options, out); saveWebsite(root, options);
+      console.log(`Exported ${result.manifest.pages!.length} pages to ${result.directory}`);
+      if (preview) {const server=previewWebsite(result.directory, port ? +port : 0); console.log(`Preview: http://127.0.0.1:${server.port}/${options.name}/`);}
+    }
+    break;
+  }
   case "daemon":
   case "serve": {
     const port = flag("--port");
@@ -543,6 +566,7 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
     break;
   }
   default:
+    console.log("cdesign export [dir] [--name slug] [--start design/pages/Home.tsx] [--pages file,file] [--out dir] [--preview]\ncdesign publish [dir] [--name slug] [--start file]\ncdesign publish setup --project-dir <linked-folder> --origin https://cdesign.vercel.app");
     console.log(`cdesign <command>
   open [dir] [--mode react|html] [--tailwind|--no-tailwind] [--port n] [--no-browser] [--tunnel] [--full]  open the viewer with compact agent directions; --full opts into the old guide/inventories
   tunnel [dir] | tunnel stop [dir]      share the project (random link with a secret): fixed domain if set, else a random cloudflared quick tunnel

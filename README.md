@@ -239,3 +239,36 @@ These teach workflows, not an app-specific visual style. Nothing is installed pe
 Comments are stored in `<project>/.cdesign/comments.json`. `.cdesign/` holds only local state (comments, screenshots, agent status); cdesign puts a `.gitignore` containing `*` inside it automatically, so nothing there is committed and you don't need to edit your own `.gitignore`.
 
 Tailwind tokens retain their meaning as CSS comments immediately preceding declarations; typography utilities use a preceding comment on `@utility type-*`. For example, `/* Raised surfaces: inputs and sidebar. Pair with foreground-primary. */ --color-background-secondary: #fff;`. `cdesign tokens search|show` includes these notes and searches their text. Theme overrides inherit the base note. `cdesign check` warns about undocumented color tokens and typography utilities. JSON migration preserves usage notes; verify values, themes, descriptions and typography before removing old files. Existing stylesheets are preserved and need manual reconciliation if migrated with an older cdesign version.
+
+## Export and publish a website
+
+Use **Export website** in the viewer toolbar to choose a website name, the pages to include, and a starting page. **Export & preview** builds a standalone website and opens a local preview link. **Publish website** uploads it to the configured shared Vercel project; subsequent updates retain the same address.
+
+```bash
+cdesign export --name mapvendas --start design/pages/vendas.tsx --preview
+cdesign publish --name mapvendas
+# From another directory:
+cdesign export /path/to/project --name example --start design/pages/home.html
+```
+
+HTML pages are expanded into standalone HTML. React pages are bundled with their browser interactions, shared components, CSS and assets. Pages are discovered under `design/pages/`; `--pages file,file` selects a subset. `design/prototype/`, previews, the viewer and comment tooling are excluded. A dependency on an excluded folder fails the export. Exports are written to `.cdesign/export/`; `--out` accepts another directory outside the source tree. `--preview --port 5000` serves the generated files locally. Website choices persist in `design/cdesign.json`.
+
+The starting page is served at `/<name>/`; other pages retain their path below `pages/`, without the source extension, e.g. `/mapvendas/vendas-lista/`. Existing `location.href`, `location.assign`, `location.replace` and `/p/design/pages/...` navigation are adapted during compilation. Root-relative asset URLs, HTML page links and static JSX asset attributes are rewritten. Dynamic asset URLs and framework-specific routers may need to be made aware of the website prefix. Exports support browser code; backend endpoints are not deployed.
+
+### One-time Vercel setup
+
+Install the Vercel CLI, then link a **dedicated shared project** in a local publisher directory:
+
+```bash
+mkdir -p ~/.cdesign/publisher
+cd ~/.cdesign/publisher
+vercel login
+vercel link
+cdesign publish setup --project-dir ~/.cdesign/publisher --origin https://cdesign.vercel.app
+```
+
+Choose or create the shared project during `vercel link`, and use its actual assigned production domain in `--origin` (`cdesign.vercel.app` is subject to availability). The CLI's existing login is used; cdesign does not store Vercel tokens in project files. Publishing runs locally and is unavailable through viewer tunnels.
+
+Publishing assembles all saved website artifacts and sends only prebuilt static output to Vercel. The publisher folder keeps the last successful artifacts and deployment URLs, serializes publication across processes, and rejects names already used by another local project. Failed builds or deployments keep the previous saved artifacts. Back up this folder: every publication needs the previous websites to preserve them. This workflow supports one publishing computer; it does not synchronize a registry across machines. To roll back a deployment, use Vercel's deployment dashboard.
+
+The public website contains no cdesign sidebar or comments, requires no running local server, and is viewable by anyone with the link when the Vercel production project is public. All websites share an origin; export runtime `getItem`, `setItem`, and `removeItem` storage calls are namespaced per website. Browser mock data remains local to each recipient; this does not add a shared database.

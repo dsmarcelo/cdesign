@@ -37,11 +37,11 @@ export function errorDocument(error: unknown): string {
 const themeScript = `<script>try{var t=localStorage.getItem('cd-theme');if(t)document.documentElement.setAttribute('data-theme',t)}catch(e){}</script>`;
 
 /** Build Tailwind locally; use complete source tokens (including arbitrary variants), never a CDN runtime. */
-export async function tailwindCss(root: string, extraSources: string[] = [], extraCss = ""): Promise<string> {
-  const sources = projectFiles(root, join(root, "design")).filter(f => /\.(tsx|ts|html|css)$/.test(f)).map(f => readFileSync(join(root, f), "utf8"));
+export async function tailwindCss(root: string, extraSources: string[] = [], extraCss = "", exporting = false): Promise<string> {
+  const sources = projectFiles(root, join(root, "design")).filter(f => /\.(tsx|ts|html|css)$/.test(f) && (!exporting || !/\/(prototype|prototypes|previews)\//.test(f))).map(f => readFileSync(join(root, f), "utf8"));
   const tokens = loadTokens(root);
   const entry = hasTailwindTokens(root) ? readFileSync(tailwindPath(root), "utf8") : null;
-  const compiler = await compile((entry ?? `@import "tailwindcss" source(none);\n${tokens ? buildTailwind(tokens) : '@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));'}`) + `\n${extraCss}`, { base: entry !== null ? join(root, "design") : import.meta.dir, customCssResolver: async (id) => id === "tailwindcss" ? Bun.resolveSync("tailwindcss/index.css", import.meta.dir) : undefined, onDependency() {} });
+  const compiler = await compile((entry ?? `@import "tailwindcss" source(none);\n${tokens ? buildTailwind(tokens) : '@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));'}`) + `\n${extraCss}`, { base: entry !== null ? join(root, "design") : import.meta.dir, customCssResolver: async (id) => id === "tailwindcss" ? Bun.resolveSync("tailwindcss/index.css", import.meta.dir) : undefined, onDependency(path) { if (exporting && relative(root, path).split(/[\\/]/).some(p => ["prototype", "prototypes", "previews", ".cdesign"].includes(p))) throw new Error(`Excluded export dependency: ${path}`); } });
   return compiler.build([...new Set([...sources, ...extraSources].join("\n").split(/[\s"'`<>={}]+/))]);
 }
 
@@ -68,7 +68,7 @@ export function renderReact(root: string, file: string): Promise<Bundle> {
   return result;
 }
 
-async function buildReact(root: string, file: string): Promise<Bundle> {
+export async function buildReact(root: string, file: string, output?: { prefix: string; transform: (source: string, file: string) => string | Promise<string>; validate: (file: string) => void }): Promise<Bundle> {
   const preview = isReactComponent(file) ? componentPreview(root, file) : { file, inline: false };
   if (!preview) return {
     html: `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><main id="__cd-empty"><h1>No component preview yet</h1><p>Add a named <code>Preview</code> export to <code>${escape(file)}</code>, or create <code>${escape(previewOf(file))}</code> with a default export.</p><p>cdesign does not render reusable components without example props.</p></main><script>window.__cdReady=true;</script></body></html>`,
@@ -76,7 +76,7 @@ async function buildReact(root: string, file: string): Promise<Bundle> {
   };
   const config = readConfig(root), entry = resolve(root, preview.file), sources: string[] = [];
   const id = createHash("sha256").update(root + file + Date.now() + Math.random()).digest("hex").slice(0, 16);
-  const prefix = `/__cd/react/${id}/`;
+  const prefix = output?.prefix ?? `/__cd/react/${id}/`;
   const styles = existsSync(join(root, "design/styles.css")) ? `import ${JSON.stringify(join(root, "design/styles.css"))};` : "";
   const entrySource = `import React from 'react';
 import {createRoot} from 'react-dom/client';
@@ -94,27 +94,37 @@ createRoot(document.getElementById('__cd-root')).render(React.createElement(Boun
   const build = await Bun.build({
     entrypoints: ["cdesign:entry"], target: "browser", publicPath: prefix,
     naming: { entry: "page.[ext]", asset: "[name]-[hash].[ext]", chunk: "[name]-[hash].[ext]" },
-    define: { "process.env.NODE_ENV": '"development"' },
+    minify: !!output,
+    define: { "process.env.NODE_ENV": output ? '"production"' : '"development"' },
     plugins: [{ name: "cdesign-react", setup(builder) {
       builder.onResolve({ filter: /^cdesign:/ }, args => ({ path: args.path, namespace: "cdesign" }));
       builder.onLoad({ filter: /.*/, namespace: "cdesign" }, args => ({ contents: args.path === "cdesign:entry" ? entrySource : runtime, loader: "js", resolveDir: root }));
       // Use cdesign's React consistently, including imports originating in the host project.
       builder.onResolve({ filter: /^(react|react-dom)(\/.*)?$/ }, args => ({ path: Bun.resolveSync(args.path, import.meta.dir) }));
       builder.onLoad({ filter: /\.jsx$/ }, args => { throw new Error(`JSX files are not supported: ${args.path}. Use TSX.`); });
-      builder.onLoad({ filter: /\.tsx$/ }, async args => {
+      builder.onLoad({ filter: output ? /\.(?:[cm]?[jt]sx?|css|json|svg|png|jpe?g|webp|avif|gif|ico|woff2?|ttf|otf)$/ : /\.tsx$/ }, async args => {
+        if (output) {
+          output.validate(args.path);
+          if (/\.[cm]?[jt]sx?$/.test(args.path) && !args.path.includes(`${sep}node_modules${sep}`)) {
+            const source = await Bun.file(args.path).text(); sources.push(source);
+            return { contents: await output.transform(source, relative(root, args.path).split(sep).join("/")), loader: args.path.endsWith(".tsx") ? "tsx" : args.path.endsWith(".ts") ? "ts" : "js", resolveDir: dirname(args.path) };
+          }
+          return;
+        }
+        if (!args.path.endsWith(".tsx")) return;
         if (args.path.includes(`${sep}node_modules${sep}`)) return;
         const source = await Bun.file(args.path).text(); sources.push(source);
         return { contents: instrument(source, relative(root, args.path).split(sep).join("/")), loader: "js", resolveDir: dirname(args.path) };
       });
     } }],
-  });
+  }).catch(error => { throw new Error(error.errors?.map((e: Error) => e.message).join("\n") || String(error)); });
   if (!build.success) throw new Error(build.logs.map(l => l.message).join("\n"));
   const assets = new Map<string, Blob>();
   for (const output of build.outputs) assets.set(prefix + output.path.split(/[\\/]/).pop(), output);
   let css = [...assets.keys()].filter(p => p.endsWith(".css")).map(p => `<link rel="stylesheet" href="${p}">`).join("");
   if (config.tailwind) {
     const bundledCss = await Promise.all([...assets].filter(([p]) => p.endsWith(".css")).map(([, b]) => b.text()));
-    assets.set(prefix + "tailwind.css", new Blob([await tailwindCss(root, sources, bundledCss.join("\n"))], { type: "text/css" }));
+    assets.set(prefix + "tailwind.css", new Blob([await tailwindCss(root, sources, bundledCss.join("\n"), !!output)], { type: "text/css" }));
     css = `<link rel="stylesheet" href="${prefix}tailwind.css">`;
   }
   const tokens = !config.tailwind && existsSync(join(root, "design/tokens.css")) ? '<link rel="stylesheet" href="/design/tokens.css">' : "";
