@@ -1,0 +1,23 @@
+# src/store.ts
+
+- Comment · type · L6-L16 — type Comment = { id: string; file: string; cdId: string; // "line:col" of the element's start tag in `file` uses: string[]; // component instances the element sits in, innermost first: "file:line:col" selector: string; snippet: string; text: string; status: "draft" | "queued" | "sent" | "done"; // draft -> queued (Send in viewer) -> sent (agent ran review) -> done createdAt: string; };
+- dataDir · function · L18-L18 — dataDir = (root: string)
+- ensureDataDir · function · L20-L26 — function ensureDataDir(root: string)
+- path · function · L27-L27 — path = (root: string)
+- readComments · function · L29-L37 — function readComments(root: string): Comment[]
+- writeComments · function · L39-L42 — function writeComments(root: string, list: Comment[])
+- update · function · L44-L48 — function update(root: string, fn: (l: Comment[]) => void)
+- hasData · function · L51-L51 — hasData = (root: string)
+- agentPath · function · L54-L54 — agentPath = (root: string)
+- beat · function · L55-L58 — function beat(root: string, waiting: boolean)
+- listening · function · L59-L66 — function listening(root: string): boolean
+- homeDir · function · L69-L69 — homeDir = ()
+- daemonPath · function · L70-L70 — daemonPath = ()
+- projectsPath · function · L71-L71 — projectsPath = ()
+- projectId · function · L74-L75 — projectId = (root: string)
+- readProjects · function · L77-L79 — function readProjects(): string[]
+- writeProjects · function · L80-L83 — function writeProjects(roots: string[])
+- TunnelConfig · type · L87-L89 — type TunnelConfig = | { provider: "ngrok"; domain: string; port: number; secret?: string } | { provider: "cloudflare"; domain: string; token: string; port: number; secret?: string };
+- tunnelPath · function · L90-L90 — tunnelPath = ()
+- readTunnelConfig · function · L91-L93 — function readTunnelConfig(): TunnelConfig | null
+- writeTunnelConfig · function · L94-L98 — function writeTunnelConfig(c: TunnelConfig | null)

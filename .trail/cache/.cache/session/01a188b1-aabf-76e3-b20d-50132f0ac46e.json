@@ -1,0 +1,13 @@
+{
+  "graftReads": 0,
+  "sourceReads": 0,
+  "savedTokens": 0,
+  "injectedPointers": [],
+  "nudges": 1,
+  "injectedNotes": [
+    "/home/celoy/code/cdesign/.trail/learnings/2026-10-28-keep-the-compiler-api-available-for-dsmarcelo.md",
+    "/home/celoy/code/cdesign/.trail/learnings/2026-10-29-tailwind-projects-own-their-tokens-in-dsmarcelo.md"
+  ],
+  "promptAsks": 1,
+  "summarized": true
+}

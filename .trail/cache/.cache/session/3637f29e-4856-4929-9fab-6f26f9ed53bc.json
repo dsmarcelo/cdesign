@@ -1,0 +1,29 @@
+{
+  "graftReads": 1,
+  "sourceReads": 1,
+  "savedTokens": 18329,
+  "injectedPointers": [
+    "src/tokens.ts:L64-L67",
+    "src/tsx.ts:L9-L15",
+    "ui/overlay.js"
+  ],
+  "nudges": 2,
+  "injectedNotes": [
+    "/home/celoy/code/cdesign/.trail/learnings/2026-10-28-keep-the-compiler-api-available-for-dsmarcelo.md",
+    "/home/celoy/code/cdesign/.trail/learnings/2026-10-29-tailwind-projects-own-their-tokens-in-dsmarcelo.md",
+    "/home/celoy/code/cdesign/.trail/learnings/2026-10-29-preserve-token-purpose-when-moving-design-dsmarcelo.md"
+  ],
+  "promptAsks": 3,
+  "lastBillingUuid": "c261d2a3-7837-449c-aec7-1eafbeb412c4",
+  "inputCostMicros": 219996,
+  "inputTokensBilled": 551103,
+  "turnUsedGraft": false,
+  "host": "claude-code",
+  "graftTurns": 1,
+  "reportedTurns": 1,
+  "lastTallyUuid": "bc0efba9-fa49-4a92-94ae-5a0c52c336f0",
+  "noteAsks": [
+    "corrected:7d47c6bf-8728-4be2-8146-762270a1dc3a",
+    "shipped:a8c074fa-ce9e-4724-b622-e0dab19717c1"
+  ]
+}

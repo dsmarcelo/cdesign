@@ -1,0 +1,28 @@
+# src/server.ts
+
+- listHtml · function · L11-L19 — function listHtml(root: string, dir = root, out: string[] = []): string[]
+- Selection · type · L21-L21 — type Selection = { file: string; cdId: string; uses: string[]; selector: string; tag: string; text: string; snippet: string };
+- Project · type · L22-L30 — type Project = { id: string; root: string; clients: Set<ReadableStreamDefaultController>; tabOf: Map<ReadableStreamDefaultController, string>; tabs: Map<string, { file: string | null; at: number; selection: Selection | null }>; // viewer tabs: the most recently active one is "the page the user has open" on: boolean; // an agent is listening (cdesign wait) watchers: FSWatcher[]; };
+- json · function · L34-L34 — json = (v: unknown, status = 200)
+- serveDaemon · function · L37-L414 — async function serveDaemon(preferred = DEFAULT_PORT)
+- push · function · L43-L51 — push = (p: Project, ev: string)
+- drop · function · L52-L57 — drop = (p: Project, c: ReadableStreamDefaultController)
+- presence · function · L58-L61 — presence = (p: Project)
+- addProject · function · L63-L85 — function addProject(root: string): Project
+- quiet · function · L69-L69 — quiet = (w: FSWatcher)
+- removeProject · function · L86-L92 — function removeProject(p: Project)
+- persist · function · L93-L93 — persist = ()
+- list · function · L94-L97 — list = (current: Project | null)
+- Tunnel · type · L100-L100 — type Tunnel = { token: string; url: string; proc: ReturnType<typeof Bun.spawn>; srv: ReturnType<typeof Bun.serve> };
+- stopTunnel · function · L103-L109 — stopTunnel = ()
+- startTunnel · function · L110-L176 — async function startTunnel(): Promise<Tunnel>
+- fetch · method · L118-L135 — fetch(req)
+- cookie · function · L121-L121 — cookie = (n: string)
+- watch · function · L155-L164 — watch = async (stream: ReadableStream<Uint8Array>)
+- shutdown · function · L178-L182 — shutdown = ()
+- fetchHandler · function · L195-L398 — fetchHandler = async (req: Request, via?: Project, remote = false): Promise<Response>
+- tab · function · L272-L272 — tab = (id: string)
+- current · function · L273-L273 — current = ()
+- start · method · L291-L296 — start(c)
+- cancel · method · L297-L299 — cancel()
+- bind · function · L400-L400 — bind = (port: number)

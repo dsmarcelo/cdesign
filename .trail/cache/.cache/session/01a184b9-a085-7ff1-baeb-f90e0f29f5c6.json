@@ -1,0 +1,15 @@
+{
+  "graftReads": 0,
+  "sourceReads": 0,
+  "savedTokens": 0,
+  "injectedPointers": [
+    "src/tokens.ts:L242-L249",
+    "src/server.ts:L114-L131",
+    "src/cli.ts",
+    "src/store.ts:L91-L93",
+    "src/server.ts:L106-L172"
+  ],
+  "nudges": 2,
+  "promptAsks": 5,
+  "summarized": true
+}

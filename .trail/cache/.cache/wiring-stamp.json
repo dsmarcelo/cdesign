@@ -1,0 +1,13 @@
+{
+  "version": "0.28.0",
+  "hosts": [
+    "agents"
+  ],
+  "opts": {
+    "global": true,
+    "mcp": true,
+    "hooks": true,
+    "statusline": true
+  },
+  "at": "2026-10-28T22:50:35.113Z"
+}
