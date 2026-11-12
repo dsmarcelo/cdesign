@@ -7,6 +7,7 @@ import { daemonPath, dataDir, ensureDataDir, homeDir, listening, projectId, read
 
 import { exportWebsite, previewWebsite, websiteDefaults, saveWebsite, type WebsiteOptions } from "./export";
 import { publishWebsite, publishingStatus } from "./publish";
+import { colorTokens } from "./tokens";
 const websitePreviews = new Map<string, ReturnType<typeof previewWebsite>>();
 const websiteJobs = new Set<string>();
 const UI = join(import.meta.dir, "..", "ui");
@@ -22,7 +23,7 @@ export function listHtml(root: string, dir = root, out: string[] = []): string[]
   return out.sort();
 }
 
-type Selection = { file: string; cdId: string; uses: string[]; selector: string; tag: string; text: string; snippet: string };
+type Selection = { file: string; cdId: string; uses: string[]; selector: string; tag: string; text: string; snippet: string; size?: string };
 type Project = {
   id: string;
   root: string;
@@ -295,6 +296,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     }
     if (p === "/__cd/files") return json(listPages(root));
     if (p === "/__cd/config") return json(readConfig(root));
+    if (p === "/__cd/tokens/colors") { try { return json(colorTokens(root)); } catch { return json([]); } }
     if (p.startsWith("/__cd/react/")) {
       const asset = await reactAsset(root, p);
       return asset ? new Response(asset, { headers: { "cache-control": "no-store" } }) : new Response("not found", { status: 404 });

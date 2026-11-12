@@ -167,7 +167,7 @@ async function pageText(root: string, compact = false) {
     const base = `http://${id}.localhost:${s.port}`;
     const r = (await (await fetch(`http://127.0.0.1:${s.port}/__cd/page?project=${id}`)).json()) as {
       file: string | null;
-      selection: { file: string; cdId: string; uses: string[]; selector: string; tag: string; text: string; snippet: string } | null;
+      selection: { file: string; cdId: string; uses: string[]; selector: string; tag: string; text: string; snippet: string; size?: string } | null;
     };
     if (!r.file) return `cdesign viewer is running (${base}/) but no page is open in it yet.`;
     let t = `Open in cdesign: ${r.file} (${base}/#${r.file})`;
@@ -177,7 +177,8 @@ async function pageText(root: string, compact = false) {
       t += `
 Selected element (picked by the user with the pointer tool; "this"/"here" refers to it): <${e.tag}> data-cd-id="${e.cdId}" in ${e.file}${e.uses.length ? `
   used in (component instance, innermost first): ${e.uses.join(" <- ")}` : ""}
-  selector: ${e.selector}${e.text ? `
+  selector: ${e.selector}${e.size ? `
+  rendered size: ${e.size}` : ""}${e.text ? `
   text: ${e.text}` : ""}
   source:
 ${e.snippet}`;

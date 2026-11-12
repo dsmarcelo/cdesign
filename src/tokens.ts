@@ -337,3 +337,25 @@ export function init(root: string): string {
   writeFileSync(cssPath(root), buildCss(doc));
   return "created design/tokens.json and design/tokens.css";
 }
+
+/** Color tokens for the viewer's picker: CSS variable plus light/dark values (from tokens.json or design/tailwind.css). */
+export type ColorToken = { name: string; var: string; light: string; dark: string; usage: string };
+export function colorTokens(root: string): ColorToken[] {
+  if (hasTailwindTokens(root)) {
+    const out = new Map<string, ColorToken>();
+    for (const r of cssRows(root)) {
+      if (r.section !== "color") continue;
+      const dark = /dark/.test(r.context ?? "");
+      const t = out.get(r.name) ?? { name: r.name, var: `--color-${r.name}`, light: r.value, dark: r.value, usage: r.usage };
+      if (dark) t.dark = r.value;
+      else if (out.has(r.name)) t.light = r.value;
+      t.usage ||= r.usage;
+      out.set(r.name, t);
+    }
+    return [...out.values()];
+  }
+  return (loadTokens(root)?.color?.tokens ?? []).map((t) => {
+    const v = isThemed(t.value) ? t.value : { light: String(t.value), dark: String(t.value) };
+    return { name: t.name, var: `--color-${t.name}`, light: v.light, dark: v.dark, usage: t.usage ?? "" };
+  });
+}

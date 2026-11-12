@@ -69,6 +69,22 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
     await until(async () => (await (await fetch(`${base}/__cd/page?tab=browser`)).json() as any).selection);
     const selection = (await (await fetch(`${base}/__cd/page?tab=browser`)).json() as any).selection;
     expect(selection.snippet).toContain("onClick"); expect(selection.file).toBe(attrs.file);
+    expect(selection.size).toMatch(/^[\d.]+ x [\d.]+ px$/);
+    // Select opens the inspector: rendered size plus a color picker (design tokens when present, else any color)
+    const insp = await until(() => ev("document.querySelector('.__cd-insp')?.textContent"));
+    expect(insp).toContain("Size"); expect(insp).toContain("Contrast");
+    const tokenCount = (await (await fetch(`${base}/__cd/tokens/colors`)).json() as any[]).length;
+    expect(await ev("document.querySelectorAll('.__cd-insp .grid button').length")).toBe(tokenCount);
+    if (!tokenCount) {
+      await ev("const c=document.querySelector('.__cd-insp input[type=color]');c.value='#123456';c.dispatchEvent(new Event('input'));c.dispatchEvent(new Event('change'))");
+      expect(await ev("getComputedStyle(document.querySelector('button')).color")).toBe("rgb(18, 52, 86)");
+      await ev("document.querySelector('.__cd-insp .go').click()");
+      const colorComment = await until(async () => (await (await fetch(`${base}/__cd/comments`)).json() as any[]).find(c => c.text.includes("#123456")));
+      expect(colorComment.text).toContain("text color to #123456");
+      await fetch(`${base}/__cd/comments/${colorComment.id}/delete`, {method: "POST"});
+    }
+    await ev("document.querySelector('.__cd-insp .x').click()");
+    expect(await ev("document.querySelector('.__cd-insp')")).toBe(null);
     await ev("window.postMessage({cd:'mode',mode:'comment',tab:'browser'},'*')");
     await Bun.sleep(50); await ev("document.querySelector('button').click()");
     await ev("document.querySelector('.__cd-pop textarea').value='Make it clearer';document.querySelector('.__cd-pop .go').click()");
