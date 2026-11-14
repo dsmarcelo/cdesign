@@ -10,7 +10,7 @@ Read `design/cdesign.json` to identify React TSX versus HTML mode and Tailwind v
 
 Run `cdesign check` for undefined tokens/components, missing previews, contract documentation and broken guidance file links. Its success does not prove visual consistency or accessibility.
 
-Inspect the rendered target with `cdesign shot` or MCP screenshot. Prefer an element capture for a component change. Check relevant viewport sizes, themes and states; batch fixes revealed by one inspection before capturing again. Screenshots cannot prove keyboard operation or screen-reader behavior; use interaction/source checks where available and report limits.
+Inspect the rendered target with `cdesign shot` or MCP screenshot. Prefer an element capture for a component change. Check all viewport sizes at once with `cdesign shot --responsive` (MCP screenshot `responsive:true`: mobile 390px, tablet portrait 768px, desktop 1280px in one image), plus relevant themes and states; batch fixes revealed by one inspection before capturing again. Screenshots cannot prove keyboard operation or screen-reader behavior; use interaction/source checks where available and report limits.
 
 Evaluate against the project's own rules:
 - Hierarchy, text legibility, semantic color roles, spacing and typography.

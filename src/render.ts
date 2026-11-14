@@ -118,6 +118,11 @@ function expand(parent: N, root: string, idx: Map<string, string>, stack: string
           if (cls) cls.value += " " + props.class;
           else setAttr(n, "class", props.class);
         }
+        if (props.style && !src.includes("{{style")) {
+          const st = n.attrs.find((a: N) => a.name === "style");
+          if (st) st.value = st.value.replace(/;?\s*$/, "; ") + props.style;
+          else setAttr(n, "style", props.style);
+        }
       }
       repl = frag.childNodes;
     }

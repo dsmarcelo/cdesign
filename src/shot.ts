@@ -12,8 +12,15 @@ export type ShotOpts = {
   maxEdge: number; // longest side of the image in px (Claude downsizes anything above ~1568)
   maxHeight: number; // page shots taller than this (CSS px) are cropped from the top; 0 = never crop
   y: number; // page shots: start this many CSS px from the top
+  responsive?: boolean; // one image with mobile, tablet (portrait) and desktop side by side; `width` is ignored
 };
-export type ShotResult = { data: Buffer; mime: string; width: number; height: number; note: string };
+/** Device viewports for `responsive` shots: iPhone-size phone, tablet in portrait, desktop. */
+export const RESPONSIVE_SIZES = [
+  { label: "Mobile (iPhone)", width: 390, height: 844 },
+  { label: "Tablet (portrait)", width: 768, height: 1024 },
+  { label: "Desktop", width: 1280, height: 800 },
+] as const;
+export type ShotResult = { data: Buffer; mime: string; width: number; height: number; note: string; cssWidth?: number; cssHeight?: number };
 
 const CANDIDATES = [
   process.env.CDESIGN_CHROME,
@@ -82,7 +89,8 @@ async function capture(wsUrl: string, o: ShotOpts): Promise<ShotResult> {
   const until = (method: string, ms: number) =>
     new Promise<void>((ok) => { const t = setTimeout(ok, ms); events.push((m) => m.method === method && (clearTimeout(t), ok())); });
 
-  try {
+  // One page load + capture at a given viewport, in its own tab.
+  const shoot = async (o: ShotOpts, height: number): Promise<ShotResult> => {
     const { targetId } = await send("Target.createTarget", { url: "about:blank" });
     const { sessionId } = await send("Target.attachToTarget", { targetId, flatten: true });
     const cmd = (method: string, params: object = {}) => send(method, params, sessionId);
@@ -93,7 +101,7 @@ async function capture(wsUrl: string, o: ShotOpts): Promise<ShotResult> {
     };
 
     await cmd("Page.enable");
-    await cmd("Emulation.setDeviceMetricsOverride", { width: o.width, height: 900, deviceScaleFactor: 1, mobile: o.width <= 500 });
+    await cmd("Emulation.setDeviceMetricsOverride", { width: o.width, height, deviceScaleFactor: 1, mobile: o.width <= 500 });
     if (o.theme) await cmd("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: o.theme }] });
     const loaded = until("Page.loadEventFired", 20000);
     const nav = await cmd("Page.navigate", { url: o.url });
@@ -144,8 +152,56 @@ async function capture(wsUrl: string, o: ShotOpts): Promise<ShotResult> {
     if (o.format !== "png") params.quality = 80;
     const { data } = await cmd("Page.captureScreenshot", params);
     if (scale < 1 && !note) note = `scaled to ${Math.round(scale * 100)}% to fit ${o.maxEdge}px`;
-    return { data: Buffer.from(data, "base64"), mime: `image/${o.format}`, width: Math.round(w * scale), height: Math.round(h * scale), note };
+    send("Target.closeTarget", { targetId }).catch(() => {});
+    return { data: Buffer.from(data, "base64"), mime: `image/${o.format}`, width: Math.round(w * scale), height: Math.round(h * scale), note, cssWidth: w, cssHeight: h };
+  };
+
+  try {
+    if (!o.responsive) return await shoot(o, 900);
+    // Capture each device at its natural size (lossless, never downscaled), then compose one labelled image.
+    const parts: { label: string; width: number; shot: ShotResult }[] = [];
+    for (const d of RESPONSIVE_SIZES)
+      parts.push({ label: d.label, width: d.width, shot: await shoot({ ...o, width: d.width, format: "png", maxEdge: Infinity }, d.height) });
+    return await compose(send, parts, o);
   } finally {
     sock.close();
   }
+}
+
+type Send = (method: string, params?: object, sessionId?: string) => Promise<any>;
+
+/** Lay the device shots side by side (top aligned, labelled) on a canvas inside Chrome and export one image. */
+async function compose(send: Send, parts: { label: string; width: number; shot: ShotResult }[], o: ShotOpts): Promise<ShotResult> {
+  const { targetId } = await send("Target.createTarget", { url: "about:blank" });
+  const { sessionId } = await send("Target.attachToTarget", { targetId, flatten: true });
+  const items = parts.map((p) => ({ label: `${p.label} ${p.width}px`, src: `data:image/png;base64,${p.shot.data.toString("base64")}`, w: p.shot.cssWidth, h: p.shot.cssHeight }));
+  const r = await send("Runtime.evaluate", {
+    expression: `(async () => {
+      const items = ${JSON.stringify(items)}, gap = 40, pad = 24, maxEdge = ${o.maxEdge}, mime = ${JSON.stringify(`image/${o.format}`)};
+      const imgs = await Promise.all(items.map((it) => new Promise((ok, fail) => { const i = new Image(); i.onload = () => ok(i); i.onerror = () => fail(new Error('compose failed')); i.src = it.src; })));
+      const W = pad * 2 + gap * (items.length - 1) + items.reduce((a, it) => a + it.w, 0);
+      const H = pad * 2 + 40 + Math.max(...items.map((it) => it.h));
+      const s = Math.min(1, maxEdge / Math.max(W, H)), f = 1 / s; // f: size labels/borders so they stay readable after downscaling
+      const c = document.createElement('canvas'); c.width = Math.round(W * s); c.height = Math.round(H * s);
+      const g = c.getContext('2d'); g.scale(s, s); g.imageSmoothingQuality = 'high';
+      g.fillStyle = '#e5e7eb'; g.fillRect(0, 0, W, H);
+      g.font = 'bold ' + 15 * f + 'px sans-serif'; g.textBaseline = 'alphabetic';
+      let x = pad;
+      items.forEach((it, k) => {
+        g.fillStyle = '#374151'; g.fillText(it.label, x, pad + 14 * f);
+        const y = pad + 40;
+        g.drawImage(imgs[k], x, y, it.w, it.h);
+        g.strokeStyle = '#9ca3af'; g.lineWidth = f; g.strokeRect(x - f / 2, y - f / 2, it.w + f, it.h + f);
+        x += it.w + gap;
+      });
+      return { url: c.toDataURL(mime, 0.8), w: c.width, h: c.height };
+    })()`,
+    awaitPromise: true, returnByValue: true,
+  }, sessionId);
+  send("Target.closeTarget", { targetId }).catch(() => {});
+  if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? "could not compose the responsive image");
+  const { url, w, h } = r.result.value as { url: string; w: number; h: number };
+  const notes = parts.filter((p) => p.shot.note).map((p) => `${p.label}: ${p.shot.note}`);
+  const note = `${parts.map((p) => `${p.label.split(" ")[0].toLowerCase()} ${p.width}px`).join(", ")}, left to right${notes.length ? `\n${notes.join("\n")}` : ""}`;
+  return { data: Buffer.from(url.slice(url.indexOf(",") + 1), "base64"), mime: `image/${o.format}`, width: w, height: h, note };
 }

@@ -73,16 +73,20 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
     // Select opens the inspector: rendered size plus a color picker (design tokens when present, else any color)
     const insp = await until(() => ev("document.querySelector('.__cd-insp')?.textContent"));
     expect(insp).toContain("Size"); expect(insp).toContain("Contrast");
-    const tokenCount = (await (await fetch(`${base}/__cd/tokens/colors`)).json() as any[]).length;
-    expect(await ev("document.querySelectorAll('.__cd-insp .grid button').length")).toBe(tokenCount);
-    if (!tokenCount) {
+    const options = await (await fetch(`${base}/__cd/style-options`)).json() as any;
+    expect(await ev("document.querySelectorAll('.__cd-insp .grid button').length")).toBe(options.colors.length);
+    // Button is shared but doesn't forward className, so edits go to the component file; they land in the source right away
+    await until(() => ev("document.querySelector('.__cd-insp [data-s=instance]')?.disabled"));
+    if (!options.colors.length) {
       await ev("const c=document.querySelector('.__cd-insp input[type=color]');c.value='#123456';c.dispatchEvent(new Event('input'));c.dispatchEvent(new Event('change'))");
+      await until(() => readFileSync(join(root, attrs.file), "utf8").includes("text-[#123456]"));
       expect(await ev("getComputedStyle(document.querySelector('button')).color")).toBe("rgb(18, 52, 86)");
-      await ev("document.querySelector('.__cd-insp .go').click()");
-      const colorComment = await until(async () => (await (await fetch(`${base}/__cd/comments`)).json() as any[]).find(c => c.text.includes("#123456")));
-      expect(colorComment.text).toContain("text color to #123456");
-      await fetch(`${base}/__cd/comments/${colorComment.id}/delete`, {method: "POST"});
     }
+    await ev("const w=document.querySelector('.__cd-insp .fw');w.value='700';w.dispatchEvent(new Event('change'))");
+    await until(() => readFileSync(join(root, attrs.file), "utf8").includes("font-bold"));
+    await until(() => ev("document.querySelector('.__cd-insp .status.ok')?.textContent.includes('saved to')"));
+    for (let i = 0; i < 2 && readFileSync(join(root, attrs.file), "utf8") !== button; i++) expect((await (await fetch(`${base}/__cd/edit/undo`, {method: "POST"})).json() as any).ok).toBe(true);
+    expect(readFileSync(join(root, attrs.file), "utf8")).toBe(button);
     await ev("document.querySelector('.__cd-insp .x').click()");
     expect(await ev("document.querySelector('.__cd-insp')")).toBe(null);
     await ev("window.postMessage({cd:'mode',mode:'comment',tab:'browser'},'*')");
@@ -113,6 +117,12 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
     expect(inlineComments.file).toBe(attrs.file); expect(inlineComments.uses).toEqual(inline.uses);
     const inlineShot = await screenshot({url:base+"/p/design/components/ui/Button.tsx?raw=1",width:390,theme:"dark",format:"png",maxEdge:1568,maxHeight:1600,y:0});
     expect(inlineShot.data.length).toBeGreaterThan(100);
+    // One command, three screen sizes: mobile, tablet (portrait) and desktop side by side in a single image.
+    const multi = await screenshot({url:base+"/p/design/pages/Home.tsx?raw=1",width:1280,format:"png",maxEdge:1568,maxHeight:1600,y:0,responsive:true});
+    expect(multi.data.subarray(1,4).toString()).toBe("PNG");
+    expect(multi.width).toBeGreaterThan(multi.height * 0.5); expect(multi.width).toBeLessThanOrEqual(1568);
+    expect(multi.note).toContain("mobile 390px");
+    expect(multi.data.length).toBeGreaterThan(inlineShot.data.length);
     // Page history belongs to the viewer, including its initial page and both split frames.
     await navigate("/", "#fr");
     await until(() => ev("!!document.querySelector('#fr').contentDocument?.querySelector('button')"));

@@ -342,9 +342,9 @@ ${now}`);
     break;
   }
   case "shot": {
-    // cdesign shot [page.html] [--selector css | --selected] [--width 1280] [--theme light|dark] [--format webp|jpeg|png] [--full] [--y n] [--out file] [--json]
+    // cdesign shot [page.html] [--selector css | --selected] [--responsive | --width 1280] [--theme light|dark] [--format webp|jpeg|png] [--full] [--y n] [--out file] [--json]
     const bool = (n: string) => { const i = rest.indexOf(n); if (i >= 0) rest.splice(i, 1); return i >= 0; };
-    const selected = bool("--selected"), full = bool("--full"), asJson = bool("--json");
+    const selected = bool("--selected"), full = bool("--full"), asJson = bool("--json"), responsive = bool("--responsive");
     const selector = flag("--selector"), width = +(flag("--width") ?? 1280), theme = flag("--theme") as "light" | "dark" | undefined;
     const format = (flag("--format") ?? "webp") as "webp" | "jpeg" | "png", y = +(flag("--y") ?? 0), out = flag("--out");
     const fail = (m: string): never => { console.error(m); process.exit(1); };
@@ -370,14 +370,14 @@ ${now}`);
     const url = `http://${reg.id}.localhost:${reg.port}/p/${encodeURI(file!)}?raw=1`;
     let shot;
     try {
-      shot = await screenshot({ url, selector: sel, width, theme, format, maxEdge: 1568, maxHeight: full ? 0 : 1600, y });
+      shot = await screenshot({ url, selector: sel, width, theme, format, maxEdge: 1568, maxHeight: full ? 0 : 1600, y, responsive });
     } catch (e) { fail((e as Error).message); }
     const dir = join(ensureDataDir(root), "shots");
     mkdirSync(dir, { recursive: true });
     const path = out ? resolve(out) : join(dir, `${Date.now()}.${format === "jpeg" ? "jpg" : format}`);
     writeFileSync(path, shot!.data);
     if (!out) for (const old of readdirSync(dir).sort().slice(0, -20)) rmSync(join(dir, old), { force: true }); // keep the last 20
-    const info = { path, mime: shot!.mime, width: shot!.width, height: shot!.height, bytes: shot!.data.length, note: shot!.note, page: file, selector: sel ?? null };
+    const info = { path, mime: shot!.mime, width: shot!.width, height: shot!.height, bytes: shot!.data.length, note: shot!.note, page: file, selector: sel ?? null, responsive };
     console.log(asJson ? JSON.stringify(info) : `${path}\n${info.width}x${info.height} ${info.mime}, ${(info.bytes / 1024).toFixed(1)} KB${info.note ? `\n${info.note}` : ""}`);
     break;
   }
@@ -575,8 +575,9 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
                                         use a fixed domain; tunnel show | tunnel unset
   close [dir] [--all]                   close the project in the viewer; --all stops the viewer for every project
   page                                  what the user has open in the viewer (page + selected element)
-  shot [page] [--selected|--selector css] [--width n] [--theme light|dark] [--format webp|jpeg|png] [--full] [--y n] [--out file]
-                                        screenshot a page or one element (headless Chrome) as a small image file
+  shot [page] [--selected|--selector css] [--responsive|--width n] [--theme light|dark] [--format webp|jpeg|png] [--full] [--y n] [--out file]
+                                        screenshot a page or one element (headless Chrome) as a small image file;
+                                        --responsive: ONE image with mobile (390), tablet portrait (768) and desktop (1280) side by side
   review                                print the comments the user sent from the viewer
   wait [--timeout s]                    run in the background: exits with the batch when the user presses Send
   resolve <id...>                       mark comments done

@@ -7,7 +7,8 @@ import { daemonPath, dataDir, ensureDataDir, homeDir, listening, projectId, read
 
 import { exportWebsite, previewWebsite, websiteDefaults, saveWebsite, type WebsiteOptions } from "./export";
 import { publishWebsite, publishingStatus } from "./publish";
-import { colorTokens } from "./tokens";
+import { colorTokens, sizeTokens } from "./tokens";
+import { applyEdit, editInfo } from "./edit";
 const websitePreviews = new Map<string, ReturnType<typeof previewWebsite>>();
 const websiteJobs = new Set<string>();
 const UI = join(import.meta.dir, "..", "ui");
@@ -31,6 +32,7 @@ type Project = {
   tabOf: Map<ReadableStreamDefaultController, string>;
   tabs: Map<string, { file: string | null; at: number; selection: Selection | null }>; // viewer tabs: the most recently active one is "the page the user has open"
   on: boolean; // an agent is listening (cdesign wait)
+  undo: { file: string; before: string; after: string }[]; // direct style edits from the Select panel
   watchers: FSWatcher[];
 };
 
@@ -68,7 +70,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
   function addProject(root: string): Project {
     const old = projects.get(projectId(root));
     if (old) return old;
-    const p: Project = { id: projectId(root), root, clients: new Set(), tabOf: new Map(), tabs: new Map(), on: false, watchers: [] };
+    const p: Project = { id: projectId(root), root, clients: new Set(), tabOf: new Map(), tabs: new Map(), on: false, watchers: [], undo: [] };
     ensureDataDir(root);
     let ct: Timer | undefined, t: Timer | undefined;
     const quiet = (w: FSWatcher) => (w.on("error", () => {}), w);
@@ -296,7 +298,30 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     }
     if (p === "/__cd/files") return json(listPages(root));
     if (p === "/__cd/config") return json(readConfig(root));
-    if (p === "/__cd/tokens/colors") { try { return json(colorTokens(root)); } catch { return json([]); } }
+    if (p === "/__cd/style-options") {
+      const safe = <T,>(f: () => T[]) => { try { return f(); } catch { return []; } };
+      return json({ tailwind: readConfig(root).tailwind, colors: safe(() => colorTokens(root)), sizes: safe(() => sizeTokens(root)) });
+    }
+    if (p === "/__cd/edit/info" && req.method === "POST") {
+      const b = (await req.json()) as { file: string; cdId: string; uses?: string[] };
+      try { return json(editInfo(root, b.file, b.cdId, b.uses)); } catch (e) { return json({ error: String((e as Error).message) }, 400); }
+    }
+    if (p === "/__cd/edit" && req.method === "POST") {
+      let r;
+      try { r = applyEdit(root, await req.json()); } catch (e) { r = { ok: false as const, reason: String((e as Error).message) }; }
+      if (!r.ok) return json(r, 422);
+      if (r.before !== r.after) { project.undo.push({ file: r.file, before: r.before, after: r.after }); if (project.undo.length > 50) project.undo.shift(); }
+      return json({ ok: true, file: r.file, undo: project.undo.length });
+    }
+    if (p === "/__cd/edit/undo" && req.method === "POST") {
+      const last = project.undo.pop();
+      if (!last) return json({ ok: false, reason: "nothing to undo" }, 422);
+      const path = resolve(root, last.file);
+      if (!insideProject(root, last.file)) return json({ ok: false, reason: "outside the project" }, 422);
+      if (await Bun.file(path).text() !== last.after) return json({ ok: false, reason: `${last.file} changed since that edit` }, 409);
+      writeFileSync(path, last.before);
+      return json({ ok: true, file: last.file, undo: project.undo.length });
+    }
     if (p.startsWith("/__cd/react/")) {
       const asset = await reactAsset(root, p);
       return asset ? new Response(asset, { headers: { "cache-control": "no-store" } }) : new Response("not found", { status: 404 });

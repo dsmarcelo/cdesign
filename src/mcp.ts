@@ -48,14 +48,15 @@ const tools = [
   },
   {
     name: "screenshot",
-    description: "Screenshot a prototype page or one element and get it back as a compact image (WebP, at most 1568px on the long side), without opening a browser. Cheaper and sharper than screenshotting the viewer. Defaults to the page open in the viewer; use selected:true for the element the user picked, or selector for any CSS selector. Long pages are cropped from the top (see the note in the result): use y, or full, or a selector.",
+    description: "Screenshot a prototype page or one element and get it back as a compact image (WebP, at most 1568px on the long side), without opening a browser. Cheaper and sharper than screenshotting the viewer. Defaults to the page open in the viewer; use selected:true for the element the user picked, or selector for any CSS selector. Long pages are cropped from the top (see the note in the result): use y, or full, or a selector. Use responsive:true to check the design at all screen sizes at once: one image with mobile (iPhone, 390px), tablet (portrait, 768px) and desktop (1280px) side by side.",
     inputSchema: {
       type: "object",
       properties: {
         page: { type: "string", description: "Page path relative to the project, e.g. design/prototype/home.html. Default: the page open in the viewer." },
         selected: { type: "boolean", description: "Capture the element the user selected in the viewer." },
         selector: { type: "string", description: "CSS selector of the element to capture." },
-        width: { type: "number", description: "Viewport width in CSS px (default 1280; use 390 for mobile)." },
+        width: { type: "number", description: "Viewport width in CSS px (default 1280; use 390 for mobile). Ignored with responsive." },
+        responsive: { type: "boolean", description: "One image with mobile (390px), tablet portrait (768px) and desktop (1280px) side by side, left to right. Use it to verify a design at every screen size." },
         theme: { type: "string", enum: ["light", "dark"] },
         format: { type: "string", enum: ["webp", "jpeg", "png"], description: "Default webp." },
         y: { type: "number", description: "Page shots: start this many px from the top." },
@@ -85,7 +86,7 @@ const mcp = new Server({ name: "cdesign", version: "0.1.0" }, { capabilities: { 
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
-  const a = (req.params.arguments ?? {}) as { mode?: "react" | "html"; tailwind?: boolean; action?: string; query?: string; offset?: number; ids?: string[]; args?: string; page?: string; selected?: boolean; selector?: string; width?: number; theme?: string; format?: string; y?: number; full?: boolean };
+  const a = (req.params.arguments ?? {}) as { mode?: "react" | "html"; tailwind?: boolean; action?: string; query?: string; offset?: number; ids?: string[]; args?: string; page?: string; selected?: boolean; selector?: string; width?: number; theme?: string; format?: string; y?: number; full?: boolean; responsive?: boolean };
   let text: string;
   switch (req.params.name) {
     case "open": text = await cli(["open", ...(a.mode ? ["--mode", a.mode] : []), ...(a.tailwind === undefined ? [] : [a.tailwind ? "--tailwind" : "--no-tailwind"])]); break;
@@ -97,6 +98,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (a.selected) args.push("--selected");
       if (a.selector) args.push("--selector", a.selector);
       if (a.width) args.push("--width", String(a.width));
+      if (a.responsive) args.push("--responsive");
       if (a.theme) args.push("--theme", a.theme);
       if (a.format) args.push("--format", a.format);
       if (a.y) args.push("--y", String(a.y));

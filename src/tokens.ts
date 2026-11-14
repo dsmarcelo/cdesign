@@ -359,3 +359,19 @@ export function colorTokens(root: string): ColorToken[] {
     return { name: t.name, var: `--color-${t.name}`, light: v.light, dark: v.dark, usage: t.usage ?? "" };
   });
 }
+
+/** Font sizes for the viewer's picker. `cls` is the Tailwind utility (Tailwind projects); `var` the CSS variable. */
+export type SizeToken = { name: string; value: string; var: string; cls?: string };
+const TW_SIZES: [string, string][] = [["xs", "0.75rem"], ["sm", "0.875rem"], ["base", "1rem"], ["lg", "1.125rem"], ["xl", "1.25rem"], ["2xl", "1.5rem"], ["3xl", "1.875rem"], ["4xl", "2.25rem"], ["5xl", "3rem"], ["6xl", "3.75rem"], ["7xl", "4.5rem"], ["8xl", "6rem"], ["9xl", "8rem"]];
+export const TAILWIND_SIZE_NAMES = TW_SIZES.map(([n]) => n);
+export function sizeTokens(root: string): SizeToken[] {
+  const tw = (n: string, value: string): SizeToken => ({ name: n, value, var: `--text-${n}`, cls: `text-${n}` });
+  if (hasTailwindTokens(root)) {
+    const seen = new Map<string, SizeToken>();
+    for (const r of cssRows(root)) if (r.section === "fontSize" && r.name.startsWith("text-") && !r.name.includes("--") && !seen.has(r.name)) seen.set(r.name, tw(r.name.slice(5), r.value));
+    return seen.size ? [...seen.values()] : TW_SIZES.map(([n, v]) => tw(n, v));
+  }
+  const doc = loadTokens(root), list = doc?.fontSize?.tokens ?? [];
+  if (readConfig(root).tailwind) return list.length ? list.map((t) => tw(t.name.replace(/^font-/, ""), String(t.value))) : TW_SIZES.map(([n, v]) => tw(n, v));
+  return list.map((t) => ({ name: t.name, value: String(t.value), var: `--${t.name}` }));
+}
