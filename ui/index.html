@@ -89,6 +89,14 @@
   #website-form>label{display:grid;gap:6px} #website-form input:not([type=checkbox]),#website-form select{width:100%;padding:8px}
   #website-pages{display:grid;gap:8px;max-height:220px;overflow:auto} #website-pages label{display:flex;align-items:center;gap:8px}
   #website-form footer{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px} #website-status{white-space:pre-wrap;overflow-wrap:anywhere} #website-instructions{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+  #share-dialog{width:min(560px,calc(100vw - 32px));max-height:85vh;overflow:auto;border:1px solid #52525b;border-radius:12px;background:var(--bg,#18181b);color:var(--fg,#fafafa);padding:24px}
+  #share-dialog::backdrop{background:#0008} #share-box{display:grid;gap:14px} #share-box h2,#share-box h3,#share-box p{margin:0} #share-box h3{font-size:14px}
+  #share-page{overflow-wrap:anywhere;font-size:13px;color:var(--mut)} #share-status{display:flex;align-items:center;gap:8px;overflow-wrap:anywhere} #share-status:empty{display:none}
+  .spin{width:14px;height:14px;flex:none;border:2px solid #71717a;border-top-color:#fafafa;border-radius:50%;animation:spin .8s linear infinite} @keyframes spin{to{transform:rotate(360deg)}}
+  #share-new{display:flex;flex-wrap:wrap;gap:8px;padding:10px;border:1px solid #16a34a;border-radius:8px} #share-new[hidden]{display:none} #share-url{flex:1 1 220px;min-width:0;padding:8px}
+  #share-list{list-style:none;margin:0;padding:0;display:grid;gap:8px;max-height:260px;overflow:auto} #share-list li{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;border:1px solid var(--line);border-radius:8px}
+  #share-list .info{flex:1 1 180px;min-width:0;display:grid;gap:2px;font-size:13px} #share-list .info b,#share-list .info small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap} #share-list .info small{color:var(--mut)}
+  #share-list .del.sure{background:#dc2626;border-color:#dc2626;color:#fff} #share-box footer{display:flex;justify-content:flex-end} #share-instructions{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
 </style>
 <header>
   <button id="tl" class="ic on" title="Hide/show files"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M6 3v10"/></svg></button>
@@ -99,6 +107,7 @@
   <span id="agent" title="Is an agent running `cdesign wait`?"></span>
   <span id="w" class="grp"><button class="ic on" data-w="100%" title="Full width"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3" width="12.5" height="8" rx="1.5"/><path d="M5.5 13.5h5"/></svg></button><button class="ic" data-w="768px" title="Tablet (768px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="1.75" width="10" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="phone" title="Phone: pick a device, exact screen size"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="resp" title="Responsive: drag the edges to resize width and height"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="2.75" width="9.5" height="9.5" rx="1.5"/><path d="M14.25 7.5v6.75H7.5M10.5 14.25l3.75-3.75"/></svg></button><button class="ic" data-w="split" title="Split: mobile on the left, full width on the right"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3.25" width="4" height="9.5" rx="1"/><rect x="7.75" y="3.25" width="6.5" height="9.5" rx="1"/></svg></button></span><span id="devs" class="grp"><select id="dev" title="Phone screen size (CSS px)"></select><button id="rot" class="ic" title="Rotate screen"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5" transform="rotate(45 8 8)"/></svg></button><button id="fit" title="Real size / fit height">Real size</button></span>
   <button id="bb" title="Move the toolbar to the bottom/top of the screen">Toolbar: top</button>
+  <button id="share" title="Create a private link to the open screen">Share screen</button>
   <button id="website">Export website</button>
   <button id="theme" title="Toggle light/dark preview">Light</button>
   <button id="sel" class="ic" title="Select element for the agent (S)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M3.5 2.5l9 4.2-3.9 1.3-1.3 3.9z"/><path d="M8.6 8l3 3.2"/></svg></button>
@@ -130,6 +139,20 @@
     <p id="website-result" hidden><a id="website-open" target="_blank" rel="noopener">Open website</a> <button id="website-copy" type="button">Copy link</button></p>
     <footer><button id="website-close" type="button">Close</button><button id="website-preview" type="button">Export &amp; preview</button><button id="website-publish" class="go" type="submit">Publish website</button></footer>
   </form>
+</dialog>
+<dialog id="share-dialog" aria-labelledby="share-title">
+  <div id="share-box">
+    <h2 id="share-title">Share screen</h2>
+    <p id="share-page"></p>
+    <div><button id="share-create" class="go">Create link for this screen</button></div>
+    <p id="share-status" role="status" aria-live="polite"></p>
+    <div id="share-new" hidden><input id="share-url" readonly aria-label="Shared link"><button id="share-copy" type="button">Copy link</button><a id="share-open" target="_blank" rel="noopener"><button type="button">Open</button></a></div>
+    <details id="share-setup" hidden><summary>Set up Vercel publishing</summary><p>Link a dedicated shared Vercel project once in your terminal.</p><pre id="share-instructions"></pre></details>
+    <h3>Shared links</h3>
+    <ul id="share-list"></ul>
+    <p>Anyone with a link can view that one screen, and it cannot navigate elsewhere. Delete a link to take it offline.</p>
+    <footer><button id="share-close" type="button">Close</button></footer>
+  </div>
 </dialog>
 <script>
 const $ = (s) => document.querySelector(s);
@@ -186,6 +209,57 @@ async function websiteRun(action){
 }
 $("#website-preview").onclick=()=>websiteRun("export");
 $("#website-form").onsubmit=e=>{e.preventDefault();websiteRun("publish");};
+
+// ---- share one screen: unlisted, navigation-locked link on the shared Vercel project
+let shareInfo, shareBusy = false;
+const sharePage = () => cur && /^design\/pages\/.+\.(html|tsx)$/.test(cur) ? cur : null;
+const shareStatus = (text, busy = false) => { const el = $("#share-status"); el.replaceChildren(); if (busy) { const d = document.createElement("span"); d.className = "spin"; el.append(d); } if (text) el.append(document.createTextNode(text)); };
+const shareCopy = (url) => navigator.clipboard.writeText(url).then(() => toast("Link copied"), () => { $("#share-url").select(); toast("Press Ctrl+C to copy the link"); });
+function shareRender() {
+  const page = sharePage(), ok = !!shareInfo?.configured;
+  $("#share-page").textContent = page ? "Open screen: " + page.replace("design/pages/", "") : "Open a page from design/pages to share it.";
+  $("#share-create").disabled = shareBusy || !page || !ok;
+  $("#share-setup").hidden = ok || !shareInfo; $("#share-instructions").textContent = shareInfo?.setup || "";
+  const list = $("#share-list"); list.replaceChildren();
+  if (!shareInfo?.shares.length) { const li = document.createElement("li"); li.textContent = "No shared links yet."; list.append(li); }
+  for (const share of shareInfo?.shares || []) {
+    const li = document.createElement("li"), info = document.createElement("div"), name = document.createElement("b"), meta = document.createElement("small");
+    info.className = "info"; name.textContent = share.page.replace("design/pages/", ""); name.title = share.page; meta.textContent = new Date(share.publishedAt).toLocaleString() + " · " + share.url; meta.title = share.url; info.append(name, meta);
+    const copy = document.createElement("button"); copy.textContent = "Copy"; copy.disabled = shareBusy; copy.onclick = () => { $("#share-url").value = share.url; shareCopy(share.url); };
+    const open = document.createElement("a"); open.href = share.url; open.target = "_blank"; open.rel = "noopener"; const ob = document.createElement("button"); ob.textContent = "Open"; ob.disabled = shareBusy; open.append(ob);
+    const del = document.createElement("button"); del.className = "del"; del.textContent = "Delete"; del.disabled = shareBusy; let timer;
+    del.onclick = async () => {
+      if (!del.classList.contains("sure")) { del.classList.add("sure"); del.textContent = "Click again to delete"; timer = setTimeout(() => { del.classList.remove("sure"); del.textContent = "Delete"; }, 4000); return; }
+      clearTimeout(timer); shareRun(async () => {
+        shareStatus("Deleting link and redeploying… this can take up to a minute.", true);
+        const r = await fetch("/__cd/shares/delete", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: share.name }) }), j = await r.json(); if (!r.ok) throw Error(j.error);
+        if ($("#share-url").value === share.url) { $("#share-new").hidden = true; }
+        shareStatus("Link deleted. It is now offline.");
+      });
+    };
+    li.append(info, copy, open, del); list.append(li);
+  }
+}
+async function shareRefresh() { const r = await fetch("/__cd/shares"), j = await r.json(); if (!r.ok) throw Error(j.error); shareInfo = j; shareRender(); }
+async function shareRun(work) {
+  if (shareBusy) return; shareBusy = true; shareRender();
+  try { await work(); await shareRefresh(); } catch (e) { shareStatus(String(e.message || e)); }
+  finally { shareBusy = false; $("#share-close").disabled = false; shareRender(); }
+}
+$("#share").onclick = async () => {
+  $("#share-new").hidden = true; shareStatus(""); shareInfo = undefined; shareRender(); $("#share-dialog").showModal();
+  try { await shareRefresh(); } catch (e) { shareStatus(String(e.message || e)); }
+};
+$("#share-create").onclick = () => shareRun(async () => {
+  $("#share-new").hidden = true; shareStatus("Building and publishing this screen… usually 10–30 seconds.", true);
+  const r = await fetch("/__cd/shares", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ page: sharePage() }) }), j = await r.json(); if (!r.ok) throw Error(j.error);
+  $("#share-url").value = j.url; $("#share-open").href = j.url; $("#share-new").hidden = false; shareStatus("Link ready. Anyone with it can view this screen.");
+  shareCopy(j.url); $("#share-url").select();
+});
+$("#share-copy").onclick = () => shareCopy($("#share-url").value);
+$("#share-url").onfocus = () => $("#share-url").select();
+$("#share-close").onclick = () => $("#share-dialog").close();
+$("#share-dialog").addEventListener("cancel", e => { if (shareBusy) e.preventDefault(); });
 
 // folders start closed; the ones the user opens stay open across redraws and reloads of this tab (sessionStorage: per tab, gone when it closes)
 const opened = new Set((() => { try { return JSON.parse(sessionStorage.getItem("cd-opened") || "[]"); } catch { return []; } })());
@@ -442,7 +516,7 @@ for (const [id, dx, dy] of [["rx", 1, 0], ["ry", 0, 1], ["rxy", 1, 1]]) {
   };
 }
 addEventListener("keydown", (e) => {
-  if ($("#website-dialog").open || /input|textarea/i.test(e.target.tagName)) return;
+  if ($("#website-dialog").open || $("#share-dialog").open || /input|textarea/i.test(e.target.tagName)) return;
   if (e.key === "c") setMode("comment");
   if (e.key === "s") setMode("select");
   if (e.key === "Escape") send({ cd: "clear" });

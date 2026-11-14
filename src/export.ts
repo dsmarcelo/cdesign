@@ -8,7 +8,7 @@ import { buildReact, tailwindCss } from "./react";
 import { renderPage } from "./render";
 import { ensureDataDir } from "./store";
 
-export type WebsiteOptions = { name: string; start: string; pages?: string[] };
+export type WebsiteOptions = { name: string; start: string; pages?: string[]; locked?: boolean };
 export type WebsiteManifest = WebsiteOptions & { routes: Record<string, string>; builtAt: string };
 const forbidden = (file: string) => file.split(/[\\/]/).some(p => p.startsWith(".") || ["prototype", "prototypes", "previews", "node_modules"].includes(p));
 export function websiteName(value: string) {
@@ -29,6 +29,14 @@ const safeJSON = (v: unknown) => JSON.stringify(v).replace(/</g, "\\u003c");
 
 /** Production-only compatibility for existing /p/<source> navigation. No viewer is needed. */
 export function navigationRuntime(manifest: WebsiteManifest, file: string) {
+  const storage = `for(const storage of [sessionStorage,localStorage]){const proto=Storage.prototype;const prefix='cdesign:${manifest.name}:';for(const method of ['getItem','setItem','removeItem'])Object.defineProperty(storage,method,{value:(key,...args)=>proto[method].call(storage,prefix+key,...args)});}`;
+  // Locked (shared single screen): nothing may navigate away. Only in-page hash links work.
+  if (manifest.locked) return `(()=>{window.__cdesign={pathname:'/p/'+${safeJSON(file)},url:()=>location.href,navigate:()=>{}};
+${storage}
+document.addEventListener('click',e=>{const a=e.target.closest?.('a[href],area[href]');if(a&&!(a.getAttribute('href')||'').startsWith('#'))e.preventDefault();},true);
+document.addEventListener('submit',e=>e.preventDefault(),true);
+window.open=()=>null;
+})();`;
   return `(()=>{const routes=${safeJSON(manifest.routes)},base=${safeJSON('/' + manifest.name + '/')},file=${safeJSON(file)};
 const url=value=>{const u=new URL(value,location.href);if(u.origin!==location.origin)return u.href;
 const key=decodeURIComponent(u.pathname).replace(/^\\/p\\//,'').replace(/^\\//,'');
@@ -37,7 +45,7 @@ if(u.pathname.startsWith('/p/')||key.startsWith('design/pages/'))throw Error('Pa
 if(u.pathname.startsWith(base))return u.href;
 return new URL(base+u.pathname.replace(/^\\//,''),location.origin).href;};
 window.__cdesign={pathname:'/p/'+file,url,navigate:(value,replace=false)=>replace?location.replace(url(value)):location.assign(url(value))};
-for(const storage of [sessionStorage,localStorage]){const proto=Storage.prototype;const prefix='cdesign:${manifest.name}:';for(const method of ['getItem','setItem','removeItem'])Object.defineProperty(storage,method,{value:(key,...args)=>proto[method].call(storage,prefix+key,...args)});}
+${storage}
 document.addEventListener('click',e=>{const a=e.target.closest?.('a[href]');if(!a||a.target||a.hasAttribute('download')||e.ctrlKey||e.metaKey||e.shiftKey||e.altKey||e.button)return;const raw=a.getAttribute('href');if(!raw||raw.startsWith('#')||/^(mailto:|tel:|javascript:)/i.test(raw))return;const dest=url(raw);if(dest!==a.href){e.preventDefault();location.assign(dest);}});
 })();`;
 }
@@ -95,7 +103,7 @@ export async function exportWebsite(root: string, options: WebsiteOptions, desti
     const key = path.replace(/^\/p\//, "").replace(/^\//, "");
     const page = routes[key] ? key : relative(root, resolve(root, dirname(from), path)).split(sep).join("/");
     if (routes[page]) return routes[page] + suffix;
-    if (/\.(html|tsx)$/.test(path)) throw new Error(`Link references an unselected page: ${value} in ${from}`);
+    if (/\.(html|tsx)$/.test(path)) { if (options.locked) return "#"; throw new Error(`Link references an unselected page: ${value} in ${from}`); }
     const abs = path.startsWith("/") ? resolve(root, key) : resolve(root, dirname(from), path);
     if (!existsSync(abs)) throw new Error(`Missing export asset: ${value} in ${from}`);
     const real = realpathSync(abs), rel = relative(root, real).split(sep).join("/");
@@ -172,7 +180,7 @@ export async function exportWebsite(root: string, options: WebsiteOptions, desti
         for (const c of n.childNodes ?? []) await walk(c);
       };
       await walk(doc);
-      html = serialize(doc).replace('<head>', `<head><script>${navigationRuntime(manifest, file)}</script>`);
+      html = serialize(doc).replace('<head>', `<head>${options.locked ? '<meta name="robots" content="noindex,nofollow">' : ''}<script>${navigationRuntime(manifest, file)}</script>`);
       await put(routes[file] + 'index.html', html);
       if (file === options.start) await put(`/${options.name}/index.html`, html);
     }

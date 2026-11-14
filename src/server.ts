@@ -6,7 +6,7 @@ import { invalidateReact, reactAsset } from "./react";
 import { daemonPath, dataDir, ensureDataDir, homeDir, listening, projectId, readComments, readProjects, readTunnelConfig, update, writeProjects, type Comment } from "./store";
 
 import { exportWebsite, previewWebsite, websiteDefaults, saveWebsite, type WebsiteOptions } from "./export";
-import { publishWebsite, publishingStatus } from "./publish";
+import { publishWebsite, publishingStatus, shareScreen, listShares, deleteShare } from "./publish";
 import { colorTokens, sizeTokens } from "./tokens";
 import { applyEdit, editInfo } from "./edit";
 const websitePreviews = new Map<string, ReturnType<typeof previewWebsite>>();
@@ -294,6 +294,19 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
         let server = websitePreviews.get(root);
         if (!server) {server=previewWebsite(result.directory);websitePreviews.set(root,server);}
         return json({directory:result.directory,url:`http://127.0.0.1:${server.port}/${options.name}/`});
+      } catch (e) {return json({error:e instanceof Error ? e.message : String(e)},400);} finally {websiteJobs.delete(root);}
+    }
+    if (p === "/__cd/shares" || p === "/__cd/shares/delete") {
+      if (via || remote) return json({error:"Sharing is available only in the local viewer"},403);
+      if (p === "/__cd/shares" && req.method === "GET") { const status = publishingStatus(root); return json({configured:status.configured, origin:status.origin, setup:status.setup, shares:listShares(root)}); }
+      if (req.method !== "POST") return json({error:"Method not allowed"},405);
+      if (websiteJobs.has(root)) return json({error:"An export or publication is already running for this project"},409);
+      websiteJobs.add(root);
+      try {
+        const b = await req.json() as {page?: unknown; name?: unknown};
+        if (p.endsWith("/delete")) { if (typeof b.name !== "string") return json({error:"Invalid share"},400); await deleteShare(root, b.name); return json({ok:true}); }
+        if (typeof b.page !== "string") return json({error:"Invalid page"},400);
+        return json(await shareScreen(root, b.page));
       } catch (e) {return json({error:e instanceof Error ? e.message : String(e)},400);} finally {websiteJobs.delete(root);}
     }
     if (p === "/__cd/files") return json(listPages(root));

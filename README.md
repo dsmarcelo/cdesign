@@ -240,6 +240,12 @@ Comments are stored in `<project>/.cdesign/comments.json`. `.cdesign/` holds onl
 
 Tailwind tokens retain their meaning as CSS comments immediately preceding declarations; typography utilities use a preceding comment on `@utility type-*`. For example, `/* Raised surfaces: inputs and sidebar. Pair with foreground-primary. */ --color-background-secondary: #fff;`. `cdesign tokens search|show` includes these notes and searches their text. Theme overrides inherit the base note. `cdesign check` warns about undocumented color tokens and typography utilities. JSON migration preserves usage notes; verify values, themes, descriptions and typography before removing old files. Existing stylesheets are preserved and need manual reconciliation if migrated with an older cdesign version.
 
+## Share one screen
+
+**Share screen** in the viewer toolbar opens a small dialog: **Create link for this screen** publishes only the open page (from `design/pages/`) to the shared Vercel project at an unguessable address (`/s-<random>/`) and shows a spinner until the link is ready, then selects and copies it. Every link you made for the project is listed there with **Copy**, **Open** and **Delete** (click twice to confirm). Deleting redeploys without that screen, so it goes offline.
+
+A shared screen is locked: links to other pages, external links, form submits and `window.open` are blocked, only in-page `#anchors` work, and it is marked `noindex` (the origin also serves `robots.txt` disallowing all). Anyone with the link can still view it until you delete it. It uses the same one-time Vercel setup as publishing and is only available in the local viewer.
+
 ## Export and publish a website
 
 Use **Export website** in the viewer toolbar to choose a website name, the pages to include, and a starting page. **Export & preview** builds a standalone website and opens a local preview link. **Publish website** uploads it to the configured shared Vercel project; subsequent updates retain the same address.

@@ -1,11 +1,11 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { homeDir } from "./store";
-import { exportWebsite, websiteName, saveWebsite, type WebsiteOptions } from "./export";
+import { exportWebsite, websiteName, websitePages, saveWebsite, type WebsiteOptions } from "./export";
 
 type PublisherConfig = { directory: string; origin: string; projectId: string; orgId: string };
-type Published = { root: string; url: string; publishedAt: string; deployment: string };
+type Published = { root: string; url: string; publishedAt: string; deployment: string; share?: { page: string } };
 export const publisherDirectory = () => join(homeDir(), "publisher");
 const configuration = () => join(homeDir(), "publisher.json");
 const read = <T>(path: string, fallback: T): T => existsSync(path) ? JSON.parse(readFileSync(path,"utf8")) : fallback;
@@ -23,7 +23,7 @@ export function configurePublisher(directory: string, origin: string) {
 export function publishingStatus(root: string, name?: string) {
   const config = publisherConfig();
   const records = config ? read<Record<string,Published>>(join(config.directory,"sites.json"),{}) : {};
-  const previous = Object.entries(records).find(([slug, p]) => p.root === root && (!name || slug === name));
+  const previous = Object.entries(records).find(([slug, p]) => p.root === root && !p.share && (!name || slug === name));
   return { configured:!!config, origin:config?.origin, previous: previous ? {name:previous[0],...previous[1]} : undefined,
     setup: `mkdir -p "${publisherDirectory()}"\ncd "${publisherDirectory()}"\nvercel login\nvercel link\ncdesign publish setup --project-dir "${publisherDirectory()}" --origin https://cdesign-ds.vercel.app` };
 }
@@ -59,9 +59,15 @@ export function deploymentURL(output: string): string {
   throw new Error("Vercel finished but returned no recognized deployment URL. The website may already be live; check Vercel deployment status.");
 }
 
+type Records = Record<string, Published>;
+const publisherRoot = (config: PublisherConfig) => join(config.directory, "sites");
+const writeRecords = (config: PublisherConfig, records: Records) => {
+  writeFileSync(join(config.directory, "sites.json.next"), JSON.stringify(records, null, 2) + '\n');
+  renameSync(join(config.directory, "sites.json.next"), join(config.directory, "sites.json"));
+};
+
 /** The directory lock serializes CLI and daemon publications, including artifact assembly. */
-export async function publishWebsite(root: string, options: WebsiteOptions, run = vercelCommand) {
-  websiteName(options.name);
+async function withPublisher<T>(work: (config: PublisherConfig, records: Records, job: string) => Promise<T>): Promise<T> {
   const config = publisherConfig();
   if (!config) throw new Error("Publishing is not configured. Run cdesign publish setup --project-dir <linked-folder> --origin https://cdesign-ds.vercel.app");
   mkdirSync(config.directory, {recursive:true});
@@ -71,41 +77,84 @@ export async function publishWebsite(root: string, options: WebsiteOptions, run 
   try {
     const link = read<{projectId?:string;orgId?:string}>(join(config.directory,".vercel/project.json"),{});
     if (link.projectId !== config.projectId || link.orgId !== config.orgId) throw new Error("Publisher Vercel link changed. Run publish setup again to select the intended project.");
-    const records = read<Record<string,Published>>(join(config.directory,"sites.json"),{});
+    return await work(config, read<Records>(join(config.directory,"sites.json"),{}), job);
+  } finally {rmSync(job,{recursive:true,force:true});rmSync(lock,{recursive:true,force:true});}
+}
+
+/** Assemble every saved site (minus `skip`, plus `extra`: slug -> built directory) into one prebuilt Vercel deployment. */
+async function deployStatic(config: PublisherConfig, records: Records, job: string, run: typeof vercelCommand, skip: string[] = [], extra: Record<string,string> = {}) {
+  const deploy = join(job,"deploy"), output = join(deploy,".vercel/output"), staticDir = join(output,"static");
+  mkdirSync(staticDir,{recursive:true});
+  const slugs = Object.keys(records).filter(slug => !skip.includes(slug) && !(slug in extra));
+  for (const slug of slugs) {
+    websiteName(slug);
+    const snapshot = join(publisherRoot(config),slug);
+    if (!existsSync(snapshot)) throw new Error(`Missing published artifact for ${slug}; restore the publisher directory before updating`);
+    cpSync(snapshot, join(staticDir,slug),{recursive:true});
+  }
+  for (const [slug,directory] of Object.entries(extra)) cpSync(join(directory,slug),join(staticDir,slug),{recursive:true});
+  slugs.push(...Object.keys(extra));
+  // Shared screens are unlisted: keep crawlers away from the whole origin.
+  writeFileSync(join(staticDir,"robots.txt"),"User-agent: *\nDisallow: /\n");
+  // Explicit route mapping gives static hosts clean directory URLs and real 404s.
+  const routes: object[] = [];
+  const scan = (dir:string, prefix:string) => {for(const e of readdirSync(dir,{withFileTypes:true})) {const p=join(dir,e.name), url=prefix+'/'+e.name; if(e.isDirectory())scan(p,url);else if(e.name==='index.html') {const page=url.slice(0,-10); const escaped=page.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); routes.push({src:escaped.slice(0,-1),status:308,headers:{Location:page}},{src:escaped,dest:url});}}};
+  scan(staticDir,"");
+  for (const slug of slugs) routes.unshift({src:`/${slug}`,status:308,headers:{Location:`/${slug}/`}});
+  routes.push({handle:"filesystem"});
+  writeFileSync(join(output,"config.json"),JSON.stringify({version:3,routes}));
+  mkdirSync(join(deploy,".vercel"),{recursive:true});
+  writeFileSync(join(deploy,".vercel/project.json"),JSON.stringify({projectId:config.projectId,orgId:config.orgId}));
+  // Inspect resolves the existing link without permitting implicit project creation.
+  await run(["project","inspect","--non-interactive"],deploy);
+  const result = await run(["deploy","--prebuilt","--prod","--yes","--non-interactive","--json"],deploy);
+  return { deployment: deploymentURL(result), staticDir };
+}
+
+export async function publishWebsite(root: string, options: WebsiteOptions, run = vercelCommand, share?: { page: string }) {
+  websiteName(options.name);
+  return withPublisher(async (config, records, job) => {
     if (records[options.name] && records[options.name].root !== root) throw new Error(`Website name ${options.name} belongs to another local project; choose another name`);
     const built = await exportWebsite(root, options, join(job,"export"));
-    const deploy = join(job,"deploy"), output = join(deploy,".vercel/output"), staticDir = join(output,"static");
-    mkdirSync(staticDir,{recursive:true});
-    for (const slug of Object.keys(records)) {
-      websiteName(slug);
-      if (slug === options.name) continue;
-      const snapshot = join(config.directory,"sites",slug);
-      if (!existsSync(snapshot)) throw new Error(`Missing published artifact for ${slug}; restore the publisher directory before updating`);
-      cpSync(snapshot, join(staticDir,slug),{recursive:true});
-    }
-    cpSync(join(built.directory,options.name),join(staticDir,options.name),{recursive:true});
-    const slugs = [...new Set([...Object.keys(records),options.name])];
-    // Explicit route mapping gives static hosts clean directory URLs and real 404s.
-    const routes: object[] = [];
-    const scan = (dir:string, prefix:string) => {for(const e of readdirSync(dir,{withFileTypes:true})) {const p=join(dir,e.name), url=prefix+'/'+e.name; if(e.isDirectory())scan(p,url);else if(e.name==='index.html') {const page=url.slice(0,-10); const escaped=page.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); routes.push({src:escaped.slice(0,-1),status:308,headers:{Location:page}},{src:escaped,dest:url});}}};
-    scan(staticDir,"");
-    for (const slug of slugs) routes.unshift({src:`/${slug}`,status:308,headers:{Location:`/${slug}/`}});
-    routes.push({handle:"filesystem"});
-    writeFileSync(join(output,"config.json"),JSON.stringify({version:3,routes}));
-    mkdirSync(join(deploy,".vercel"),{recursive:true});
-    writeFileSync(join(deploy,".vercel/project.json"),JSON.stringify(link));
-    // Inspect resolves the existing link without permitting implicit project creation.
-    await run(["project","inspect","--non-interactive"],deploy);
-    const result = await run(["deploy","--prebuilt","--prod","--yes","--non-interactive","--json"],deploy);
-    const deployment = deploymentURL(result);
-    const published: Published = {root,url:`${config.origin}/${options.name}/`,publishedAt:new Date().toISOString(),deployment};
-    const snapshot = join(config.directory,"sites",options.name), next = snapshot+'.next', previous = snapshot+'.previous';
-    mkdirSync(join(config.directory,"sites"),{recursive:true});
+    const {deployment, staticDir} = await deployStatic(config, records, job, run, [], {[options.name]:built.directory});
+    const published: Published = {root,url:`${config.origin}/${options.name}/`,publishedAt:new Date().toISOString(),deployment,...(share ? {share} : {})};
+    const snapshot = join(publisherRoot(config),options.name), next = snapshot+'.next', previous = snapshot+'.previous';
+    mkdirSync(publisherRoot(config),{recursive:true});
     rmSync(next,{recursive:true,force:true}); cpSync(join(staticDir,options.name),next,{recursive:true});
     rmSync(previous,{recursive:true,force:true}); if(existsSync(snapshot))renameSync(snapshot,previous); renameSync(next,snapshot);
     records[options.name] = published;
-    writeFileSync(join(config.directory,"sites.json.next"),JSON.stringify(records,null,2)+'\n'); renameSync(join(config.directory,"sites.json.next"),join(config.directory,"sites.json"));
-    saveWebsite(root, options);
+    writeRecords(config, records);
+    if (!options.locked) saveWebsite(root, options);
     return published;
-  } finally {rmSync(job,{recursive:true,force:true});rmSync(lock,{recursive:true,force:true});}
+  });
+}
+
+export type Share = { name: string; url: string; page: string; publishedAt: string };
+const shareOf = (name: string, p: Published): Share => ({name, url:p.url, page:p.share!.page, publishedAt:p.publishedAt});
+export function listShares(root: string): Share[] {
+  const config = publisherConfig();
+  if (!config) return [];
+  return Object.entries(read<Records>(join(config.directory,"sites.json"),{})).filter(([, p]) => p.root === root && p.share)
+    .map(([name, p]) => shareOf(name, p)).sort((a, b) => b.publishedAt.localeCompare(a.publishedAt));
+}
+
+/** Publish one page as an unlisted, navigation-locked site at an unguessable address. */
+export async function shareScreen(root: string, page: string, run = vercelCommand): Promise<Share> {
+  if (!websitePages(realpathSync(root)).includes(page)) throw new Error("Only pages in design/pages can be shared. Open a page first.");
+  const name = "s-" + randomBytes(8).toString("hex");
+  return shareOf(name, await publishWebsite(root, {name, start:page, pages:[page], locked:true}, run, {page}));
+}
+
+/** Redeploy without the share, then drop its snapshot; a failed deployment leaves it live and listed. */
+export async function deleteShare(root: string, name: string, run = vercelCommand) {
+  websiteName(name);
+  return withPublisher(async (config, records, job) => {
+    const record = records[name];
+    if (!record?.share || record.root !== root) throw new Error("Shared link not found");
+    await deployStatic(config, records, job, run, [name]);
+    delete records[name];
+    writeRecords(config, records);
+    const snapshot = join(publisherRoot(config),name);
+    for (const path of [snapshot, snapshot+'.previous', snapshot+'.next']) rmSync(path,{recursive:true,force:true});
+  });
 }
