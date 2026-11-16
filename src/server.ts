@@ -103,8 +103,8 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     projects: [...projects.values()].map((p) => ({ id: p.id, root: p.root, name: basename(p.root), url: `http://${p.id}.localhost:${server.port}/`, tabs: p.clients.size })),
   });
 
-  // ----- tunnel: a second listener for the whole viewer (every project, switchable in the UI), exposed by `cloudflared` quick tunnel (random URL + secret) or the fixed domain from `tunnel set` -----
-  type Tunnel = { token: string; url: string; proc: ReturnType<typeof Bun.spawn>; srv: ReturnType<typeof Bun.serve> };
+  // ----- tunnel: a second listener for the whole viewer (every project, switchable in the UI), exposed by `cloudflared` quick tunnel (random URL) or the fixed domain from `tunnel set`; no auth: whoever has the link can open it -----
+  type Tunnel = { url: string; proc: ReturnType<typeof Bun.spawn>; srv: ReturnType<typeof Bun.serve> };
   let tunnel: Tunnel | null = null;
   let tunnelHome = ""; // project a visitor lands on until they pick another (cookie)
   const stopTunnel = () => {
@@ -117,7 +117,6 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
   async function startTunnel(): Promise<Tunnel> {
     if (tunnel) return tunnel;
     const cfg = readTunnelConfig(); // fixed domain, else a random quick tunnel
-    const token = cfg ? cfg.secret ?? "" : crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", ""); // "" = open fixed domain, no secret
     const srv = Bun.serve({
       port: cfg?.port ?? 0,
       hostname: "127.0.0.1",
@@ -127,8 +126,6 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
         const cookies = (req.headers.get("cookie") ?? "").split(/;\s*/);
         const cookie = (n: string) => cookies.find((c) => c.startsWith(n + "="))?.slice(n.length + 1);
         const set: string[] = [];
-        if (token && url.searchParams.get("t") === token) { url.searchParams.delete("t"); set.push(`cd_t=${token}; Path=/; HttpOnly; Secure; SameSite=Lax`); }
-        else if (token && cookie("cd_t") !== token) return new Response("unauthorized: open the full link printed by cdesign", { status: 401 });
         const pick = url.searchParams.get("project"); // the project switcher: remember the choice in a cookie
         if (pick && projects.has(pick)) { url.searchParams.delete("project"); set.push(`cd_p=${pick}; Path=/; HttpOnly; SameSite=Lax`); }
         if (set.length) {
@@ -176,7 +173,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       srv.stop(true);
       throw e;
     });
-    const t = { token, url, proc, srv };
+    const t = { url, proc, srv };
     tunnel = t;
     proc.exited.then(() => tunnel === t && stopTunnel());
     return t;
@@ -263,7 +260,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
         const t = await startTunnel();
         tunnelHome = a.id;
         lastActive = Date.now();
-        return json({ url: `${t.url}/?project=${a.id}${t.token ? `&t=${t.token}` : ""}` });
+        return json({ url: `${t.url}/?project=${a.id}` });
       } catch (e) {
         return json({ error: (e as Error).message }, 500);
       }

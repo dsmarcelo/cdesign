@@ -83,10 +83,10 @@ export function writeProjects(roots: string[]) {
 }
 
 // ---------- fixed tunnel domain (optional; without it `tunnel` uses a random cloudflared quick-tunnel URL) ----------
-/** `secret` set = the link needs `?t=<secret>`; absent = anyone who knows the domain can open it */
+/** No access control: anyone who knows the domain can open it */
 export type TunnelConfig =
-  | { provider: "ngrok"; domain: string; port: number; secret?: string }
-  | { provider: "cloudflare"; domain: string; token: string; port: number; secret?: string };
+  | { provider: "ngrok"; domain: string; port: number }
+  | { provider: "cloudflare"; domain: string; token: string; port: number };
 const tunnelPath = () => join(homeDir(), "tunnel.json");
 export function readTunnelConfig(): TunnelConfig | null {
   try { return JSON.parse(readFileSync(tunnelPath(), "utf8")) as TunnelConfig; } catch { return null; }
@@ -94,5 +94,5 @@ export function readTunnelConfig(): TunnelConfig | null {
 export function writeTunnelConfig(c: TunnelConfig | null) {
   if (!c) return rmSync(tunnelPath(), { force: true });
   mkdirSync(homeDir(), { recursive: true });
-  writeFileSync(tunnelPath(), JSON.stringify(c, null, 2), { mode: 0o600 }); // holds the access secret and the tunnel token
+  writeFileSync(tunnelPath(), JSON.stringify(c, null, 2), { mode: 0o600 }); // holds the tunnel token
 }

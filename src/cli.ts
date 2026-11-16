@@ -139,7 +139,7 @@ async function register(root: string, port?: string): Promise<Reg & { port: numb
   return { ...((await r.json()) as Reg), port: s.port };
 }
 
-/** Expose the project through a cloudflared quick tunnel; prints the private link. */
+/** Expose the project through a cloudflared quick tunnel; prints the link (no auth: anyone with it can open it). */
 async function tunnel(reg: { id: string; port: number }, stop = false) {
   const r = await fetch(`http://127.0.0.1:${reg.port}/__cd/projects/${reg.id}/tunnel${stop ? "/stop" : ""}`, { method: "POST" });
   const b = (await r.json()) as { url?: string; error?: string };
@@ -253,21 +253,20 @@ switch (cmd) {
       const sub = rest.shift();
       const cfg = readTunnelConfig();
       if (sub === "show") {
-        console.log(cfg ? `fixed tunnel domain: https://${cfg.domain} (${cfg.provider}, local port ${cfg.port}, ${cfg.secret ? "link needs a secret" : "open: no secret"})` : "no fixed domain: `cdesign tunnel` uses a random cloudflared quick-tunnel URL. Set one with `cdesign tunnel set`.");
+        console.log(cfg ? `fixed tunnel domain: https://${cfg.domain} (${cfg.provider}, local port ${cfg.port})` : "no fixed domain: `cdesign tunnel` uses a random cloudflared quick-tunnel URL. Set one with `cdesign tunnel set`.");
         break;
       }
       if (sub === "unset") { writeTunnelConfig(null); console.log("fixed domain removed; `cdesign tunnel` uses a random quick-tunnel URL again"); break; }
       const provider = flag("--provider") ?? "ngrok", domain = (flag("--domain") ?? flag("--hostname") ?? "").replace(/^https?:\/\//, "").replace(/\/.*$/, "").toLowerCase();
-      const token = flag("--token"), port = +(flag("--port") ?? 4748), withSecret = rest.includes("--secret");
+      const token = flag("--token"), port = +(flag("--port") ?? 4748);
       const fail = (m: string): never => { console.error(m); process.exit(1); };
       if (provider !== "ngrok" && provider !== "cloudflare") fail("--provider must be ngrok or cloudflare");
       if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(domain)) fail("give the domain with --domain, e.g. --domain my-name.ngrok-free.dev");
       if (provider === "cloudflare" && !token) fail("--provider cloudflare needs --token <tunnel token> (Zero Trust > Networks > Tunnels)");
       if (!(port > 1023 && port < 65536)) fail("--port must be between 1024 and 65535");
-      const secret = withSecret ? crypto.randomUUID().replaceAll("-", "") + crypto.randomUUID().replaceAll("-", "") : undefined; // stable access secret (opt-in): the private link stays the same
-      writeTunnelConfig(provider === "ngrok" ? { provider, domain, port, secret } : { provider: "cloudflare", domain, token: token!, port, secret });
+      writeTunnelConfig(provider === "ngrok" ? { provider, domain, port } : { provider: "cloudflare", domain, token: token!, port });
       console.log(`fixed tunnel domain saved: https://${domain} (${provider})
-Run \`cdesign tunnel\` to share the viewer (all your open projects, switchable from the header) at it.${secret ? "\nThe link carries a ?t=… secret that stays the same until you run `tunnel set` again." : `\nNo secret: anyone who knows https://${domain} can view your open projects and send comments to your agent while the tunnel runs. Add --secret to require one.`}${provider === "cloudflare" ? `
+Run \`cdesign tunnel\` to share the viewer (all your open projects, switchable from the header) at it.\nNo auth: anyone who knows https://${domain} can view your open projects and send comments to your agent while the tunnel runs.${provider === "cloudflare" ? `
 In the Cloudflare dashboard the tunnel's public hostname must be ${domain} -> http://localhost:${port}.` : `
 Needs ngrok installed and authenticated (\`ngrok config add-authtoken <token>\`); the free plan includes one static domain.`}`);
       break;
@@ -570,8 +569,8 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
     console.log("cdesign export [dir] [--name slug] [--start design/pages/Home.tsx] [--pages file,file] [--out dir] [--preview]\ncdesign publish [dir] [--name slug] [--start file]\ncdesign publish setup --project-dir <linked-folder> --origin https://cdesign-ds.vercel.app");
     console.log(`cdesign <command>
   open [dir] [--mode react|html] [--tailwind|--no-tailwind] [--port n] [--no-browser] [--tunnel] [--full]  open the viewer with compact agent directions; --full opts into the old guide/inventories
-  tunnel [dir] | tunnel stop [dir]      share the project (random link with a secret): fixed domain if set, else a random cloudflared quick tunnel
-  tunnel set --provider ngrok --domain <name.ngrok-free.dev> | --provider cloudflare --hostname <h> --token <t> [--port n] [--secret]
+  tunnel [dir] | tunnel stop [dir]      share the project (random link, no auth): fixed domain if set, else a random cloudflared quick tunnel
+  tunnel set --provider ngrok --domain <name.ngrok-free.dev> | --provider cloudflare --hostname <h> --token <t> [--port n]
                                         use a fixed domain; tunnel show | tunnel unset
   close [dir] [--all]                   close the project in the viewer; --all stops the viewer for every project
   page                                  what the user has open in the viewer (page + selected element)
