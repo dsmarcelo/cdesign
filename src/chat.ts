@@ -1,35 +1,29 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { dataDir, ensureDataDir } from "./store";
-import { type Approval, type Item, type ProviderEvent, type ProviderSession, type TurnStatus } from "./chat-providers";
+import { type ProviderEvent, type ProviderSession, type TurnStatus } from "./chat-providers";
 import { PROVIDERS } from "./chat-registry";
+import { loadConversations, removeConversation, saveConversation, type Conversation } from "./chat-store";
+export type { Conversation };
 
-/** Per-project chat state. In memory only: durable history is a later task. Events never touch the preview broadcast (`push` in server.ts). */
+/** Per-project chat state: saved conversations (./chat-store) plus the one running turn. Events never touch the preview broadcast (`push` in server.ts). */
 export const MAX_PROMPT = 20000;
 export const MAX_BODY = 100 * 1024;
 const MAX_ITEMS = 500, MAX_TEXT = 200_000, MAX_OUTPUT = 50_000, MAX_LOG = 2000;
 const stopGrace = () => Number(process.env.CDESIGN_CHAT_STOP_GRACE_MS) || 5000;
 
 export class ChatError extends Error {
-  constructor(public status: number, message: string) { super(message); }
+  constructor(public status: number, message: string, public extra: Record<string, unknown> = {}) { super(message); }
 }
 
-export type Conversation = {
-  id: string;
-  provider: string;
-  fullAccess: boolean;
-  status: "idle" | "running";
-  turnId: string | null;
-  items: Item[];
-  approvals: Approval[]; // pending permission requests of the running turn
-  error: string | null;
-};
 export type ChatEvent =
-  | { type: "turn.begin"; conversation: { id: string; provider: string; fullAccess: boolean }; text: string; itemId: string }
+  | { type: "turn.begin"; conversation: { id: string; title: string; provider: string; fullAccess: boolean }; text: string; itemId: string }
   | ProviderEvent
   | { type: "reset" }
-  | { type: "settings"; fullAccess: boolean };
-type Logged = ChatEvent & { seq: number };
+  | { type: "list" } // conversations were created, renamed or deleted: refetch the list
+  | { type: "settings"; fullAccess: boolean; conversationId?: string };
+/** `cid` is the conversation an event belongs to (only one turn runs per project, so it is the active one). */
+type Logged = ChatEvent & { seq: number; cid?: string };
 
 /** Saved per project; Full access unless the user chose Normal. Unreadable files fall back to the default. */
 const settingsFile = (root: string) => join(dataDir(root), "chat.json");
@@ -72,92 +66,189 @@ export function apply(conv: Conversation, ev: ChatEvent) {
   while (conv.items.length > MAX_ITEMS) conv.items.shift();
 }
 
+
+const SAVE_MS = 300;
+const INTERRUPTED = "Interrupted: cdesign stopped or restarted while the agent was working. What it said so far is kept and nothing was retried. Send a follow-up to continue this chat.";
+const titleOf = (text: string) => { const t = text.replace(/\s+/g, " ").trim(); return t.length > 60 ? t.slice(0, 59) + "…" : t; };
+
 export class ProjectChat {
-  private conv: Conversation | null = null;
-  private session: (ProviderSession & { provider: string }) | null = null;
+  private convs = new Map<string, Conversation>();
+  private session: (ProviderSession & { provider: string; cid: string }) | null = null;
   private active = false; // the single admission point: set synchronously in send(), cleared when the turn ends
+  private activeId: string | null = null; // conversation owning the running or approval-waiting turn
   private stopping = false;
   private gen = 0;
   private stopTimer: Timer | undefined;
+  private saveTimer: Timer | undefined;
+  private dirty = new Set<string>();
   private log: Logged[] = [];
   private seq = 0;
+  /** Changes with every daemon run: a client holding a sequence number from an earlier run must reload the snapshot. */
+  private epoch = rid();
   private clients = new Set<ReadableStreamDefaultController>();
   private closed = false;
   private fullAccess: boolean;
-  private resumeId: { conversation: string; provider: string; id: string } | null = null;
-  constructor(public root: string) { this.fullAccess = readFull(root); }
+  constructor(public root: string) {
+    this.fullAccess = readFull(root);
+    // A turn that was running when the previous daemon went away is over: keep its partial output, never retry it or replay an approval.
+    for (const c of loadConversations(root)) {
+      if (c.status === "running") {
+        c.status = "idle";
+        c.error = INTERRUPTED;
+        for (const it of c.items) if (it.status === "inProgress") it.status = "interrupted";
+        saveConversation(root, c);
+      }
+      this.convs.set(c.id, c);
+    }
+  }
 
   get busy() { return this.active; }
 
-  snapshot() {
-    return { seq: this.seq, busy: this.active, fullAccess: this.fullAccess, conversation: this.conv ? structuredClone(this.conv) : null };
+  private list() {
+    return [...this.convs.values()].sort((a, b) => b.updatedAt - a.updatedAt)
+      .map((c) => ({ id: c.id, title: c.title, provider: c.provider, updatedAt: c.updatedAt, status: c.status }));
   }
 
-  private emit(ev: ChatEvent) {
+  /** `cid` picks the conversation to include; by default the running one, else the most recently used. */
+  snapshot(cid?: string | null) {
+    const sel = (cid ? this.convs.get(cid) : undefined) ?? (this.activeId ? this.convs.get(this.activeId) : undefined) ?? [...this.convs.values()].sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    return {
+      epoch: this.epoch, seq: this.seq, busy: this.active, activeId: this.activeId, fullAccess: this.fullAccess,
+      conversations: this.list(), conversation: sel ? structuredClone(sel) : null,
+    };
+  }
+
+  /** Streaming output is written at most every SAVE_MS; turn boundaries flush at once. */
+  private touch(c: Conversation, now = false) {
+    this.dirty.add(c.id);
+    if (now) return this.flush();
+    this.saveTimer ??= setTimeout(() => this.flush(), SAVE_MS);
+  }
+  private flush() {
+    clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
+    for (const id of this.dirty) { const c = this.convs.get(id); if (c) try { saveConversation(this.root, c); } catch { /* unwritable project state: the chat still works until restart */ } }
+    this.dirty.clear();
+  }
+
+  private emit(ev: ChatEvent, cid: string | null = this.activeId) {
     if (this.closed) return;
-    const logged = { ...ev, seq: ++this.seq } as Logged;
+    const logged = { ...ev, seq: ++this.seq, ...(cid ? { cid } : {}) } as Logged;
     this.log.push(logged);
     if (this.log.length > MAX_LOG) this.log.shift();
-    if (ev.type === "settings") { /* not part of any conversation */ } else if (this.conv) apply(this.conv, ev);
+    const conv = cid ? this.convs.get(cid) : undefined;
+    if (conv && ev.type !== "list" && ev.type !== "settings" && ev.type !== "reset") {
+      apply(conv, ev);
+      this.touch(conv, ev.type === "turn.begin" || ev.type === "turn.completed" || ev.type === "approval.requested");
+    }
     for (const c of this.clients) this.write(c, logged);
   }
   private write(c: ReadableStreamDefaultController, ev: Logged) {
     try { c.enqueue(new TextEncoder().encode(`id: ${ev.seq}\ndata: ${JSON.stringify(ev)}\n\n`)); } catch { this.clients.delete(c); }
   }
 
-  /** Attach an SSE client: replays what it missed after `after`, or asks it to reload the snapshot when the log no longer reaches back. */
-  subscribe(c: ReadableStreamDefaultController, after: number) {
+  /** Attach an SSE client: replays what it missed after `after`, or asks it to reload the snapshot when the log no longer reaches back or belongs to another run. */
+  subscribe(c: ReadableStreamDefaultController, after: number, epoch?: string | null) {
     const first = this.log[0]?.seq ?? this.seq + 1;
-    if (after < first - 1 && after < this.seq) this.write(c, { type: "reset", seq: this.seq });
+    if ((epoch && epoch !== this.epoch) || after > this.seq || (after < first - 1 && after < this.seq)) this.write(c, { type: "reset", seq: this.seq });
     else for (const ev of this.log) if (ev.seq > after) this.write(c, ev);
     this.clients.add(c);
   }
   unsubscribe(c: ReadableStreamDefaultController) { this.clients.delete(c); }
+
+  private conversation(id: unknown): Conversation {
+    const c = typeof id === "string" ? this.convs.get(id) : undefined;
+    if (!c) throw new ChatError(404, "That conversation no longer exists");
+    return c;
+  }
 
   async send(body: unknown): Promise<{ conversationId: string }> {
     const b = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
     const text = typeof b.text === "string" ? b.text.trim() : "";
     if (!text) throw new ChatError(400, "Write a message first");
     if (text.length > MAX_PROMPT) throw new ChatError(400, `Message is too long (max ${MAX_PROMPT} characters)`);
-    const provider = PROVIDERS[typeof b.provider === "string" ? b.provider : "codex"];
+    let conv = b.conversationId === undefined ? null : this.conversation(b.conversationId);
+    const provider = PROVIDERS[typeof b.provider === "string" ? b.provider : conv?.provider ?? "codex"];
     if (!provider) throw new ChatError(400, "Unknown agent");
-    if (b.conversationId !== undefined && (typeof b.conversationId !== "string" || b.conversationId !== this.conv?.id)) throw new ChatError(409, "That conversation is no longer current");
-    if (this.active) throw new ChatError(409, "The agent is already working on a turn in this project");
+    if (conv && conv.provider !== provider.id) throw new ChatError(400, "A conversation keeps its agent; start a new chat to use another one");
+    if (this.active) {
+      const at = this.activeId ? this.convs.get(this.activeId) : undefined;
+      throw new ChatError(409, `The agent is already working in this project${at ? `, in the chat "${at.title}"` : ""}. Wait for it to finish or Stop it first.`, { activeConversationId: this.activeId });
+    }
+    if (conv && conv.items.some((i) => i.kind !== "user") && !conv.sessionId && this.session?.cid !== conv.id) throw new ChatError(409, "This chat has no saved agent session to continue. Start a new chat.");
     this.active = true; // admission: nothing awaits between the check and this line
     this.stopping = false;
-    if (!this.conv || this.conv.provider !== provider.id) this.conv = { id: rid(), provider: provider.id, fullAccess: this.fullAccess, status: "idle", turnId: null, items: [], approvals: [], error: null };
-    const conv = this.conv;
-    this.emit({ type: "turn.begin", conversation: { id: conv.id, provider: conv.provider, fullAccess: this.fullAccess }, text, itemId: "u" + rid() });
-    void this.run(provider.id, text, this.fullAccess);
+    const created = !conv;
+    if (!conv) {
+      const now = Date.now();
+      conv = { id: rid(), title: titleOf(text) || "Chat", provider: provider.id, fullAccess: this.fullAccess, sessionId: null, createdAt: now, updatedAt: now, status: "idle", turnId: null, items: [], approvals: [], error: null };
+      this.convs.set(conv.id, conv);
+    }
+    this.activeId = conv.id;
+    conv.updatedAt = Date.now();
+    this.emit({ type: "turn.begin", conversation: { id: conv.id, title: conv.title, provider: conv.provider, fullAccess: conv.fullAccess }, text, itemId: "u" + rid() });
+    if (created) this.emit({ type: "list" }, null);
+    void this.run(conv, text);
     return { conversationId: conv.id };
   }
 
   private finish(status: TurnStatus, error?: string) {
     clearTimeout(this.stopTimer);
     if (!this.active) return;
+    const cid = this.activeId;
+    const conv = cid ? this.convs.get(cid) : undefined;
+    if (conv) conv.updatedAt = Date.now();
+    this.noteSession();
+    this.emit({ type: "turn.completed", status, error }, cid);
     this.active = false;
+    this.activeId = null;
     this.stopping = false;
-    this.emit({ type: "turn.completed", status, error });
+    this.flush();
   }
 
-  /** Normal/Full applies between turns: a running turn keeps the mode it started with. */
+  /** Normal/Full applies between turns. It becomes the project default for new chats and, when named, the setting of that chat. */
   setAccess(body: unknown) {
     const b = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
     if (typeof b.fullAccess !== "boolean") throw new ChatError(400, "fullAccess must be true or false");
+    const conv = b.conversationId === undefined ? null : this.conversation(b.conversationId);
     if (this.active) throw new ChatError(409, "Access mode cannot change while the agent is working; Stop the turn or wait for it to finish");
     if (b.fullAccess !== this.fullAccess) {
       this.fullAccess = b.fullAccess;
       try { ensureDataDir(this.root); writeFileSync(settingsFile(this.root), JSON.stringify({ fullAccess: this.fullAccess })); } catch { /* unwritable project state: the choice still holds for this daemon */ }
-      if (this.conv) this.conv.fullAccess = this.fullAccess;
-      this.emit({ type: "settings", fullAccess: this.fullAccess });
     }
+    if (conv && conv.fullAccess !== b.fullAccess) { conv.fullAccess = b.fullAccess; this.touch(conv, true); }
+    this.emit({ type: "settings", fullAccess: b.fullAccess, ...(conv ? { conversationId: conv.id } : {}) }, null);
     return { fullAccess: this.fullAccess };
+  }
+
+  rename(body: unknown) {
+    const b = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+    const conv = this.conversation(b.conversationId);
+    const title = typeof b.title === "string" ? b.title.replace(/\s+/g, " ").trim() : "";
+    if (!title) throw new ChatError(400, "Give the chat a name");
+    if (title.length > 80) throw new ChatError(400, "Chat names can be at most 80 characters");
+    conv.title = title;
+    this.touch(conv, true);
+    this.emit({ type: "list" }, null);
+    return { title };
+  }
+
+  /** Removes only cdesign's saved record; the provider's own history and the project files are untouched. */
+  remove(body: unknown) {
+    const b = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+    const conv = this.conversation(b.conversationId);
+    if (this.active && this.activeId === conv.id) throw new ChatError(409, "This chat is still working. Stop it and wait for it to end before deleting.", { activeConversationId: conv.id });
+    if (this.session?.cid === conv.id) { this.gen++; this.session.close(); this.session = null; }
+    this.convs.delete(conv.id);
+    this.dirty.delete(conv.id);
+    try { removeConversation(this.root, conv.id); } catch { /* already gone */ }
+    this.emit({ type: "list" }, null);
   }
 
   /** Allow once / Deny for exactly one pending request of the running turn; anything stale, duplicate or foreign is refused and authorizes nothing. */
   approve(body: unknown) {
     const b = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
-    const conv = this.conv;
+    const conv = this.activeId ? this.convs.get(this.activeId) : undefined;
     if (!this.active || !conv || !this.session) throw new ChatError(409, "No turn is waiting for approval");
     if (b.decision !== "allow" && b.decision !== "deny") throw new ChatError(400, "decision must be allow or deny");
     if (typeof b.approvalId !== "string" || b.conversationId !== conv.id || b.turnId !== conv.turnId) throw new ChatError(409, "That approval request is no longer current");
@@ -165,48 +256,56 @@ export class ProjectChat {
     if (!this.session.respond(b.approvalId, b.decision === "allow")) throw new ChatError(409, "That approval request is no longer pending");
   }
 
-  private async run(providerId: string, text: string, fullAccess: boolean) {
+  private async run(conv: Conversation, text: string) {
+    const provider = PROVIDERS[conv.provider];
+    const fullAccess = conv.fullAccess;
+    const resume = conv.sessionId ?? undefined;
+    // a saved session that cannot be resumed says so and stays recoverable; the prompt is never resubmitted elsewhere
+    const why = (msg: string) => (resume && !conv.turnId ? `The saved ${provider.label} session could not be resumed (${msg}). Start a new chat to continue.` : msg);
     try {
-      if (this.session && this.session.provider !== providerId) { this.session.close(); this.session = null; }
+      if (this.session && this.session.cid !== conv.id) { this.gen++; this.session.close(); this.session = null; }
       if (!this.session) {
         const gen = ++this.gen; // a closed or replaced session must not speak for the current one
-        const s = await PROVIDERS[providerId].start({
+        const s = await provider.start({
           root: this.root,
           fullAccess,
-          resume: this.resumeId?.conversation === this.conv?.id && this.resumeId?.provider === providerId ? this.resumeId.id : undefined,
+          resume,
           onEvent: (e) => { if (gen === this.gen) this.onProvider(e); },
-          onExit: (msg) => { if (gen !== this.gen) return; this.noteSession(); this.session = null; this.finish("failed", msg); },
+          onExit: (msg) => { if (gen !== this.gen) return; this.noteSession(); this.session = null; this.finish("failed", why(msg)); },
         });
         if (this.closed || gen !== this.gen || !this.active) return s.close(); // Stop or a newer start overtook this slow startup: never run the canceled prompt
-        this.session = Object.assign(s, { provider: providerId });
+        this.session = Object.assign(s, { provider: provider.id, cid: conv.id });
+        this.noteSession();
       }
       await this.session!.send(text, fullAccess);
       if (this.stopping) await this.session!.interrupt().catch(() => {});
     } catch (e) {
-      this.finish("failed", (e as Error).message);
+      this.finish("failed", why((e as Error).message));
     }
   }
 
-  /** Remembers the provider session id so a restarted process can continue the same context. */
+  /** Remembers the provider session id on the running conversation so it can be resumed after the process or daemon is gone. */
   private noteSession() {
     const id = this.session?.sessionId;
-    if (id && this.conv) this.resumeId = { conversation: this.conv.id, provider: this.session!.provider, id };
+    const conv = this.activeId ? this.convs.get(this.activeId) : undefined;
+    if (id && conv && this.session?.cid === conv.id && conv.sessionId !== id) { conv.sessionId = id; this.touch(conv, true); }
   }
 
   private onProvider(e: ProviderEvent) {
     if (e.type === "turn.completed") return this.finish(e.status, e.error);
-    if (this.active) this.emit(e);
+    if (this.active) { this.emit(e); if (e.type === "turn.started") this.noteSession(); }
   }
 
   stop(body: unknown) {
     const b = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
-    if (!this.active || !this.conv) throw new ChatError(409, "No turn is running");
-    if (b.conversationId !== undefined && b.conversationId !== this.conv.id) throw new ChatError(409, "That conversation is not the running one");
-    if (b.turnId !== undefined && b.turnId !== this.conv.turnId) throw new ChatError(409, "That turn is not the running one");
+    const conv = this.activeId ? this.convs.get(this.activeId) : undefined;
+    if (!this.active || !conv) throw new ChatError(409, "No turn is running");
+    if (b.conversationId !== undefined && b.conversationId !== conv.id) throw new ChatError(409, "That conversation is not the running one", { activeConversationId: conv.id });
+    if (b.turnId !== undefined && b.turnId !== conv.turnId) throw new ChatError(409, "That turn is not the running one");
     if (this.stopping) return;
     this.stopping = true;
     const s = this.session;
-    if (s && this.conv.turnId) s.interrupt().catch(() => {});
+    if (s && conv.turnId) s.interrupt().catch(() => {});
     // an agent that ignores the interrupt must not keep editing: kill it and keep what it said so far
     this.stopTimer = setTimeout(() => {
       if (!this.active) return;
@@ -218,9 +317,18 @@ export class ProjectChat {
     }, stopGrace());
   }
 
+  /** Daemon shutdown or project removal: a running turn ends as interrupted (saved), its agent process is killed, pending requests close. */
   close() {
-    this.closed = true;
     clearTimeout(this.stopTimer);
+    if (this.active) {
+      this.gen++;
+      this.noteSession();
+      this.session?.close();
+      this.session = null;
+      this.finish("interrupted");
+    }
+    this.flush();
+    this.closed = true;
     this.gen++;
     this.session?.close();
     this.session = null;

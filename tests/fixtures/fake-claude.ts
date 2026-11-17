@@ -9,9 +9,11 @@ if (args[0] === "auth" && args[1] === "status") {
   if (process.env.FAKE_CLAUDE_LOGIN === "out") { console.log(JSON.stringify({ loggedIn: false })); process.exit(1); }
   console.log(JSON.stringify({ loggedIn: true, authMethod: "claude.ai" })); process.exit(0);
 }
-log({ argv: args, cwd: process.cwd() });
+log({ argv: args, cwd: process.cwd(), pid: process.pid });
 if (process.env.FAKE_CLAUDE_START === "die") { console.error("boom: cannot start"); process.exit(5); }
 const resumed = args.includes("--resume") ? args[args.indexOf("--resume") + 1] : null;
+if (resumed && process.env.FAKE_CLAUDE_RESUME === "fail") { console.error(`No conversation found with session ID: ${resumed}`); process.exit(1); }
+const uid = Math.random().toString(36).slice(2, 6); // message ids are unique across processes, like real ones
 const sid = resumed ?? "sess-" + Math.random().toString(36).slice(2, 8);
 const send = (o: object) => process.stdout.write(JSON.stringify({ session_id: sid, ...o }) + "\n");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -25,7 +27,7 @@ async function text(msg: string, parts: string[], index = 0) {
   send({ type: "assistant", message: { id: msg, role: "assistant", content: [{ type: "text", text: parts.join("") }] } });
 }
 async function run(prompt: string) {
-  const n = ++turns, msg = "msg" + n;
+  const n = ++turns, msg = uid + "msg" + n;
   interrupted = false;
   if (prompt.includes("badjson")) process.stdout.write("this is not json\n{broken\n");
   if (prompt.includes("crash")) { await text(msg, ["Hello"]); process.exit(3); }

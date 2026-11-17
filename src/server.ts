@@ -306,17 +306,17 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       if (origin && (origin === "null" || new URL(origin).host !== hostHeader)) return new Response("forbidden", { status: 403 });
       const chat = chatOf(project);
       try {
-        if (p === "/__cd/chat" && req.method === "GET") return json(chat.snapshot(), 200);
+        if (p === "/__cd/chat" && req.method === "GET") return json(chat.snapshot(url.searchParams.get("c")), 200);
         if (p === "/__cd/chat/providers" && req.method === "GET") return json({ root, providers: await Promise.all(Object.values(PROVIDERS).map((x) => x.discover())) });
         if (p === "/__cd/chat/events" && req.method === "GET") {
           const after = +(req.headers.get("last-event-id") ?? url.searchParams.get("after") ?? 0) || 0;
           let ctrl!: ReadableStreamDefaultController;
           return new Response(new ReadableStream({
-            start(c) { ctrl = c; c.enqueue(enc.encode(": hi\n\n")); chat.subscribe(c, after); },
+            start(c) { ctrl = c; c.enqueue(enc.encode(": hi\n\n")); chat.subscribe(c, after, url.searchParams.get("epoch")); },
             cancel() { chat.unsubscribe(ctrl); },
           }), { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } });
         }
-        if ((p === "/__cd/chat/send" || p === "/__cd/chat/stop" || p === "/__cd/chat/approve" || p === "/__cd/chat/settings") && req.method === "POST") {
+        if ((p === "/__cd/chat/send" || p === "/__cd/chat/stop" || p === "/__cd/chat/approve" || p === "/__cd/chat/settings" || p === "/__cd/chat/rename" || p === "/__cd/chat/delete") && req.method === "POST") {
           if (+(req.headers.get("content-length") ?? 0) > MAX_BODY) throw new ChatError(413, "Request too large");
           const raw = await req.text();
           if (raw.length > MAX_BODY) throw new ChatError(413, "Request too large");
@@ -324,12 +324,14 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
           try { body = JSON.parse(raw); } catch { throw new ChatError(400, "Invalid JSON"); }
           if (p.endsWith("/send")) return json(await chat.send(body), 202);
           if (p.endsWith("/settings")) return json(chat.setAccess(body));
+          if (p.endsWith("/rename")) return json(chat.rename(body));
+          if (p.endsWith("/delete")) { chat.remove(body); return json({ ok: true }); }
           if (p.endsWith("/approve")) { chat.approve(body); return json({ ok: true }, 202); }
           chat.stop(body);
           return json({ ok: true }, 202);
         }
       } catch (e) {
-        if (e instanceof ChatError) return json({ error: e.message }, e.status);
+        if (e instanceof ChatError) return json({ error: e.message, ...e.extra }, e.status);
         throw e;
       }
       return json({ error: "Not found" }, 404);

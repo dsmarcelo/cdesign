@@ -97,6 +97,7 @@ function mapItem(raw: unknown): Item | null {
 }
 
 class CodexSession implements ProviderSession {
+  sessionId?: string;
   private proc!: ReturnType<typeof Bun.spawn>;
   private next = 1;
   private pending = new Map<number, { ok: (v: any) => void; fail: (e: Error) => void }>();
@@ -120,11 +121,14 @@ class CodexSession implements ProviderSession {
   async init() {
     await this.call("initialize", { clientInfo: { name: "cdesign", title: "cdesign", version: "1" } }, 15000);
     this.write({ method: "initialized" });
-    const r = await this.call("thread/start", { cwd: this.o.root, approvalPolicy: this.o.fullAccess ? "never" : "on-request", sandbox: this.o.fullAccess ? "danger-full-access" : "workspace-write" }, 15000);
+    const policy = { cwd: this.o.root, approvalPolicy: this.o.fullAccess ? "never" : "on-request", sandbox: this.o.fullAccess ? "danger-full-access" : "workspace-write" };
+    // a saved conversation continues its own thread (never "the latest one")
+    const r = this.o.resume ? await this.call("thread/resume", { threadId: this.o.resume, ...policy }, 15000) : await this.call("thread/start", policy, 15000);
     // (turn/start repeats the policy per turn, so a mode change between turns needs no new thread)
     const id = str(rec(r?.thread)?.id);
     if (!id) throw new Error("Codex returned no thread id (unsupported app-server protocol)");
     this.thread = id;
+    this.sessionId = id;
   }
   private write(msg: object) {
     try {

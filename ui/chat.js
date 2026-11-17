@@ -43,22 +43,44 @@
   const showMode = (full) => { badge.value = full ? "full" : "normal"; badge.classList.toggle("full", full); badge.title = MODE_HELP[badge.value]; };
   showMode(true);
   const top = el("div", "cc-top"); top.append(sel, badge);
+  const bar = el("div", "cc-convs");
+  const csel = el("select"); csel.setAttribute("aria-label", "Conversation");
+  const rin = el("input"); rin.hidden = true; rin.maxLength = 80; rin.setAttribute("aria-label", "Chat name");
+  const newBtn = el("button", "", "New"), renBtn = el("button", "", "Rename"), delBtn = el("button", "", "Delete");
+  newBtn.title = "Start a new chat"; renBtn.title = "Rename this chat"; delBtn.title = "Delete this chat (cdesign's saved copy only)";
+  bar.append(csel, rin, newBtn, renBtn, delBtn);
   const note = el("div", "cc-note"); note.hidden = true; note.setAttribute("role", "status");
   const log = el("div", "cc-log"); log.setAttribute("aria-live", "polite");
   const box = el("textarea"); box.placeholder = "Ask the agent to change this design…"; box.setAttribute("aria-label", "Message");
   const hint = el("small", "", "Enter to send, Shift+Enter for a new line");
   const sendBtn = el("button", "go", "Send"), stopBtn = el("button", "", "Stop"); stopBtn.hidden = true;
   const form = el("div", "cc-form"); const row = el("div"); row.append(hint, stopBtn, sendBtn); form.append(box, row);
-  root.append(top, note, log, form);
+  root.append(top, bar, note, log, form);
 
-  let providers = [], conv = null, busy = false, seq = 0, es = null, posting = false, full = true;
+  // `conv` is the chat on screen (null = a new chat that is not saved until its first message); `busy` is project-wide, `activeId` the chat that owns the running turn
+  let providers = [], conv = null, convs = [], activeId = null, busy = false, seq = 0, epoch = "", es = null, posting = false, full = true, draft = false;
   const ready = () => providers.find((p) => p.id === sel.value)?.state === "ready";
-  const showNote = (text, err) => { note.hidden = !text; note.textContent = text || ""; note.classList.toggle("err", !!err); };
+  const showNote = (text, err, go) => { note.hidden = !text; note.textContent = text || ""; note.classList.toggle("err", !!err); if (go) note.dataset.go = go; else delete note.dataset.go; };
+  note.onclick = () => { if (note.dataset.go) open(note.dataset.go); };
+  const mine = () => !!conv && busy && activeId === conv.id; // this chat owns the running turn
   const sync = () => {
     sendBtn.disabled = busy || posting || !ready() || !box.value.trim();
     badge.disabled = busy || posting; // the mode applies between turns
-    stopBtn.hidden = !busy;
+    stopBtn.hidden = !mine();
+    renBtn.disabled = !conv;
+    delBtn.disabled = !conv || mine();
+    sel.disabled = !!conv; // a chat keeps its agent
     box.disabled = false;
+  };
+  const refreshNote = () => {
+    if (busy && activeId && activeId !== conv?.id) return showNote(`The agent is working in "${convs.find((c) => c.id === activeId)?.title ?? "another chat"}". Click to open it, where you can Stop it or answer requests.`, false, activeId);
+    if (conv?.error && !busy) return showNote(conv.error, true);
+    const p = providers.find((x) => x.id === sel.value);
+    showNote(!conv && p && p.state !== "ready" ? p.message : "", true);
+  };
+  const drawList = () => {
+    csel.replaceChildren(...[["", "New chat"], ...convs.map((c) => [c.id, (c.id === activeId && busy ? "● " : "") + c.title])].map(([v, t]) => { const o = el("option", "", t); o.value = v; return o; }));
+    csel.value = conv?.id ?? "";
   };
   const nodes = new Map();
   const draw = (it) => {
@@ -110,10 +132,15 @@
   const find = (id) => conv?.items.find((i) => i.id === id);
   // mirrors apply() in src/chat.ts
   const reduce = (ev) => {
+    if (ev.cid && ev.cid !== conv?.id && !["turn.begin", "turn.completed"].includes(ev.type)) return; // belongs to a chat that is not on screen
     switch (ev.type) {
       case "turn.begin":
-        if (!conv || conv.id !== ev.conversation.id) { conv = { ...ev.conversation, items: [], approvals: [] }; render(); }
-        busy = true; conv.turnId = null; conv.approvals = []; conv.fullAccess = ev.conversation.fullAccess; showNote("");
+        busy = true; activeId = ev.conversation.id;
+        if (conv?.id !== ev.conversation.id) {
+          if (!(draft && posting)) { drawList(); break; } // another tab started a turn in a chat that is not on screen
+          draft = false; conv = { ...ev.conversation, items: [], approvals: [], error: null }; store("cd-conv", conv.id); render();
+        }
+        conv.turnId = null; conv.approvals = []; conv.fullAccess = ev.conversation.fullAccess; showNote("");
         for (const id of [...cards.keys()]) dropApproval(id);
         conv.items.push({ id: ev.itemId, kind: "user", text: ev.text });
         if (log.querySelector(".cc-empty")) log.replaceChildren();
@@ -138,9 +165,15 @@
       case "approval.resolved":
         if (conv) conv.approvals = conv.approvals.filter((a) => a.id !== ev.id);
         dropApproval(ev.id); break;
-      case "settings": full = ev.fullAccess; showMode(full); break;
+      case "list": load().catch(() => {}); break;
+      case "settings":
+        if (!ev.conversationId) full = ev.fullAccess;
+        else if (conv?.id === ev.conversationId) conv.fullAccess = ev.fullAccess;
+        showMode(conv ? conv.fullAccess : full); break;
       case "turn.completed":
-        busy = false; if (conv) { conv.turnId = null; conv.approvals = []; }
+        busy = false; activeId = null; if (conv && ev.cid === conv.id) { conv.turnId = null; conv.approvals = []; }
+        refreshList();
+        if (ev.cid !== conv?.id) { refreshNote(); break; }
         for (const id of [...cards.keys()]) dropApproval(id);
         for (const it of conv?.items || []) if (it.status === "inProgress") { it.status = ev.status === "completed" ? "completed" : ev.status; draw(it); }
         for (const n of log.querySelectorAll(".live")) n.classList.remove("live");
@@ -150,20 +183,50 @@
     }
     sync();
   };
-  const load = async () => {
-    const s = await (await api("")).json();
-    conv = s.conversation; busy = s.busy; seq = s.seq; full = s.fullAccess !== false; showMode(full);
-    showNote(conv?.error, true); render(); sync();
+  const refreshList = async () => {
+    try { const s = await (await api("?c=" + encodeURIComponent(conv?.id ?? ""))).json(); convs = s.conversations; drawList(); } catch { /* the next event or reload fixes the list */ }
   };
+  const load = async (cid) => {
+    const s = await (await api("?c=" + encodeURIComponent(draft ? "" : cid ?? conv?.id ?? store("cd-conv") ?? ""))).json();
+    convs = s.conversations; activeId = s.activeId; busy = s.busy; seq = s.seq; epoch = s.epoch; full = s.fullAccess !== false;
+    conv = draft ? null : s.conversation;
+    if (conv) store("cd-conv", conv.id);
+    if (conv) { const p = conv.provider; if (![...sel.options].some((o) => o.value === p)) { const o = el("option", "", p); o.value = p; sel.append(o); } sel.value = p; }
+    showMode(conv ? conv.fullAccess : full);
+    render(); drawList(); refreshNote(); sync();
+  };
+  const open = (id) => { draft = false; return load(id).catch(() => showNote("Could not open that chat", true)); };
   const connect = () => {
     es?.close();
-    es = new EventSource("/__cd/chat/events?after=" + seq);
+    es = new EventSource(`/__cd/chat/events?after=${seq}&epoch=${encodeURIComponent(epoch)}`);
     es.onmessage = async (m) => {
       const ev = JSON.parse(m.data);
-      if (ev.type === "reset") { await load(); return; }
+      if (ev.type === "reset") { await load().catch(() => {}); connect(); return; } // our position is gone (or belongs to an earlier daemon run): start from a fresh snapshot
       if (ev.seq <= seq) return; // already part of the snapshot
       seq = ev.seq; reduce(ev);
     };
+  };
+  const newChat = () => { draft = true; conv = null; render(); drawList(); showMode(full); refreshNote(); sync(); box.focus(); };
+  newBtn.onclick = newChat;
+  csel.onchange = () => (csel.value ? open(csel.value) : newChat());
+  const endRename = () => { rin.hidden = true; csel.hidden = false; };
+  renBtn.onclick = () => { if (!conv) return; rin.value = conv.title; csel.hidden = true; rin.hidden = false; rin.focus(); rin.select(); };
+  rin.onblur = endRename;
+  rin.onkeydown = async (e) => {
+    if (e.key === "Escape") return endRename();
+    if (e.key !== "Enter" || !conv) return;
+    const r = await post("/rename", { conversationId: conv.id, title: rin.value }).catch(() => null);
+    if (r?.ok) { endRename(); await load().catch(() => {}); }
+    else showNote(r ? (await r.json().catch(() => ({}))).error || "Could not rename" : "Could not reach cdesign", true);
+  };
+  let armed = 0;
+  delBtn.onclick = async () => { // two clicks: the first arms, so a stray click never deletes
+    if (!conv || mine()) return;
+    if (!armed) { delBtn.textContent = "Sure?"; armed = setTimeout(() => { armed = 0; delBtn.textContent = "Delete"; }, 3000); return; }
+    clearTimeout(armed); armed = 0; delBtn.textContent = "Delete";
+    const r = await post("/delete", { conversationId: conv.id }).catch(() => null);
+    if (r?.ok) { draft = false; conv = null; store("cd-conv", ""); await load().catch(() => {}); }
+    else showNote(r ? (await r.json().catch(() => ({}))).error || "Could not delete" : "Could not reach cdesign", true);
   };
 
   const send = async () => {
@@ -171,9 +234,12 @@
     if (!text || busy || posting || !ready()) return;
     posting = true; sync();
     try {
-      const r = await post("/send", { text, provider: sel.value, conversationId: conv && conv.provider === sel.value ? conv.id : undefined });
-      if (r.ok) box.value = "";
-      else showNote((await r.json().catch(() => ({}))).error || "Could not send", true);
+      const r = await post("/send", { text, provider: sel.value, conversationId: conv?.id });
+      if (r.ok) {
+        box.value = "";
+        const { conversationId } = await r.json().catch(() => ({}));
+        if (draft && conversationId) { draft = false; await load(conversationId).catch(() => {}); } // the response can beat the first stream event
+      } else { const j = await r.json().catch(() => ({})); showNote(j.error || "Could not send", true, j.activeConversationId); }
     } catch { showNote("Could not reach cdesign", true); }
     posting = false; sync();
   };
@@ -184,9 +250,9 @@
 
   badge.onchange = async () => {
     const want = badge.value === "full";
-    const res = await post("/settings", { fullAccess: want }).catch(() => null);
-    if (res?.ok) { full = want; showMode(full); showNote(""); }
-    else { showMode(full); showNote(res ? (await res.json().catch(() => ({}))).error || "Could not change the access mode" : "Could not reach cdesign", true); }
+    const res = await post("/settings", { fullAccess: want, conversationId: conv?.id }).catch(() => null);
+    if (res?.ok) { if (conv) conv.fullAccess = want; full = want; showMode(want); refreshNote(); }
+    else { showMode(conv ? conv.fullAccess : full); showNote(res ? (await res.json().catch(() => ({}))).error || "Could not change the access mode" : "Could not reach cdesign", true); }
   };
 
   const STATE = { missing: "not installed", login: "not logged in", unsupported: "update needed", error: "error" };
@@ -196,10 +262,9 @@
     } catch { providers = []; showNote("Could not look for installed agents", true); }
     sel.replaceChildren(...providers.map((p) => { const o = el("option", "", p.label + (p.state === "ready" ? "" : ` (${STATE[p.state] || "unavailable"})`)); o.title = p.message; o.value = p.id; return o; }));
     const p = providers.find((x) => x.id === sel.value) || providers[0];
-    if (p && p.state !== "ready") showNote(p.message, true);
-    else if (!conv?.error) showNote("");
-    sync();
+    if (conv) sel.value = conv.provider;
+    refreshNote(); sync();
   };
-  sel.onchange = () => { const p = providers.find((x) => x.id === sel.value); showNote(p && p.state !== "ready" ? p.message : "", true); sync(); };
+  sel.onchange = () => { refreshNote(); sync(); };
   (async () => { await load().catch(() => showNote("Could not load the chat", true)); await discover(); connect(); })();
 })();

@@ -272,7 +272,9 @@ test("choosing another provider starts a new conversation and never reuses the o
   await c.post("chat/send", { text: "hi", provider: "claude" });
   const a = await idle(c);
   const clash = await c.post("chat/send", { text: "hi", provider: "codex", conversationId: a.conversation.id });
-  expect(clash.status).toBe(202); // same id is only accepted while it is still the current conversation...
+  expect(clash.status).toBe(400); // a conversation keeps its provider...
+  expect((await c.snap()).conversation.items).toHaveLength(a.conversation.items.length);
+  expect((await c.post("chat/send", { text: "hi", provider: "codex" })).status).toBe(202);
   const b = await idle(c);
   expect(b.conversation.provider).toBe("codex");
   expect(b.conversation.id).not.toBe(a.conversation.id);
@@ -340,9 +342,9 @@ test("Codex Full access maps to never-ask + unrestricted sandbox, and a mode cha
   const log = logFile("fake-codex");
   const c = await boot({ FAKE_CODEX_LOG: log });
   await c.post("chat/send", { text: "hello", provider: "codex" });
-  await idle(c);
-  await c.post("chat/settings", { fullAccess: false });
-  await c.post("chat/send", { text: "hello again", provider: "codex" });
+  const first = await idle(c);
+  await c.post("chat/settings", { fullAccess: false, conversationId: first.conversation.id });
+  await c.post("chat/send", { text: "hello again", provider: "codex", conversationId: first.conversation.id });
   const s = await idle(c);
   expect(s.conversation.fullAccess).toBe(false);
   const lines = jsonl(log);
@@ -429,7 +431,7 @@ test("Claude: refused Full access, a provider that dies, junk output and a faile
   await c.post("chat/send", { text: "hello", provider: "claude" }); // Full is the default but this CLI refuses it
   const f = await idle(c);
   expect(f.conversation.error).toContain("would not switch to Full access");
-  await c.post("chat/settings", { fullAccess: false });
+  await c.post("chat/settings", { fullAccess: false, conversationId: f.conversation.id });
   await c.post("chat/send", { text: "badjson crash now", provider: "claude", conversationId: f.conversation.id });
   const crashed = await idle(c);
   expect(crashed.conversation.error).toContain("exit code 3");
