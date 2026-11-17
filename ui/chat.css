@@ -64,3 +64,11 @@ body.hl #lside{display:none}
 .cc-convs button{padding:2px 8px;font-size:12px}
 .cc-convs [hidden]{display:none}
 .cc-note[data-go]{cursor:pointer}
+.cc-chips{flex:none;display:flex;flex-wrap:wrap;gap:4px;max-height:84px;overflow:auto}
+.cc-chips[hidden]{display:none}
+.cc-chip{display:inline-flex;align-items:center;gap:4px;max-width:100%;font-size:11px;padding:2px 2px 2px 8px;border:1px solid var(--line);border-radius:999px;color:var(--mut)}
+.cc-chip em{font-style:normal;font-weight:600;color:inherit}
+.cc-chip span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.cc-chip i{font-style:normal;color:#fca5a5}
+.cc-chip.missing,.cc-chip.stale{border-color:#dc2626}
+.cc-chip button{border:0;background:none;color:inherit;cursor:pointer;padding:0 6px;line-height:1.4;font-size:14px}

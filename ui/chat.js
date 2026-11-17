@@ -105,7 +105,50 @@
   const hint = el("small", "", "Enter to send, Shift+Enter for a new line");
   const sendBtn = el("button", "go", "Send"), stopBtn = el("button", "", "Stop"); stopBtn.hidden = true;
   const form = el("div", "cc-form"); const row = el("div"); row.append(hint, stopBtn, sendBtn); form.append(box, row);
-  root.append(top, tune, bar, status, note, wrap, form);
+  const chipsBox = el("div", "cc-chips"); chipsBox.setAttribute("aria-label", "Context sent with your message");
+  root.append(top, tune, bar, status, note, wrap, chipsBox, form);
+
+  // ---- design context: the open page and selected element of THIS tab (refreshed from the server), plus comments added explicitly ----
+  // A chip the user removed stays removed only for that page/element; a changed page or selection brings its automatic chip back for the next message.
+  let auto = { page: null, selection: null }; const dismissed = new Set(); const added = new Map();
+  const keyOf = { page: (c) => "page:" + c.file, selection: (c) => "el:" + c.file + ":" + c.cdId };
+  const WHY = { missing: "file no longer exists", stale: "element no longer exists" };
+  const chipList = () => [
+    ...(auto.page ? [{ k: keyOf.page(auto.page), type: "page", label: auto.page.file, c: auto.page }] : []),
+    ...(auto.selection ? [{ k: keyOf.selection(auto.selection), type: "selection", label: `${auto.selection.file} ${auto.selection.cdId}${auto.selection.tag ? " <" + auto.selection.tag + ">" : ""}`, c: auto.selection }] : []),
+  ].filter((x) => !dismissed.has(x.k));
+  const drawChips = () => {
+    const nodes = [];
+    for (const x of chipList()) nodes.push(chip(x.type, x.label, x.c.state, () => { dismissed.add(x.k); drawChips(); }));
+    for (const [id, c] of added) nodes.push(chip("comment", `${c.file} ${c.cdId}: ${c.text.length > 40 ? c.text.slice(0, 39) + "…" : c.text}`, "ok", () => { added.delete(id); drawChips(); }));
+    chipsBox.replaceChildren(...nodes); chipsBox.hidden = !nodes.length;
+  };
+  const chip = (type, label, state, remove) => {
+    const n = el("span", "cc-chip " + state); n.dataset.type = type;
+    n.append(el("em", "", type === "page" ? "Page" : type === "selection" ? "Element" : "Comment"), el("span", "", label));
+    if (state !== "ok") { n.append(el("i", "", WHY[state] || state)); n.title = "This is not sent: " + (WHY[state] || state); }
+    const x = el("button", "", "×"); x.type = "button"; x.setAttribute("aria-label", "Remove " + label + " from this message"); x.onclick = remove;
+    n.append(x); return n;
+  };
+  /** The context to submit now: the chips that are visible and valid at this moment. */
+  const snapshotContext = () => {
+    const out = {};
+    for (const x of chipList()) if (x.c.state === "ok") out[x.type] = x.type === "page" ? { file: x.c.file } : { file: x.c.file, cdId: x.c.cdId, selector: x.c.selector, tag: x.c.tag };
+    if (added.size) out.comments = [...added.keys()];
+    return Object.keys(out).length ? out : undefined;
+  };
+  const refreshContext = async () => {
+    if (document.hidden || lside.dataset.tab !== "chat") return;
+    try {
+      const r = await fetch("/__cd/chat/context?tab=" + encodeURIComponent(tabId));
+      if (!r.ok) return;
+      const next = await r.json();
+      if (JSON.stringify(next) !== JSON.stringify(auto)) { auto = next; drawChips(); }
+    } catch { /* the next poll retries */ }
+  };
+  setInterval(refreshContext, 1000);
+  addEventListener("cd-add-comment", (e) => { const c = e.detail; if (c?.id) { added.set(c.id, c); tab("chat"); drawChips(); box.focus(); } });
+  drawChips();
 
   // `conv` is the chat on screen (null = a new chat that is not saved until its first message); `busy` is project-wide, `activeId` the chat that owns the running turn
   let providers = [], conv = null, convs = [], activeId = null, busy = false, seq = 0, epoch = "", es = null, posting = false, full = true, draft = false;
@@ -334,9 +377,11 @@
     if (!text || busy || posting || !ready()) return;
     posting = true; sync();
     try {
-      const r = await post("/send", conv ? { text, provider: sel.value, conversationId: conv.id } : { text, provider: sel.value, fullAccess: fresh.fullAccess, model: fresh.model, effort: fresh.effort });
+      await refreshContext(); // submit what the viewer shows right now
+      const context = snapshotContext();
+      const r = await post("/send", conv ? { text, provider: sel.value, conversationId: conv.id, context } : { text, provider: sel.value, fullAccess: fresh.fullAccess, model: fresh.model, effort: fresh.effort, context });
       if (r.ok) {
-        box.value = "";
+        box.value = ""; added.clear(); drawChips();
         const { conversationId } = await r.json().catch(() => ({}));
         if (draft && conversationId) { draft = false; await load(conversationId).catch(() => {}); } // the response can beat the first stream event
       } else { const j = await r.json().catch(() => ({})); showNote(j.error || "Could not send", true, j.activeConversationId); }

@@ -9,6 +9,7 @@ import { exportWebsite, previewWebsite, websiteDefaults, saveWebsite, type Websi
 import { publishWebsite, publishingStatus, shareScreen, listShares, deleteShare } from "./publish";
 import { colorTokens, sizeTokens } from "./tokens";
 import { applyEdit, editInfo } from "./edit";
+import { contextChips } from "./chat-context";
 import { ProjectChat, ChatError, MAX_BODY, capabilitiesOf } from "./chat";
 import { PROVIDERS } from "./chat-registry";
 const websitePreviews = new Map<string, ReturnType<typeof previewWebsite>>();
@@ -308,6 +309,10 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       try {
         if (p === "/__cd/chat" && req.method === "GET") return json(chat.snapshot(url.searchParams.get("c")), 200);
         if (p === "/__cd/chat/providers" && req.method === "GET") return json({ root, providers: await Promise.all(Object.values(PROVIDERS).map(async (x) => ({ ...(await x.discover()), capabilities: await capabilitiesOf(x.id) }))) });
+        if (p === "/__cd/chat/context" && req.method === "GET") { // the chips for one viewer tab of this project; an unknown tab simply has none
+          const t = project.tabs.get(url.searchParams.get("tab") ?? "") ?? null;
+          return json(contextChips(root, t && { file: t.file, selection: t.selection }));
+        }
         if (p === "/__cd/chat/events" && req.method === "GET") {
           const after = +(req.headers.get("last-event-id") ?? url.searchParams.get("after") ?? 0) || 0;
           let ctrl!: ReadableStreamDefaultController;

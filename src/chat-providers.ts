@@ -8,7 +8,7 @@
  */
 
 export type ItemKind = "user" | "message" | "command" | "file" | "tool";
-export type Item = { id: string; kind: ItemKind; title?: string; text?: string; output?: string; status?: string };
+export type Item = { id: string; kind: ItemKind; title?: string; text?: string; output?: string; status?: string; /** design context sent with a user message (see chat-context.ts) */ context?: unknown[] };
 export type TurnStatus = "completed" | "interrupted" | "failed";
 /** A pending permission request. `id` is the provider's own request id, unique within one session. */
 export type Approval = { id: string; tool: string; detail: string; reason?: string };
