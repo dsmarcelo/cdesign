@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { dataDir, ensureDataDir } from "./store";
-import { type ProviderEvent, type ProviderSession, type TurnStatus } from "./chat-providers";
+import { type Capabilities, type ProviderEvent, type ProviderSession, type TurnSettings, type TurnStatus } from "./chat-providers";
 import { PROVIDERS } from "./chat-registry";
 import { loadConversations, removeConversation, saveConversation, type Conversation } from "./chat-store";
 export type { Conversation };
@@ -17,11 +17,11 @@ export class ChatError extends Error {
 }
 
 export type ChatEvent =
-  | { type: "turn.begin"; conversation: { id: string; title: string; provider: string; fullAccess: boolean }; text: string; itemId: string }
+  | { type: "turn.begin"; conversation: { id: string; title: string; provider: string; fullAccess: boolean; model: string | null; effort: string | null }; text: string; itemId: string }
   | ProviderEvent
   | { type: "reset" }
   | { type: "list" } // conversations were created, renamed or deleted: refetch the list
-  | { type: "settings"; fullAccess: boolean; conversationId?: string };
+  | { type: "settings"; fullAccess: boolean; conversationId?: string; model?: string | null; effort?: string | null };
 /** `cid` is the conversation an event belongs to (only one turn runs per project, so it is the active one). */
 type Logged = ChatEvent & { seq: number; cid?: string };
 
@@ -39,7 +39,7 @@ export function apply(conv: Conversation, ev: ChatEvent) {
   const find = (id: string) => conv.items.find((i) => i.id === id);
   switch (ev.type) {
     case "turn.begin":
-      conv.status = "running"; conv.turnId = null; conv.error = null; conv.approvals = []; conv.fullAccess = ev.conversation.fullAccess;
+      conv.status = "running"; conv.turnId = null; conv.error = null; conv.approvals = []; conv.fullAccess = ev.conversation.fullAccess; conv.model = ev.conversation.model; conv.effort = ev.conversation.effort;
       conv.items.push({ id: ev.itemId, kind: "user", text: ev.text });
       break;
     case "turn.started": conv.turnId = ev.turnId; break;
@@ -58,7 +58,7 @@ export function apply(conv: Conversation, ev: ChatEvent) {
     case "approval.requested": if (!conv.approvals.some((a) => a.id === ev.approval.id)) conv.approvals.push({ ...ev.approval }); break;
     case "approval.resolved": conv.approvals = conv.approvals.filter((a) => a.id !== ev.id); break;
     case "turn.completed":
-      conv.status = "idle"; conv.turnId = null; conv.approvals = [];
+      conv.status = "idle"; conv.turnId = null; conv.approvals = []; conv.last = ev.status;
       conv.error = ev.status === "failed" ? ev.error ?? "The turn failed" : null;
       for (const it of conv.items) if (it.status === "inProgress") it.status = ev.status === "completed" ? "completed" : ev.status; // partial output stays, but nothing looks live
       break;
@@ -67,13 +67,42 @@ export function apply(conv: Conversation, ev: ChatEvent) {
 }
 
 
+/** Capabilities are discovered from the installed agent (it may start a process), so they are cached briefly; a failed discovery is retried sooner. */
+const capCache = new Map<string, { at: number; value: Promise<Capabilities> }>();
+export function capabilitiesOf(id: string, fresh = false): Promise<Capabilities> {
+  const hit = capCache.get(id);
+  if (hit && !fresh && Date.now() - hit.at < 60_000) return hit.value;
+  const value = PROVIDERS[id].capabilities().catch((e): Capabilities => ({ source: "fallback", note: `Could not discover settings: ${(e as Error).message}`, models: [], efforts: [], defaultLabel: "Default" }));
+  capCache.set(id, { at: Date.now(), value });
+  return value;
+}
+
+/** Throws a ChatError explaining why `model`/`effort` cannot be used with this provider; null means the provider default. */
+async function checkSettings(providerId: string, model: string | null, effort: string | null) {
+  const label = PROVIDERS[providerId].label;
+  const caps = await capabilitiesOf(providerId);
+  let efforts = caps.efforts;
+  if (model !== null) {
+    const m = caps.models.find((x) => x.id === model);
+    if (!m) throw new ChatError(400, caps.models.length ? `${label} does not offer the model "${model}". Available: ${caps.models.map((x) => x.id).join(", ")}.` : `${label} did not list its models, so only its default model can be used (${caps.note})`);
+    efforts = m.efforts ?? caps.efforts;
+  }
+  if (effort !== null && !efforts.includes(effort)) throw new ChatError(400, efforts.length ? `${model ? `The model "${model}"` : `${label}'s default model`} does not support the effort "${effort}". Supported: ${efforts.join(", ")}.` : `${label} did not list reasoning efforts${model ? ` for "${model}"` : ""}, so only its default effort can be used.`);
+}
+const settingOf = (v: unknown, name: string): string | null | undefined => {
+  if (v === undefined) return undefined;
+  if (v === null || v === "") return null;
+  if (typeof v !== "string" || v.length > 100 || /[\s\u0000-\u001f]/.test(v)) throw new ChatError(400, `${name} must be a plain value or null`);
+  return v;
+};
+
 const SAVE_MS = 300;
 const INTERRUPTED = "Interrupted: cdesign stopped or restarted while the agent was working. What it said so far is kept and nothing was retried. Send a follow-up to continue this chat.";
 const titleOf = (text: string) => { const t = text.replace(/\s+/g, " ").trim(); return t.length > 60 ? t.slice(0, 59) + "…" : t; };
 
 export class ProjectChat {
   private convs = new Map<string, Conversation>();
-  private session: (ProviderSession & { provider: string; cid: string }) | null = null;
+  private session: (ProviderSession & { provider: string; cid: string; settings: TurnSettings }) | null = null;
   private active = false; // the single admission point: set synchronously in send(), cleared when the turn ends
   private activeId: string | null = null; // conversation owning the running or approval-waiting turn
   private stopping = false;
@@ -94,6 +123,7 @@ export class ProjectChat {
     for (const c of loadConversations(root)) {
       if (c.status === "running") {
         c.status = "idle";
+        c.last = "interrupted";
         c.error = INTERRUPTED;
         for (const it of c.items) if (it.status === "inProgress") it.status = "interrupted";
         saveConversation(root, c);
@@ -106,7 +136,7 @@ export class ProjectChat {
 
   private list() {
     return [...this.convs.values()].sort((a, b) => b.updatedAt - a.updatedAt)
-      .map((c) => ({ id: c.id, title: c.title, provider: c.provider, updatedAt: c.updatedAt, status: c.status }));
+      .map((c) => ({ id: c.id, title: c.title, provider: c.provider, updatedAt: c.updatedAt, status: c.status, last: c.last }));
   }
 
   /** `cid` picks the conversation to include; by default the running one, else the most recently used. */
@@ -171,22 +201,32 @@ export class ProjectChat {
     const provider = PROVIDERS[typeof b.provider === "string" ? b.provider : conv?.provider ?? "codex"];
     if (!provider) throw new ChatError(400, "Unknown agent");
     if (conv && conv.provider !== provider.id) throw new ChatError(400, "A conversation keeps its agent; start a new chat to use another one");
+    if (b.fullAccess !== undefined && typeof b.fullAccess !== "boolean") throw new ChatError(400, "fullAccess must be true or false");
+    // an omitted model/effort keeps the chat's saved one; a new chat starts on the provider default
+    const model = settingOf(b.model, "model") ?? (b.model === undefined ? conv?.model ?? null : null);
+    const effort = settingOf(b.effort, "effort") ?? (b.effort === undefined ? conv?.effort ?? null : null);
     if (this.active) {
       const at = this.activeId ? this.convs.get(this.activeId) : undefined;
       throw new ChatError(409, `The agent is already working in this project${at ? `, in the chat "${at.title}"` : ""}. Wait for it to finish or Stop it first.`, { activeConversationId: this.activeId });
     }
     if (conv && conv.items.some((i) => i.kind !== "user") && !conv.sessionId && this.session?.cid !== conv.id) throw new ChatError(409, "This chat has no saved agent session to continue. Start a new chat.");
+    if (model !== (conv?.model ?? null) || effort !== (conv?.effort ?? null)) await checkSettings(provider.id, model, effort);
+    // validation may have awaited: look everything up again, then admit with nothing awaiting before `active` is set
+    conv = b.conversationId === undefined ? null : this.conversation(b.conversationId);
+    if (this.active) throw new ChatError(409, "The agent is already working in this project. Wait for it to finish or Stop it first.", { activeConversationId: this.activeId });
     this.active = true; // admission: nothing awaits between the check and this line
     this.stopping = false;
     const created = !conv;
     if (!conv) {
       const now = Date.now();
-      conv = { id: rid(), title: titleOf(text) || "Chat", provider: provider.id, fullAccess: this.fullAccess, sessionId: null, createdAt: now, updatedAt: now, status: "idle", turnId: null, items: [], approvals: [], error: null };
+      conv = { id: rid(), title: titleOf(text) || "Chat", provider: provider.id, fullAccess: typeof b.fullAccess === "boolean" ? b.fullAccess : this.fullAccess, model, effort, last: null, sessionId: null, createdAt: now, updatedAt: now, status: "idle", turnId: null, items: [], approvals: [], error: null };
       this.convs.set(conv.id, conv);
     }
     this.activeId = conv.id;
     conv.updatedAt = Date.now();
-    this.emit({ type: "turn.begin", conversation: { id: conv.id, title: conv.title, provider: conv.provider, fullAccess: conv.fullAccess }, text, itemId: "u" + rid() });
+    conv.model = model; conv.effort = effort;
+    if (!created && typeof b.fullAccess === "boolean") conv.fullAccess = b.fullAccess;
+    this.emit({ type: "turn.begin", conversation: { id: conv.id, title: conv.title, provider: conv.provider, fullAccess: conv.fullAccess, model, effort }, text, itemId: "u" + rid() });
     if (created) this.emit({ type: "list" }, null);
     void this.run(conv, text);
     return { conversationId: conv.id };
@@ -206,19 +246,35 @@ export class ProjectChat {
     this.flush();
   }
 
-  /** Normal/Full applies between turns. It becomes the project default for new chats and, when named, the setting of that chat. */
-  setAccess(body: unknown) {
+  /**
+   * Access mode, model and effort apply between turns. Naming a conversation changes only that chat (model/effort always need one);
+   * without one, `fullAccess` sets the project default used when a new chat does not say. Unsupported values are rejected with the reason.
+   */
+  async setSettings(body: unknown) {
     const b = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
-    if (typeof b.fullAccess !== "boolean") throw new ChatError(400, "fullAccess must be true or false");
-    const conv = b.conversationId === undefined ? null : this.conversation(b.conversationId);
-    if (this.active) throw new ChatError(409, "Access mode cannot change while the agent is working; Stop the turn or wait for it to finish");
-    if (b.fullAccess !== this.fullAccess) {
-      this.fullAccess = b.fullAccess;
-      try { ensureDataDir(this.root); writeFileSync(settingsFile(this.root), JSON.stringify({ fullAccess: this.fullAccess })); } catch { /* unwritable project state: the choice still holds for this daemon */ }
+    if (b.fullAccess !== undefined && typeof b.fullAccess !== "boolean") throw new ChatError(400, "fullAccess must be true or false");
+    let conv = b.conversationId === undefined ? null : this.conversation(b.conversationId);
+    const model = settingOf(b.model, "model"), effort = settingOf(b.effort, "effort");
+    if (b.fullAccess === undefined && model === undefined && effort === undefined) throw new ChatError(400, "fullAccess must be true or false");
+    if ((model !== undefined || effort !== undefined) && !conv) throw new ChatError(400, "Model and effort belong to a conversation");
+    if (this.active) throw new ChatError(409, "Settings cannot change while the agent is working; Stop the turn or wait for it to finish");
+    if (conv && (model !== undefined || effort !== undefined)) {
+      const m = model === undefined ? conv.model : model, e = effort === undefined ? conv.effort : effort;
+      await checkSettings(conv.provider, m, e);
+      conv = this.conversation(conv.id);
+      if (this.active) throw new ChatError(409, "Settings cannot change while the agent is working; Stop the turn or wait for it to finish");
+      conv.model = m; conv.effort = e;
+      this.touch(conv, true);
     }
-    if (conv && conv.fullAccess !== b.fullAccess) { conv.fullAccess = b.fullAccess; this.touch(conv, true); }
-    this.emit({ type: "settings", fullAccess: b.fullAccess, ...(conv ? { conversationId: conv.id } : {}) }, null);
-    return { fullAccess: this.fullAccess };
+    if (typeof b.fullAccess === "boolean") {
+      if (!conv && b.fullAccess !== this.fullAccess) {
+        this.fullAccess = b.fullAccess;
+        try { ensureDataDir(this.root); writeFileSync(settingsFile(this.root), JSON.stringify({ fullAccess: this.fullAccess })); } catch { /* unwritable project state: the choice still holds for this daemon */ }
+      }
+      if (conv && conv.fullAccess !== b.fullAccess) { conv.fullAccess = b.fullAccess; this.touch(conv, true); }
+    }
+    this.emit({ type: "settings", fullAccess: conv ? conv.fullAccess : this.fullAccess, ...(conv ? { conversationId: conv.id, model: conv.model, effort: conv.effort } : {}) }, null);
+    return conv ? { fullAccess: conv.fullAccess, model: conv.model, effort: conv.effort } : { fullAccess: this.fullAccess };
   }
 
   rename(body: unknown) {
@@ -259,25 +315,34 @@ export class ProjectChat {
   private async run(conv: Conversation, text: string) {
     const provider = PROVIDERS[conv.provider];
     const fullAccess = conv.fullAccess;
-    const resume = conv.sessionId ?? undefined;
+    const want: TurnSettings = { ...(conv.model ? { model: conv.model } : {}), ...(conv.effort ? { effort: conv.effort } : {}) };
+    let resume = conv.sessionId ?? undefined;
     // a saved session that cannot be resumed says so and stays recoverable; the prompt is never resubmitted elsewhere
     const why = (msg: string) => (resume && !conv.turnId ? `The saved ${provider.label} session could not be resumed (${msg}). Start a new chat to continue.` : msg);
     try {
       if (this.session && this.session.cid !== conv.id) { this.gen++; this.session.close(); this.session = null; }
+      // a live session picks up new settings per turn only if the provider supports that, and never when going back to the default
+      const had = this.session?.settings;
+      if (this.session && had && (had.model !== want.model || had.effort !== want.effort) && (!provider.perTurn || (!want.model && had.model) || (!want.effort && had.effort))) {
+        this.noteSession(); this.gen++; this.session.close(); this.session = null;
+        resume = conv.sessionId ?? undefined;
+      }
       if (!this.session) {
         const gen = ++this.gen; // a closed or replaced session must not speak for the current one
         const s = await provider.start({
           root: this.root,
           fullAccess,
+          ...want,
           resume,
           onEvent: (e) => { if (gen === this.gen) this.onProvider(e); },
           onExit: (msg) => { if (gen !== this.gen) return; this.noteSession(); this.session = null; this.finish("failed", why(msg)); },
         });
         if (this.closed || gen !== this.gen || !this.active) return s.close(); // Stop or a newer start overtook this slow startup: never run the canceled prompt
-        this.session = Object.assign(s, { provider: provider.id, cid: conv.id });
+        this.session = Object.assign(s, { provider: provider.id, cid: conv.id, settings: want });
         this.noteSession();
       }
-      await this.session!.send(text, fullAccess);
+      this.session!.settings = want;
+      await this.session!.send(text, fullAccess, want);
       if (this.stopping) await this.session!.interrupt().catch(() => {});
     } catch (e) {
       this.finish("failed", why((e as Error).message));

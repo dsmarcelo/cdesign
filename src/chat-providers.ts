@@ -29,9 +29,28 @@ export type ProviderInfo = {
   message: string;
   version?: string;
 };
+/** One selectable model. `efforts` are the reasoning-effort values it accepts (absent: the provider does not say per model). */
+export type ModelInfo = { id: string; label: string; efforts?: string[] };
+/**
+ * What a provider lets the user choose. `source` is "provider" when the lists came from the installed agent itself and "fallback" when they
+ * are only what its documentation/help text names (or nothing, in which case only the provider default can be used). Lists are never invented.
+ */
+export type Capabilities = {
+  source: "provider" | "fallback";
+  note: string;
+  models: ModelInfo[];
+  /** Effort values valid with the provider's default model. */
+  efforts: string[];
+  /** Label for "no override" (e.g. the default model's name). */
+  defaultLabel: string;
+};
+/** `undefined` means the provider default. */
+export type TurnSettings = { model?: string; effort?: string };
 export type StartOptions = {
   root: string;
   fullAccess: boolean;
+  model?: string;
+  effort?: string;
   /** Provider session to continue after its process died (only providers that can resume use it). */
   resume?: string;
   onEvent: (e: ProviderEvent) => void;
@@ -41,7 +60,7 @@ export interface ProviderSession {
   /** Provider-side session id once known, so a dead process can be resumed with the same context. */
   sessionId?: string;
   /** Resolves once the provider accepted the turn; events keep arriving through `onEvent`. `fullAccess` applies to this turn only. */
-  send(text: string, fullAccess: boolean): Promise<void>;
+  send(text: string, fullAccess: boolean, settings: TurnSettings): Promise<void>;
   /** Answers one pending approval; false when `id` is not pending (stale, duplicate or cancelled), in which case nothing is authorized. */
   respond(id: string, allow: boolean): boolean;
   /** Withdraws pending approvals, then interrupts the turn. */
@@ -51,7 +70,10 @@ export interface ProviderSession {
 export interface Provider {
   id: string;
   label: string;
+  /** True when model/effort can change on the next turn of a live session; otherwise the session is restarted (resumed) to apply them. */
+  perTurn: boolean;
   discover(): Promise<ProviderInfo>;
+  capabilities(): Promise<Capabilities>;
   start(o: StartOptions): Promise<ProviderSession>;
 }
 
@@ -118,10 +140,25 @@ class CodexSession implements ProviderSession {
       if (!this.closed) o.onExit(why);
     });
   }
-  async init() {
+  async handshake() {
     await this.call("initialize", { clientInfo: { name: "cdesign", title: "cdesign", version: "1" } }, 15000);
     this.write({ method: "initialized" });
-    const policy = { cwd: this.o.root, approvalPolicy: this.o.fullAccess ? "never" : "on-request", sandbox: this.o.fullAccess ? "danger-full-access" : "workspace-write" };
+  }
+  /** `model/list`, following pagination (bounded). */
+  async models(): Promise<any[]> {
+    const out: any[] = [];
+    let cursor: string | null = null;
+    for (let i = 0; i < 5; i++) {
+      const r: any = await this.call("model/list", cursor ? { cursor } : {}, 15000);
+      if (Array.isArray(r?.data)) out.push(...r.data);
+      cursor = str(r?.nextCursor) ?? null;
+      if (!cursor) break;
+    }
+    return out;
+  }
+  async init() {
+    await this.handshake();
+    const policy = { cwd: this.o.root, ...(this.o.model ? { model: this.o.model } : {}), approvalPolicy: this.o.fullAccess ? "never" : "on-request", sandbox: this.o.fullAccess ? "danger-full-access" : "workspace-write" };
     // a saved conversation continues its own thread (never "the latest one")
     const r = this.o.resume ? await this.call("thread/resume", { threadId: this.o.resume, ...policy }, 15000) : await this.call("thread/start", policy, 15000);
     // (turn/start repeats the policy per turn, so a mode change between turns needs no new thread)
@@ -234,9 +271,11 @@ class CodexSession implements ProviderSession {
     this.o.onEvent({ type: "approval.resolved", id, outcome: allow ? "allowed" : "denied" });
     return true;
   }
-  async send(text: string, fullAccess: boolean) {
+  async send(text: string, fullAccess: boolean, settings: TurnSettings) {
     const r = await this.call("turn/start", {
       threadId: this.thread,
+      ...(settings.model ? { model: settings.model } : {}),
+      ...(settings.effort ? { effort: settings.effort } : {}),
       input: [{ type: "text", text, text_elements: [] }],
       approvalPolicy: fullAccess ? "never" : "on-request",
       sandboxPolicy: fullAccess ? { type: "dangerFullAccess" } : { type: "workspaceWrite" },
@@ -262,6 +301,27 @@ class CodexSession implements ProviderSession {
 export const codex: Provider = {
   id: "codex",
   label: "Codex",
+  perTurn: true,
+  /** Asks the installed app-server (`model/list`); a failure is reported honestly as "provider default only". */
+  async capabilities() {
+    const none = (note: string): Capabilities => ({ source: "fallback", note, models: [], efforts: [], defaultLabel: "Default" });
+    const bin = Bun.which("codex");
+    if (!bin) return none("Codex is not installed, so its models are unknown.");
+    const s = new CodexSession({ root: process.cwd(), fullAccess: true, onEvent() {}, onExit() {} }, bin);
+    try {
+      await s.handshake();
+      const list = (await s.models()).map(rec).filter((m): m is Record<string, any> => !!m && !m.hidden && !!(str(m.model) ?? str(m.id)));
+      if (!list.length) return none("Codex reported no models; only its default can be used.");
+      const efforts = (m: Record<string, any>) => (Array.isArray(m.supportedReasoningEfforts) ? m.supportedReasoningEfforts.map((e: unknown) => str(rec(e)?.reasoningEffort)).filter((e: unknown): e is string => !!e) : []);
+      const models = list.map((m) => ({ id: (str(m.model) ?? str(m.id))!, label: str(m.displayName) ?? (str(m.model) ?? str(m.id))!, efforts: efforts(m) }));
+      const def = list.find((m) => m.isDefault) ?? list[0];
+      return { source: "provider", note: "Models and reasoning efforts reported by Codex.", models, efforts: efforts(def), defaultLabel: `Default (${str(def.displayName) ?? str(def.model) ?? "Codex"})` };
+    } catch (e) {
+      return none(`Codex did not list its models (${(e as Error).message.slice(0, 160)}); only its default can be used.`);
+    } finally {
+      s.close();
+    }
+  },
   async discover() {
     const base = { id: "codex", label: "Codex" };
     const bin = Bun.which("codex");

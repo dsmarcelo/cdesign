@@ -9,6 +9,16 @@ if (args[0] === "auth" && args[1] === "status") {
   if (process.env.FAKE_CLAUDE_LOGIN === "out") { console.log(JSON.stringify({ loggedIn: false })); process.exit(1); }
   console.log(JSON.stringify({ loggedIn: true, authMethod: "claude.ai" })); process.exit(0);
 }
+if (args[0] === "--help") {
+  console.log(process.env.FAKE_CLAUDE_HELP === "none" ? "Usage: claude [options]" : `Usage: claude [options]
+  --effort <level>                      Effort level for the current session
+                                        (low, medium, high, xhigh, max)
+  --model <model>                       Model for the current session. Use an
+                                        alias for the latest model (e.g.
+                                        'fable', 'opus', or 'sonnet') or a
+                                        model's full name.`);
+  process.exit(0);
+}
 log({ argv: args, cwd: process.cwd(), pid: process.pid });
 if (process.env.FAKE_CLAUDE_START === "die") { console.error("boom: cannot start"); process.exit(5); }
 const resumed = args.includes("--resume") ? args[args.indexOf("--resume") + 1] : null;

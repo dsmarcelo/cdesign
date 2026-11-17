@@ -7,17 +7,37 @@
 #lside[data-tab=chat] #files,#lside[data-tab=files] #chat{display:none}
 #lrs{position:absolute;top:0;right:0;bottom:0;width:6px;cursor:ew-resize;z-index:4;touch-action:none}
 #lrs:hover,body.drag #lrs{background:var(--acc);opacity:.5}
-.cc-top{display:flex;align-items:center;gap:6px;flex:none}
-.cc-top select:first-child{flex:1;min-width:0}
+.cc-top{display:flex;align-items:center;gap:6px;flex:none;flex-wrap:wrap}
+.cc-top select{flex:1 1 90px;min-width:0}
+.cc-tune select{flex:1 1 110px}
+.cc-status{flex:none;font-size:11px;color:var(--mut);display:flex;align-items:center;gap:6px}
+.cc-status::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--mut);flex:none}
+.cc-status[data-state=starting]::before,.cc-status[data-state=streaming]::before,.cc-status[data-state=other]::before{background:#38bdf8;animation:cc-pulse 1s infinite}
+.cc-status[data-state=approval]::before{background:#fbbf24}
+.cc-status[data-state=completed]::before{background:#4ade80}
+.cc-status[data-state=failed]::before{background:#dc2626}
+.cc-status[data-state=stopped]::before,.cc-status[data-state=interrupted]::before{background:#fb923c}
+@keyframes cc-pulse{50%{opacity:.3}}
+@media (prefers-reduced-motion:reduce){.cc-status::before{animation:none!important}}
+.cc-logwrap{position:relative;flex:1;min-height:0;display:flex}
+.cc-jump{position:absolute;left:50%;bottom:8px;transform:translateX(-50%);border-radius:999px;font-size:12px;padding:3px 10px;background:var(--acc);color:#fff;box-shadow:0 2px 8px #0008}
+.cc-jump[hidden]{display:none}
+#chat :focus-visible,#ltabs :focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.cc-msg p{margin:0 0 .6em}.cc-msg p:last-child,.cc-msg ul:last-child,.cc-msg ol:last-child{margin-bottom:0}
+.cc-msg ul,.cc-msg ol{margin:0 0 .6em;padding-left:1.4em}
+.cc-msg code{font:12px ui-monospace,monospace;background:#0004;border-radius:4px;padding:0 3px;overflow-wrap:anywhere}
+.cc-msg pre.cc-code{margin:0 0 .6em;padding:8px;max-height:320px;overflow:auto;background:var(--bg);border-radius:6px;white-space:pre}
+.cc-msg pre.cc-code code{background:none;padding:0;overflow-wrap:normal}
+.cc-msg a{color:#7dd3fc;overflow-wrap:anywhere}
 .cc-badge{font-size:11px;background:none;cursor:pointer;padding:2px 7px;border-radius:999px;border:1px solid var(--line);color:var(--mut);white-space:nowrap}
 .cc-badge.full{color:#fbbf24;border-color:#fbbf2466}
-.cc-note{flex:none;font-size:12px;padding:8px;border-radius:8px;border:1px solid var(--line);color:var(--mut);overflow-wrap:anywhere}
+.cc-note{flex:none;max-height:30%;overflow:auto;font-size:12px;padding:8px;border-radius:8px;border:1px solid var(--line);color:var(--mut);overflow-wrap:anywhere}
 .cc-note.err{border-color:#dc2626;color:#fca5a5}
 .cc-note[hidden]{display:none}
-.cc-log{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px}
-.cc-msg{padding:8px 10px;border-radius:10px;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.45}
+.cc-log{flex:1;min-width:0;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px}
+.cc-msg{padding:8px 10px;border-radius:10px;white-space:pre-wrap;min-width:0;overflow-wrap:anywhere;line-height:1.45}
 .cc-msg.user{align-self:flex-end;background:var(--acc);max-width:92%}
-.cc-msg.message{background:var(--line)}
+.cc-msg.message{background:var(--line);white-space:normal}
 .cc-msg.live::after{content:"▍";margin-left:1px;opacity:.7}
 .cc-tool{border:1px solid var(--line);border-radius:8px;font-size:12px}
 .cc-tool summary{font-weight:500;padding:5px 8px;gap:6px;color:var(--mut)}
@@ -39,8 +59,8 @@ body.hl #lside{display:none}
 .cc-approval pre{margin:0;max-height:140px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:11px ui-monospace,monospace;background:var(--bg);border-radius:6px;padding:6px 8px}
 .cc-approval small{color:var(--mut);overflow-wrap:anywhere}
 .cc-approval div{display:flex;gap:6px;justify-content:flex-end}
-.cc-convs{display:flex;gap:4px;flex:none}
-.cc-convs select,.cc-convs input{flex:1;min-width:0}
+.cc-convs{display:flex;gap:4px;flex:none;flex-wrap:wrap}
+.cc-convs select,.cc-convs input{flex:1 1 120px;min-width:0}
 .cc-convs button{padding:2px 8px;font-size:12px}
 .cc-convs [hidden]{display:none}
 .cc-note[data-go]{cursor:pointer}
