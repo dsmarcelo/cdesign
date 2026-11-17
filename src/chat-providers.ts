@@ -1,18 +1,25 @@
 /**
- * Provider contract for the desktop chat, plus the Codex adapter (`codex app-server` over stdio JSON-RPC).
- * Tested against codex-cli 0.169.0 (protocol generated with `codex app-server generate-json-schema`).
- * Capabilities relied on: `initialize`/`initialized`, `thread/start` (cwd, approvalPolicy, sandbox), `turn/start`, `turn/interrupt`,
- * notifications `turn/started`, `turn/completed`, `item/started`, `item/completed`, `item/agentMessage/delta`, `item/commandExecution/outputDelta`.
+ * Provider contract for the desktop chat, plus the Codex adapter (`codex app-server` over stdio JSON-RPC)
+ * and the Claude adapter (the installed `claude` CLI in bidirectional stream-json mode: see ./chat-claude).
+ * Codex tested against codex-cli 0.169.0 (protocol generated with `codex app-server generate-json-schema`).
+ * Capabilities relied on: `initialize`/`initialized`, `thread/start` (cwd, approvalPolicy, sandbox), `turn/start` (per-turn approvalPolicy/sandboxPolicy),
+ * `turn/interrupt`, notifications `turn/started`, `turn/completed`, `item/started`, `item/completed`, `item/agentMessage/delta`,
+ * `item/commandExecution/outputDelta`, `serverRequest/resolved`, and the server requests `item/commandExecution/requestApproval` and `item/fileChange/requestApproval`.
  */
 
 export type ItemKind = "user" | "message" | "command" | "file" | "tool";
 export type Item = { id: string; kind: ItemKind; title?: string; text?: string; output?: string; status?: string };
 export type TurnStatus = "completed" | "interrupted" | "failed";
+/** A pending permission request. `id` is the provider's own request id, unique within one session. */
+export type Approval = { id: string; tool: string; detail: string; reason?: string };
+export type ApprovalOutcome = "allowed" | "denied" | "cancelled";
 export type ProviderEvent =
   | { type: "turn.started"; turnId: string }
   | { type: "item.started"; item: Item }
   | { type: "item.delta"; itemId: string; text: string }
   | { type: "item.completed"; item: Item }
+  | { type: "approval.requested"; approval: Approval }
+  | { type: "approval.resolved"; id: string; outcome: ApprovalOutcome }
   | { type: "turn.completed"; status: TurnStatus; error?: string };
 
 export type ProviderInfo = {
@@ -22,10 +29,22 @@ export type ProviderInfo = {
   message: string;
   version?: string;
 };
-export type StartOptions = { root: string; fullAccess: boolean; onEvent: (e: ProviderEvent) => void; onExit: (message: string) => void };
+export type StartOptions = {
+  root: string;
+  fullAccess: boolean;
+  /** Provider session to continue after its process died (only providers that can resume use it). */
+  resume?: string;
+  onEvent: (e: ProviderEvent) => void;
+  onExit: (message: string) => void;
+};
 export interface ProviderSession {
-  /** Resolves once the provider accepted the turn; events keep arriving through `onEvent`. */
-  send(text: string): Promise<void>;
+  /** Provider-side session id once known, so a dead process can be resumed with the same context. */
+  sessionId?: string;
+  /** Resolves once the provider accepted the turn; events keep arriving through `onEvent`. `fullAccess` applies to this turn only. */
+  send(text: string, fullAccess: boolean): Promise<void>;
+  /** Answers one pending approval; false when `id` is not pending (stale, duplicate or cancelled), in which case nothing is authorized. */
+  respond(id: string, allow: boolean): boolean;
+  /** Withdraws pending approvals, then interrupts the turn. */
   interrupt(): Promise<void>;
   close(): void;
 }
@@ -36,16 +55,16 @@ export interface Provider {
   start(o: StartOptions): Promise<ProviderSession>;
 }
 
-const CODEX_MIN = "0.169.0";
+export const CODEX_MIN = "0.169.0";
 const versionParts = (v: string) => v.split(".").map(Number);
-const atLeast = (v: string, min: string) => {
+export const atLeast = (v: string, min: string) => {
   const a = versionParts(v), b = versionParts(min);
   for (let i = 0; i < 3; i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) > (b[i] ?? 0);
   return true;
 };
 
 /** Runs a short command (never a model turn) and returns its output; a hung binary is killed after `ms`. */
-async function probe(cmd: string[], ms = 8000): Promise<{ code: number; out: string }> {
+export async function probe(cmd: string[], ms = 8000): Promise<{ code: number; out: string }> {
   const proc = Bun.spawn(cmd, { stdin: "ignore", stdout: "pipe", stderr: "pipe" });
   const timer = setTimeout(() => proc.kill(), ms);
   try {
@@ -56,9 +75,9 @@ async function probe(cmd: string[], ms = 8000): Promise<{ code: number; out: str
   }
 }
 
-const MAX_LINE = 8 * 1024 * 1024;
-const rec = (v: unknown): Record<string, any> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, any>) : null);
-const str = (v: unknown) => (typeof v === "string" ? v : undefined);
+export const MAX_LINE = 8 * 1024 * 1024;
+export const rec = (v: unknown): Record<string, any> | null => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, any>) : null);
+export const str = (v: unknown) => (typeof v === "string" ? v : undefined);
 
 /** Maps a Codex thread item to the shared shape; items the chat does not display return null. */
 function mapItem(raw: unknown): Item | null {
@@ -85,6 +104,8 @@ class CodexSession implements ProviderSession {
   private closed = false;
   private thread = "";
   private turn = "";
+  private asked = new Map<string, { rpcId: unknown }>(); // pending approvals, keyed by String(request id)
+  private titles = new Map<string, string>(); // itemId -> what the item is, to describe file-change approvals
   constructor(private o: StartOptions, bin: string) {
     this.proc = Bun.spawn([bin, "app-server"], { cwd: o.root, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
     this.read(this.proc.stdout as ReadableStream<Uint8Array>).catch(() => {});
@@ -100,6 +121,7 @@ class CodexSession implements ProviderSession {
     await this.call("initialize", { clientInfo: { name: "cdesign", title: "cdesign", version: "1" } }, 15000);
     this.write({ method: "initialized" });
     const r = await this.call("thread/start", { cwd: this.o.root, approvalPolicy: this.o.fullAccess ? "never" : "on-request", sandbox: this.o.fullAccess ? "danger-full-access" : "workspace-write" }, 15000);
+    // (turn/start repeats the policy per turn, so a mode change between turns needs no new thread)
     const id = str(rec(r?.thread)?.id);
     if (!id) throw new Error("Codex returned no thread id (unsupported app-server protocol)");
     this.thread = id;
@@ -149,9 +171,10 @@ class CodexSession implements ProviderSession {
       return;
     }
     const params = rec(m.params) ?? {};
-    if (m.id !== undefined) { // server request: nothing here may block waiting for a decision (approvals arrive with the permissions task)
-      if (method === "item/commandExecution/requestApproval" || method === "item/fileChange/requestApproval") this.write({ id: m.id, result: { decision: "decline" } });
-      else this.write({ id: m.id, error: { code: -32601, message: `cdesign does not handle ${method}` } });
+    if (m.id !== undefined) { this.serverRequest(m.id, method, params); return; }
+    if (method === "serverRequest/resolved") { // the provider settled it itself (turn ended, interrupted, answered elsewhere)
+      const key = String(params.requestId);
+      if (this.asked.delete(key)) this.o.onEvent({ type: "approval.resolved", id: key, outcome: "cancelled" });
       return;
     }
     if (params.threadId !== undefined && params.threadId !== this.thread) return;
@@ -171,6 +194,7 @@ class CodexSession implements ProviderSession {
       }
       case "item/started": case "item/completed": {
         const item = mapItem(params.item);
+        if (item?.title) this.titles.set(item.id, item.title);
         if (item) emit({ type: method === "item/started" ? "item.started" : "item.completed", item });
         break;
       }
@@ -181,12 +205,47 @@ class CodexSession implements ProviderSession {
       }
     }
   }
-  async send(text: string) {
-    const r = await this.call("turn/start", { threadId: this.thread, input: [{ type: "text", text, text_elements: [] }] }, 20000);
+  private serverRequest(rpcId: unknown, method: string, params: Record<string, any>) {
+    const key = String(rpcId);
+    const known = method === "item/commandExecution/requestApproval" || method === "item/fileChange/requestApproval";
+    if (known && (params.threadId === undefined || params.threadId === this.thread) && (params.turnId === undefined || !this.turn || params.turnId === this.turn)) {
+      const cmd = method.startsWith("item/commandExecution");
+      const itemId = str(params.itemId) ?? "";
+      const detail = cmd ? [str(params.command), str(params.cwd) ? `in ${str(params.cwd)}` : ""].filter(Boolean).join(" ") || "command" : this.titles.get(itemId) ?? str(params.grantRoot) ?? "file changes";
+      this.asked.set(key, { rpcId });
+      this.o.onEvent({ type: "approval.requested", approval: { id: key, tool: cmd ? "Run command" : "Change files", detail, reason: str(params.reason) } });
+      return;
+    }
+    // anything else (user questions, permission grants, MCP prompts, legacy approvals) cannot be answered here and must not hang the turn
+    this.write({ id: rpcId, error: { code: -32601, message: `cdesign cannot answer ${method}` } });
+    if (method.includes("requestUserInput") || method.includes("elicitation") || method.includes("requestApproval") || method.includes("Approval")) {
+      this.o.onEvent({ type: "item.completed", item: { id: "unsupported-" + key, kind: "tool", title: "Unsupported agent request", output: `Codex asked for input cdesign cannot provide (${method}). It was declined; use Stop if the agent keeps waiting.`, status: "failed" } });
+    }
+  }
+  respond(id: string, allow: boolean) {
+    const a = this.asked.get(id);
+    if (!a) return false;
+    this.asked.delete(id);
+    this.write({ id: a.rpcId, result: { decision: allow ? "accept" : "decline" } });
+    this.o.onEvent({ type: "approval.resolved", id, outcome: allow ? "allowed" : "denied" });
+    return true;
+  }
+  async send(text: string, fullAccess: boolean) {
+    const r = await this.call("turn/start", {
+      threadId: this.thread,
+      input: [{ type: "text", text, text_elements: [] }],
+      approvalPolicy: fullAccess ? "never" : "on-request",
+      sandboxPolicy: fullAccess ? { type: "dangerFullAccess" } : { type: "workspaceWrite" },
+    }, 20000);
     const id = str(rec(r?.turn)?.id);
     if (id && !this.turn) { this.turn = id; this.o.onEvent({ type: "turn.started", turnId: id }); }
   }
   async interrupt() {
+    for (const [id, a] of [...this.asked]) { // a turn blocked on a decision only ends once the request is withdrawn
+      this.asked.delete(id);
+      this.write({ id: a.rpcId, result: { decision: "cancel" } });
+      this.o.onEvent({ type: "approval.resolved", id, outcome: "cancelled" });
+    }
     if (!this.turn) return;
     await this.call("turn/interrupt", { threadId: this.thread, turnId: this.turn }, 10000);
   }
@@ -233,5 +292,3 @@ export const codex: Provider = {
     return s;
   },
 };
-
-export const PROVIDERS: Record<string, Provider> = { codex };

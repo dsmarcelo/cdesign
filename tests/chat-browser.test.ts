@@ -7,6 +7,7 @@ import { projectId } from "../src/store";
 const chrome = process.env.CDESIGN_CHROME ?? Bun.which("google-chrome") ?? Bun.which("chromium");
 const cli = join(import.meta.dir, "../src/cli.ts");
 const fixture = join(import.meta.dir, "fixtures/fake-codex.ts");
+const claudeFixture = join(import.meta.dir, "fixtures/fake-claude.ts");
 async function until<T>(fn: () => T | Promise<T>, timeout = 15000): Promise<NonNullable<T>> {
   const start = Date.now();
   while (Date.now() - start < timeout) { const v = await fn(); if (v) return v as NonNullable<T>; await Bun.sleep(30); }
@@ -18,6 +19,7 @@ test.skipIf(!chrome)("browser: Chat/Files tabs, resize/collapse, Codex send with
   const root = join(dir, "project"), home = join(dir, "home"), bin = join(dir, "bin"), profile = join(dir, "chrome");
   mkdirSync(root); mkdirSync(home); mkdirSync(bin);
   writeFileSync(join(bin, "codex"), `#!/bin/sh\nexec ${process.execPath} ${fixture} "$@"\n`); chmodSync(join(bin, "codex"), 0o755);
+  writeFileSync(join(bin, "claude"), `#!/bin/sh\nexec ${process.execPath} ${claudeFixture} "$@"\n`); chmodSync(join(bin, "claude"), 0o755);
   expect(Bun.spawnSync([process.execPath, cli, "init"], { cwd: root }).exitCode).toBe(0);
   mkdirSync(join(root, "design/pages"), { recursive: true });
   writeFileSync(join(root, "design/pages/Home.tsx"), "export default function Home(){return <main>Home</main>}");
@@ -49,7 +51,7 @@ test.skipIf(!chrome)("browser: Chat/Files tabs, resize/collapse, Codex send with
     expect(await shown("#chat")).toBe(true);
     expect(await shown("#files")).toBe(false);
     expect(await ev("document.querySelector('#tab-chat').getAttribute('aria-selected')")).toBe("true");
-    expect(await ev("document.querySelector('.cc-badge').textContent")).toBe("Full access");
+    expect(await ev("document.querySelector('.cc-badge').value")).toBe("full"); // new chats start with Full access
     await until(() => ev("document.querySelector('#chat select option')?.textContent==='Codex'"));
     await ev("{const t=document.querySelector('#chat textarea');t.value='draft stays';t.dispatchEvent(new Event('input'))}");
     await ev("document.querySelector('#tab-files').click()");
@@ -108,9 +110,47 @@ test.skipIf(!chrome)("browser: Chat/Files tabs, resize/collapse, Codex send with
     await until(() => ev("[...document.querySelectorAll('.cc-msg.message')].at(-1)?.textContent==='<img src=x onerror=document.title=1>'"));
     expect(await ev("document.querySelectorAll('#chat img').length")).toBe(0);
     expect(await ev("document.title")).toBe("cdesign");
+
+    // Normal access: approvals appear in the pane, Deny / Allow once reach the agent, mode is locked during a turn
+    const type = (text: string) => ev(`{const t=document.querySelector('#chat textarea');t.value=${JSON.stringify(text)};t.dispatchEvent(new Event('input'));document.querySelector('.cc-form .go').click()}`);
+    const card = "document.querySelector('.cc-approval')";
+    const clickCard = (label: string) => ev(`[...${card}.querySelectorAll('button')].find((b)=>b.textContent===${JSON.stringify(label)}).click()`);
+    const stopBtn = "document.querySelector('.cc-form button:not(.go)')";
+    await ev("{const b=document.querySelector('.cc-badge');b.value='normal';b.dispatchEvent(new Event('change'))}");
+    await until(() => ev("document.querySelector('.cc-badge').title.startsWith('Normal')"));
+    expect(await ev("fetch('/__cd/chat').then((r)=>r.json()).then((s)=>s.fullAccess)")).toBe(false);
+    await type("please ask first");
+    await until(() => ev(`!!${card}`));
+    expect(await ev(`${card}.textContent`)).toContain("touch fake-codex-approved.txt");
+    expect(await ev("document.querySelector('.cc-badge').disabled")).toBe(true);
+    await clickCard("Deny");
+    await until(() => ev(`!${card} && !${stopBtn}.offsetParent`));
+    expect(existsSync(join(root, "fake-codex-approved.txt"))).toBe(false);
+    expect(await ev("document.querySelector('.cc-badge').disabled")).toBe(false);
+    await type("please ask again");
+    await until(() => ev(`!!${card}`));
+    await clickCard("Allow once");
+    await until(() => ev(`!${card} && !${stopBtn}.offsetParent`));
+    expect(existsSync(join(root, "fake-codex-approved.txt"))).toBe(true);
+
+    // another provider starts a fresh conversation; Stop while waiting for permission withdraws the card
+    await until(() => ev("[...document.querySelectorAll('#chat select option')].some((o)=>o.textContent==='Claude')"));
+    await ev("{const s=document.querySelector('#chat select');s.value='claude';s.dispatchEvent(new Event('change'))}");
+    await type("please ask first");
+    await until(() => ev(`!!${card}`));
+    expect(await ev(`${card}.textContent`)).toContain("touch fake-claude-approved.txt");
+    expect(await ev("document.querySelectorAll('.cc-msg.user').length")).toBe(1);
+    await ev(`${stopBtn}.click()`);
+    await until(() => ev(`!${card} && document.querySelector('.cc-note')?.textContent.startsWith('Stopped')`));
+    expect(existsSync(join(root, "fake-claude-approved.txt"))).toBe(false);
+    await type("please ask again");
+    await until(() => ev(`!!${card}`));
+    await clickCard("Allow once");
+    await until(() => ev(`!${card} && [...document.querySelectorAll('.cc-msg.message')].at(-1)?.textContent==='Approved and done'`));
+    expect(existsSync(join(root, "fake-claude-approved.txt"))).toBe(true);
   } finally {
     socket?.close(); browser?.kill(); await browser?.exited;
     daemon.kill(); await daemon.exited;
     rmSync(dir, { recursive: true, force: true });
   }
-}, 60000);
+}, 120000);

@@ -6,11 +6,12 @@ import { projectId } from "../src/store";
 
 const cli = join(import.meta.dir, "../src/cli.ts");
 const fixture = join(import.meta.dir, "fixtures/fake-codex.ts");
+const claudeFixture = join(import.meta.dir, "fixtures/fake-claude.ts");
 const cleanups: (() => Promise<void> | void)[] = [];
 afterEach(async () => { while (cleanups.length) await cleanups.pop()!(); });
 
 type Env = Record<string, string>;
-/** Throwaway home + project + daemon (port 0) with a fake `codex` first on PATH. */
+/** Throwaway home + project + daemon (port 0) with fake `codex` and `claude` first on PATH. */
 async function boot(env: Env = {}, withCodex = true) {
   const dir = mkdtempSync(join(tmpdir(), "cdesign-chat-"));
   const home = join(dir, "home"), root = join(dir, "project"), bin = join(dir, "bin");
@@ -18,6 +19,8 @@ async function boot(env: Env = {}, withCodex = true) {
   if (withCodex) {
     writeFileSync(join(bin, "codex"), `#!/bin/sh\nexec ${process.execPath} ${fixture} "$@"\n`);
     chmodSync(join(bin, "codex"), 0o755);
+    writeFileSync(join(bin, "claude"), `#!/bin/sh\nexec ${process.execPath} ${claudeFixture} "$@"\n`);
+    chmodSync(join(bin, "claude"), 0o755);
   }
   const path = `${bin}:${process.env.PATH}`;
   const daemon = Bun.spawn([process.execPath, cli, "serve", root, "--port", "0"], {
@@ -217,4 +220,243 @@ test("Stop during a slow startup cancels it: the canceled prompt never runs and 
   await Bun.sleep(2000); // the canceled startup resolves meanwhile
   expect(existsSync(join(c.root, "fake-agent-edit.txt"))).toBe(false);
   expect(texts(await c.snap(), "message")).toHaveLength(1);
+}, 30000);
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Claude support, Normal/Full access and approvals. Fakes mimic the framing verified live against Claude Code 2.1.326 / codex-cli 0.169.0.
+
+const jsonl = (f: string) => (existsSync(f) ? readFileSync(f, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)) : []);
+const logFile = (name: string) => { const f = join(tmpdir(), `${name}-${Math.random().toString(36).slice(2)}.log`); cleanups.push(() => rmSync(f, { force: true })); return f; };
+const idle = (c: Awaited<ReturnType<typeof boot>>) => c.until(async () => { const x = await c.snap(); return x.conversation && !x.busy && x.conversation.status === "idle" ? x : null; }, 15000);
+const waiting = (c: Awaited<ReturnType<typeof boot>>) => c.until(async () => { const x = await c.snap(); return x.conversation?.approvals?.length ? x : null; }, 15000);
+const decide = (c: Awaited<ReturnType<typeof boot>>, s: any, decision: string, over: object = {}) =>
+  c.post("chat/approve", { conversationId: s.conversation.id, turnId: s.conversation.turnId, approvalId: s.conversation.approvals[0].id, decision, ...over });
+
+test("providers: Claude reports ready, login, unsupported and missing states without running a turn", async () => {
+  const ok = await boot();
+  const list = (await (await fetch(ok.url("chat/providers"))).json()).providers;
+  expect(list.map((p: any) => p.id)).toEqual(["codex", "claude"]);
+  expect(list[1]).toMatchObject({ id: "claude", label: "Claude", state: "ready", version: "2.1.326" });
+  const out = await boot({ FAKE_CLAUDE_LOGIN: "out" });
+  const o = (await (await fetch(out.url("chat/providers"))).json()).providers[1];
+  expect(o.state).toBe("login"); expect(o.message).toContain("log in");
+  expect((await (await fetch((await boot({ FAKE_CLAUDE_VERSION: "1.0.0" })).url("chat/providers"))).json()).providers[1].state).toBe("unsupported");
+  expect((await (await fetch((await boot({ PATH: "/nonexistent" }, false)).url("chat/providers"))).json()).providers[1].state).toBe("missing");
+}, 30000);
+
+test("Claude streams a turn through the installed CLI, keeps context in one session and defaults to Full access", async () => {
+  const log = logFile("fake-claude");
+  const c = await boot({ FAKE_CLAUDE_LOG: log });
+  expect((await c.snap()).fullAccess).toBe(true);
+  expect((await c.post("chat/send", { text: "hello there", provider: "claude" })).status).toBe(202);
+  const s = await idle(c);
+  expect(s.conversation).toMatchObject({ provider: "claude", fullAccess: true, error: null });
+  expect(texts(s, "message")[0].text).toBe("Hello from fake Claude (bypassPermissions)");
+  expect((await c.post("chat/send", { text: "again", provider: "claude", conversationId: s.conversation.id })).status).toBe(202);
+  const s2 = await idle(c);
+  expect(texts(s2, "message")).toHaveLength(2);
+  const lines = jsonl(log);
+  const argv = lines[0].argv as string[];
+  expect(argv).toEqual(expect.arrayContaining(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--permission-prompt-tool", "stdio"]));
+  expect(argv).not.toContain("--dangerously-skip-permissions");
+  expect(lines[0].cwd).toBe(realpath(c.root));
+  expect(lines.filter((l) => l.argv)).toHaveLength(1); // one process served both turns
+  const order = lines.map((l) => l.request?.subtype ?? l.type);
+  expect(order.slice(1, 4)).toEqual(["initialize", "set_permission_mode", "user"]);
+  expect(lines.find((l) => l.request?.subtype === "set_permission_mode").request.mode).toBe("bypassPermissions");
+}, 30000);
+
+test("choosing another provider starts a new conversation and never reuses the other provider's session", async () => {
+  const cl = logFile("fake-claude"), cx = logFile("fake-codex");
+  const c = await boot({ FAKE_CLAUDE_LOG: cl, FAKE_CODEX_LOG: cx });
+  await c.post("chat/send", { text: "hi", provider: "claude" });
+  const a = await idle(c);
+  const clash = await c.post("chat/send", { text: "hi", provider: "codex", conversationId: a.conversation.id });
+  expect(clash.status).toBe(202); // same id is only accepted while it is still the current conversation...
+  const b = await idle(c);
+  expect(b.conversation.provider).toBe("codex");
+  expect(b.conversation.id).not.toBe(a.conversation.id);
+  expect(texts(b, "user")).toHaveLength(1); // ...and the old transcript is not carried over
+  expect(jsonl(cx).filter((l) => l.method === "turn/start")).toHaveLength(1);
+  await c.post("chat/send", { text: "back", provider: "claude" });
+  const d = await idle(c);
+  expect(d.conversation.id).not.toBe(b.conversation.id);
+  expect(jsonl(cl).filter((l) => l.argv)).toHaveLength(2);
+  expect(jsonl(cl).filter((l) => l.argv).every((l) => !l.argv.includes("--resume"))).toBe(true);
+}, 40000);
+
+test("access mode: saved per project, visible in the snapshot, changeable between turns only", async () => {
+  const c = await boot();
+  expect((await c.post("chat/settings", { fullAccess: "yes" })).status).toBe(400);
+  expect((await (await c.post("chat/settings", { fullAccess: false })).json())).toEqual({ fullAccess: false });
+  expect((await c.snap()).fullAccess).toBe(false);
+  expect(JSON.parse(readFileSync(join(c.root, ".cdesign", "chat.json"), "utf8"))).toEqual({ fullAccess: false });
+  await c.post("chat/send", { text: "slow one", provider: "codex" });
+  await c.until(async () => texts(await c.snap(), "message")[0]?.text);
+  expect((await c.post("chat/settings", { fullAccess: true })).status).toBe(409); // active turn: rejected
+  expect((await c.snap()).fullAccess).toBe(false);
+  await c.post("chat/stop", {});
+  await idle(c);
+  expect((await c.post("chat/settings", { fullAccess: true })).status).toBe(200);
+  expect(JSON.parse(readFileSync(join(c.root, ".cdesign", "chat.json"), "utf8"))).toEqual({ fullAccess: true });
+}, 30000);
+
+test("Codex Normal mode: approval shows command details, Allow once runs it, Deny skips it, stale and duplicate answers authorize nothing", async () => {
+  const log = logFile("fake-codex");
+  const c = await boot({ FAKE_CODEX_LOG: log });
+  await c.post("chat/settings", { fullAccess: false });
+  await c.post("chat/send", { text: "please ask first", provider: "codex" });
+  const w = await waiting(c);
+  const a = w.conversation.approvals[0];
+  expect(a).toMatchObject({ tool: "Run command", reason: "needs approval" });
+  expect(a.detail).toContain("touch fake-codex-approved.txt");
+  expect(w.busy).toBe(true);
+  // wrong conversation / turn / id / decision: refused, nothing runs
+  for (const over of [{ conversationId: "other" }, { turnId: "stale" }, { approvalId: "999" }]) expect((await decide(c, w, "allow", over)).status).toBe(409);
+  expect((await decide(c, w, "maybe")).status).toBe(400);
+  expect(existsSync(join(c.root, "fake-codex-approved.txt"))).toBe(false);
+  expect((await decide(c, w, "allow")).status).toBe(202);
+  expect((await decide(c, w, "allow")).status).toBe(409); // duplicate
+  const done = await idle(c);
+  expect(done.conversation.approvals).toEqual([]);
+  expect(existsSync(join(c.root, "fake-codex-approved.txt"))).toBe(true);
+  rmSync(join(c.root, "fake-codex-approved.txt"));
+  expect((await decide(c, w, "allow")).status).toBe(409); // stale: that turn is over
+  // deny
+  await c.post("chat/send", { text: "please ask again", provider: "codex" });
+  const w2 = await waiting(c);
+  expect((await decide(c, w2, "deny")).status).toBe(202);
+  const d = await idle(c);
+  expect(existsSync(join(c.root, "fake-codex-approved.txt"))).toBe(false);
+  expect(texts(d, "command").at(-1).status).toBe("declined");
+  const responses = jsonl(log).filter((l) => l.method === undefined && l.result?.decision).map((l) => l.result.decision);
+  expect(responses).toEqual(["accept", "decline"]);
+  // Normal mapping on every turn
+  const turns = jsonl(log).filter((l) => l.method === "turn/start");
+  expect(turns[0].params).toMatchObject({ approvalPolicy: "on-request", sandboxPolicy: { type: "workspaceWrite" } });
+}, 40000);
+
+test("Codex Full access maps to never-ask + unrestricted sandbox, and a mode change applies to the next turn without a new thread", async () => {
+  const log = logFile("fake-codex");
+  const c = await boot({ FAKE_CODEX_LOG: log });
+  await c.post("chat/send", { text: "hello", provider: "codex" });
+  await idle(c);
+  await c.post("chat/settings", { fullAccess: false });
+  await c.post("chat/send", { text: "hello again", provider: "codex" });
+  const s = await idle(c);
+  expect(s.conversation.fullAccess).toBe(false);
+  const lines = jsonl(log);
+  const turns = lines.filter((l) => l.method === "turn/start");
+  expect(turns[0].params).toMatchObject({ approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } });
+  expect(turns[1].params).toMatchObject({ approvalPolicy: "on-request", sandboxPolicy: { type: "workspaceWrite" } });
+  expect(lines.filter((l) => l.method === "thread/start")).toHaveLength(1);
+}, 30000);
+
+test("Codex file-change approvals name the files; questions the adapter cannot answer fail clearly instead of hanging or approving", async () => {
+  const c = await boot();
+  await c.post("chat/settings", { fullAccess: false });
+  await c.post("chat/send", { text: "filechange please", provider: "codex" });
+  const w = await waiting(c);
+  expect(w.conversation.approvals[0]).toMatchObject({ tool: "Change files", detail: "src/app.css" });
+  expect((await decide(c, w, "deny")).status).toBe(202);
+  await idle(c);
+  await c.post("chat/send", { text: "a question for you", provider: "codex" });
+  const s = await idle(c);
+  expect(s.conversation.approvals).toEqual([]);
+  const u = texts(s, "tool").find((i: any) => i.title === "Unsupported agent request");
+  expect(u.output).toContain("cannot provide");
+  expect(existsSync(join(c.root, "fake-codex-approved.txt"))).toBe(false);
+}, 40000);
+
+test("Claude Normal mode: allow and deny reach the exact request, with tool details shown", async () => {
+  const log = logFile("fake-claude");
+  const c = await boot({ FAKE_CLAUDE_LOG: log });
+  await c.post("chat/settings", { fullAccess: false });
+  await c.post("chat/send", { text: "please ask first", provider: "claude" });
+  const w = await waiting(c);
+  expect(w.conversation.approvals[0]).toMatchObject({ tool: "Bash", detail: expect.stringContaining("touch fake-claude-approved.txt"), reason: "Create the approved file" });
+  expect((await decide(c, w, "allow", { approvalId: "nope" })).status).toBe(409);
+  expect((await decide(c, w, "allow")).status).toBe(202);
+  expect((await decide(c, w, "deny")).status).toBe(409); // already answered: a second answer cannot flip it
+  const a = await idle(c);
+  expect(existsSync(join(c.root, "fake-claude-approved.txt"))).toBe(true);
+  expect(texts(a, "message").at(-1).text).toBe("Approved and done");
+  rmSync(join(c.root, "fake-claude-approved.txt"));
+  await c.post("chat/send", { text: "please ask again", provider: "claude" });
+  const w2 = await waiting(c);
+  expect((await decide(c, w2, "deny")).status).toBe(202);
+  const d = await idle(c);
+  expect(existsSync(join(c.root, "fake-claude-approved.txt"))).toBe(false);
+  expect(texts(d, "message").at(-1).text).toBe("Denied, skipped");
+  const answers = jsonl(log).filter((l) => l.type === "control_response").map((l) => l.response.response);
+  expect(answers[0]).toMatchObject({ behavior: "allow", updatedInput: { command: "touch fake-claude-approved.txt" } });
+  expect(answers[1]).toMatchObject({ behavior: "deny" });
+  expect(jsonl(log).find((l) => l.argv).argv).toEqual(expect.arrayContaining(["--permission-mode", "default"]));
+  expect(jsonl(log).some((l) => l.request?.subtype === "set_permission_mode")).toBe(false); // Normal needs no switch
+}, 40000);
+
+test("Claude questions are declined with a visible unsupported-interaction failure, never approved", async () => {
+  const log = logFile("fake-claude");
+  const c = await boot({ FAKE_CLAUDE_LOG: log });
+  await c.post("chat/send", { text: "a question for you", provider: "claude" });
+  const s = await idle(c);
+  expect(s.conversation.approvals).toEqual([]);
+  expect(texts(s, "tool").find((i: any) => i.title === "Unsupported agent request").output).toContain("cannot show");
+  expect(jsonl(log).find((l) => l.type === "control_response" && l.response.request_id === "req1").response.response.behavior).toBe("deny");
+}, 30000);
+
+test("Stop while waiting for permission withdraws the request, ends the turn, and a late answer authorizes nothing (both providers)", async () => {
+  for (const provider of ["codex", "claude"]) {
+    const c = await boot();
+    await c.post("chat/settings", { fullAccess: false });
+    await c.post("chat/send", { text: "please ask first", provider });
+    const w = await waiting(c);
+    expect((await c.post("chat/stop", { conversationId: w.conversation.id, turnId: w.conversation.turnId })).status).toBe(202);
+    const s = await idle(c);
+    expect(s.conversation.approvals).toEqual([]);
+    expect(s.conversation.error).toBeNull();
+    expect((await decide(c, w, "allow")).status).toBe(409);
+    await Bun.sleep(200);
+    expect(existsSync(join(c.root, `fake-${provider}-approved.txt`))).toBe(false);
+    expect((await c.post("chat/send", { text: "hello again", provider })).status).toBe(202); // recoverable
+    expect((await idle(c)).conversation.error).toBeNull();
+  }
+}, 60000);
+
+test("Claude: refused Full access, a provider that dies, junk output and a failed startup are recoverable; the session is resumed", async () => {
+  const log = logFile("fake-claude");
+  const c = await boot({ FAKE_CLAUDE_LOG: log, FAKE_CLAUDE_NO_BYPASS: "1" });
+  await c.post("chat/send", { text: "hello", provider: "claude" }); // Full is the default but this CLI refuses it
+  const f = await idle(c);
+  expect(f.conversation.error).toContain("would not switch to Full access");
+  await c.post("chat/settings", { fullAccess: false });
+  await c.post("chat/send", { text: "badjson crash now", provider: "claude", conversationId: f.conversation.id });
+  const crashed = await idle(c);
+  expect(crashed.conversation.error).toContain("exit code 3");
+  expect(texts(crashed, "message").at(-1).text).toBe("Hello");
+  await c.post("chat/send", { text: "hello again", provider: "claude", conversationId: f.conversation.id });
+  const ok = await idle(c);
+  expect(ok.conversation.error).toBeNull();
+  const starts = jsonl(log).filter((l) => l.argv);
+  expect(starts.at(-1).argv).toContain("--resume");
+  expect(starts.at(-1).argv[starts.at(-1).argv.indexOf("--resume") + 1]).toMatch(/^sess-/);
+
+  const bad = await boot({ FAKE_CLAUDE_START: "die" });
+  await bad.post("chat/send", { text: "hi", provider: "claude" });
+  const b = await idle(bad);
+  expect(b.conversation.error).toContain("boom: cannot start");
+}, 60000);
+
+test("access and approval controls are local-only like the rest of chat", async () => {
+  const free = Bun.serve({ port: 0, fetch: () => new Response("") }), tport = free.port; free.stop(true);
+  const c = await boot();
+  writeFileSync(join(c.dir, "bin", "cloudflared"), "#!/bin/sh\necho 'Registered tunnel connection' >&2\nexec sleep 300\n");
+  chmodSync(join(c.dir, "bin", "cloudflared"), 0o755);
+  writeFileSync(join(c.home, "tunnel.json"), JSON.stringify({ provider: "cloudflare", domain: "x.example.com", token: "t", port: tport }));
+  expect((await fetch(c.base + "/__cd/tunnel", { method: "POST" })).ok).toBe(true);
+  const t = (p: string) => fetch(`http://127.0.0.1:${tport}/__cd/${p}`, { method: "POST", body: "{}", headers: { host: "x.example.com" } });
+  expect((await t("chat/approve")).status).toBe(403);
+  expect((await t("chat/settings")).status).toBe(403);
+  expect((await fetch(c.url("chat/settings"), { method: "POST", headers: { origin: "http://evil.example" }, body: JSON.stringify({ fullAccess: false }) })).status).toBe(403);
+  expect((await c.snap()).fullAccess).toBe(true);
 }, 30000);
