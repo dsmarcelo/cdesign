@@ -32,6 +32,50 @@
 
   // ---- chat DOM ----
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
+  // Agent text is untrusted: it is parsed into DOM nodes with textContent only (no innerHTML), so markup in it can never run.
+  // Links are kept only for http(s)/mailto; anything else (javascript:, data:...) is shown as plain text.
+  const safeHref = (u) => { try { const x = new URL(u); return /^(https?:|mailto:)$/.test(x.protocol) ? x.href : null; } catch { return null; } };
+  const inline = (parent, text) => {
+    const re = /`([^`\n]+)`|\*\*([^*\n]+)\*\*|\[([^\]\n]+)\]\(([^)\s]+)\)/g;
+    let at = 0, m;
+    while ((m = re.exec(text))) {
+      if (m.index > at) parent.append(text.slice(at, m.index));
+      if (m[1] !== undefined) parent.append(el("code", "", m[1]));
+      else if (m[2] !== undefined) parent.append(el("strong", "", m[2]));
+      else {
+        const href = safeHref(m[4]);
+        if (href) { const a = el("a", "", m[3]); a.href = href; a.target = "_blank"; a.rel = "noopener noreferrer nofollow"; parent.append(a); }
+        else parent.append(m[3] + " (" + m[4] + ")");
+      }
+      at = m.index + m[0].length;
+    }
+    if (at < text.length) parent.append(text.slice(at));
+  };
+  /** Paragraphs, bullet/numbered lists and fenced code. An unclosed fence (still streaming) renders as code so far. */
+  const markdown = (box, text) => {
+    const out = [], lines = text.split("\n");
+    for (let i = 0; i < lines.length;) {
+      const line = lines[i], fence = line.match(/^\s*```/);
+      if (fence) {
+        const code = []; i++;
+        while (i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i++]);
+        i++;
+        const pre = el("pre", "cc-code"); pre.tabIndex = 0; pre.append(el("code", "", code.join("\n"))); out.push(pre);
+      } else if (/^\s*([-*]|\d+[.)])\s+/.test(line)) {
+        const ordered = /^\s*\d/.test(line), list = el(ordered ? "ol" : "ul");
+        while (i < lines.length && /^\s*([-*]|\d+[.)])\s+/.test(lines[i])) { const li = el("li"); inline(li, lines[i].replace(/^\s*([-*]|\d+[.)])\s+/, "")); list.append(li); i++; }
+        out.push(list);
+      } else if (!line.trim()) i++;
+      else {
+        const p = el("p");
+        const para = [];
+        while (i < lines.length && lines[i].trim() && !/^\s*```/.test(lines[i]) && !/^\s*([-*]|\d+[.)])\s+/.test(lines[i])) para.push(lines[i++]);
+        para.forEach((l, k) => { if (k) p.append(el("br")); inline(p, l); });
+        out.push(p);
+      }
+    }
+    box.replaceChildren(...out);
+  };
   const sel = el("select"); sel.title = "Agent";
   sel.setAttribute("aria-label", "Agent");
   const badge = el("select", "cc-badge full"); badge.setAttribute("aria-label", "Access mode");
@@ -42,23 +86,32 @@
   };
   const showMode = (full) => { badge.value = full ? "full" : "normal"; badge.classList.toggle("full", full); badge.title = MODE_HELP[badge.value]; };
   showMode(true);
+  const msel = el("select"); msel.setAttribute("aria-label", "Model");
+  const esel = el("select"); esel.setAttribute("aria-label", "Reasoning effort");
   const top = el("div", "cc-top"); top.append(sel, badge);
+  const tune = el("div", "cc-top cc-tune"); tune.append(msel, esel);
   const bar = el("div", "cc-convs");
   const csel = el("select"); csel.setAttribute("aria-label", "Conversation");
   const rin = el("input"); rin.hidden = true; rin.maxLength = 80; rin.setAttribute("aria-label", "Chat name");
   const newBtn = el("button", "", "New"), renBtn = el("button", "", "Rename"), delBtn = el("button", "", "Delete");
   newBtn.title = "Start a new chat"; renBtn.title = "Rename this chat"; delBtn.title = "Delete this chat (cdesign's saved copy only)";
   bar.append(csel, rin, newBtn, renBtn, delBtn);
+  const status = el("div", "cc-status"); status.setAttribute("role", "status");
   const note = el("div", "cc-note"); note.hidden = true; note.setAttribute("role", "status");
-  const log = el("div", "cc-log"); log.setAttribute("aria-live", "polite");
+  const log = el("div", "cc-log"); log.setAttribute("aria-live", "polite"); log.tabIndex = 0; log.setAttribute("aria-label", "Conversation");
+  const jump = el("button", "cc-jump", "↓ Latest"); jump.hidden = true; jump.title = "Scroll to the newest message";
+  const wrap = el("div", "cc-logwrap"); wrap.append(log, jump);
   const box = el("textarea"); box.placeholder = "Ask the agent to change this design…"; box.setAttribute("aria-label", "Message");
   const hint = el("small", "", "Enter to send, Shift+Enter for a new line");
   const sendBtn = el("button", "go", "Send"), stopBtn = el("button", "", "Stop"); stopBtn.hidden = true;
   const form = el("div", "cc-form"); const row = el("div"); row.append(hint, stopBtn, sendBtn); form.append(box, row);
-  root.append(top, bar, note, log, form);
+  root.append(top, tune, bar, status, note, wrap, form);
 
   // `conv` is the chat on screen (null = a new chat that is not saved until its first message); `busy` is project-wide, `activeId` the chat that owns the running turn
   let providers = [], conv = null, convs = [], activeId = null, busy = false, seq = 0, epoch = "", es = null, posting = false, full = true, draft = false;
+  // what a new (unsaved) chat will be created with; a saved chat uses its own fields
+  const fresh = { fullAccess: true, model: null, effort: null };
+  let renderedId = null;
   const ready = () => providers.find((p) => p.id === sel.value)?.state === "ready";
   const showNote = (text, err, go) => { note.hidden = !text; note.textContent = text || ""; note.classList.toggle("err", !!err); if (go) note.dataset.go = go; else delete note.dataset.go; };
   note.onclick = () => { if (note.dataset.go) open(note.dataset.go); };
@@ -71,6 +124,42 @@
     delBtn.disabled = !conv || mine();
     sel.disabled = !!conv; // a chat keeps its agent
     box.disabled = false;
+    msel.disabled = esel.disabled = busy || posting || msel.options.length < 2 && esel.options.length < 2; // settings apply between turns
+    if (busy || posting) { msel.title = esel.title = "Model and effort change between turns; wait for the agent or Stop it"; }
+    else fillTitles();
+    showStatus();
+  };
+  const caps = () => providers.find((p) => p.id === (conv?.provider ?? sel.value))?.capabilities ?? { source: "fallback", note: "", models: [], efforts: [], defaultLabel: "Default" };
+  const cur = () => conv ?? fresh;
+  const effortsFor = (c, model) => (model ? c.models.find((m) => m.id === model)?.efforts ?? c.efforts : c.efforts);
+  const fillTitles = () => {
+    const c = caps();
+    msel.title = c.models.length ? c.note : "This agent did not list its models, so only its default can be used. " + c.note;
+    esel.title = effortsFor(c, cur().model).length ? "Reasoning effort for the next turn" : "This agent did not list reasoning efforts for this model, so only its default can be used.";
+  };
+  /** Rebuilds the model/effort selectors from the agent's reported capabilities and the chat's saved values. */
+  const fillSettings = () => {
+    const c = caps(), s = cur();
+    const opt = (v, t) => { const o = el("option", "", t); o.value = v; return o; };
+    const models = [opt("", c.models.length ? c.defaultLabel : c.defaultLabel + " (models not listed)"), ...c.models.map((m) => opt(m.id, m.label))];
+    if (s.model && !c.models.some((m) => m.id === s.model)) models.push(opt(s.model, s.model + " (not offered now)"));
+    msel.replaceChildren(...models); msel.value = s.model ?? "";
+    const efforts = effortsFor(c, s.model);
+    const list = [opt("", efforts.length ? "Default effort" : "Default effort (not listed)"), ...efforts.map((e) => opt(e, e))];
+    if (s.effort && !efforts.includes(s.effort)) list.push(opt(s.effort, s.effort + " (not supported)"));
+    esel.replaceChildren(...list); esel.value = s.effort ?? "";
+  };
+  const STATUS = { empty: "New chat: nothing sent yet", starting: "Starting the agent…", approval: "Waiting for your approval", streaming: "Working…", other: "Working in another chat", completed: "Done", stopped: "Stopped", interrupted: "Interrupted", failed: "Failed", idle: "Ready" };
+  /** One word for where this chat stands, kept apart from the explanatory note below it. */
+  const showStatus = () => {
+    let k;
+    if (busy && mine()) k = conv.approvals?.length ? "approval" : !conv.turnId ? "starting" : "streaming";
+    else if (busy) k = "other";
+    else if (!conv || !conv.items.length) k = "empty";
+    else if (conv.last === "failed") k = "failed";
+    else if (conv.last === "interrupted") k = conv.error?.startsWith("Interrupted") ? "interrupted" : "stopped";
+    else k = conv.last === "completed" ? "completed" : "idle";
+    status.dataset.state = k; status.textContent = STATUS[k];
   };
   const refreshNote = () => {
     if (busy && activeId && activeId !== conv?.id) return showNote(`The agent is working in "${convs.find((c) => c.id === activeId)?.title ?? "another chat"}". Click to open it, where you can Stop it or answer requests.`, false, activeId);
@@ -87,7 +176,7 @@
     let n = nodes.get(it.id);
     if (!n) {
       if (it.kind === "command" || it.kind === "file" || it.kind === "tool") {
-        n = el("details", "cc-tool"); const s = el("summary"); s.append(el("span"), el("i")); n.append(s, el("pre"));
+        n = el("details", "cc-tool"); const s = el("summary"); s.append(el("span"), el("i")); const out = el("pre"); out.tabIndex = 0; out.setAttribute("aria-label", "Tool output"); n.append(s, out);
       } else n = el("div", "cc-msg " + it.kind);
       nodes.set(it.id, n); log.append(n);
     }
@@ -96,7 +185,7 @@
       n.querySelector("i").textContent = it.status && it.status !== "completed" ? it.status : "";
       n.querySelector("pre").textContent = it.output || "(no output)";
     } else {
-      n.textContent = it.text || "";
+      if (it.kind === "message") markdown(n, it.text || ""); else n.textContent = it.text || "";
       n.classList.toggle("live", it.kind === "message" && busy && conv?.items.at(-1) === it);
     }
     return n;
@@ -121,14 +210,22 @@
     cards.set(a.id, c); log.append(c);
   };
   const dropApproval = (id) => { cards.get(id)?.remove(); cards.delete(id); };
+  const atEnd = () => log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   const render = () => {
+    // reloading the chat already on screen (a list change, a reconnect) must not drag someone who is reading older output back down
+    const keep = renderedId === conv?.id && !atEnd() ? log.scrollTop : null;
+    renderedId = conv?.id ?? null;
     log.replaceChildren(); nodes.clear(); cards.clear();
     if (!conv?.items.length) log.append(el("div", "cc-empty", "Ask the agent to change this design. Your project's files are edited directly and the preview reloads."));
     else for (const it of conv.items) draw(it);
     for (const a of conv?.approvals || []) drawApproval(a);
-    log.scrollTop = log.scrollHeight;
+    log.scrollTop = keep ?? log.scrollHeight;
+    jump.hidden = atEnd();
   };
-  const stick = (fn) => { const at = log.scrollHeight - log.scrollTop - log.clientHeight < 40; fn(); if (at) log.scrollTop = log.scrollHeight; };
+  // follow new output only while the reader is at the bottom; otherwise leave the position alone and offer a way back
+  const stick = (fn) => { const at = atEnd(); fn(); if (at) log.scrollTop = log.scrollHeight; jump.hidden = atEnd(); };
+  log.onscroll = () => { jump.hidden = atEnd(); };
+  jump.onclick = () => { log.scrollTop = log.scrollHeight; jump.hidden = true; log.focus(); };
   const find = (id) => conv?.items.find((i) => i.id === id);
   // mirrors apply() in src/chat.ts
   const reduce = (ev) => {
@@ -138,9 +235,9 @@
         busy = true; activeId = ev.conversation.id;
         if (conv?.id !== ev.conversation.id) {
           if (!(draft && posting)) { drawList(); break; } // another tab started a turn in a chat that is not on screen
-          draft = false; conv = { ...ev.conversation, items: [], approvals: [], error: null }; store("cd-conv", conv.id); render();
+          draft = false; conv = { ...ev.conversation, items: [], approvals: [], error: null, last: null }; store("cd-conv", conv.id); render();
         }
-        conv.turnId = null; conv.approvals = []; conv.fullAccess = ev.conversation.fullAccess; showNote("");
+        conv.turnId = null; conv.approvals = []; conv.fullAccess = ev.conversation.fullAccess; conv.model = ev.conversation.model; conv.effort = ev.conversation.effort; fillSettings(); showNote("");
         for (const id of [...cards.keys()]) dropApproval(id);
         conv.items.push({ id: ev.itemId, kind: "user", text: ev.text });
         if (log.querySelector(".cc-empty")) log.replaceChildren();
@@ -168,10 +265,10 @@
       case "list": load().catch(() => {}); break;
       case "settings":
         if (!ev.conversationId) full = ev.fullAccess;
-        else if (conv?.id === ev.conversationId) conv.fullAccess = ev.fullAccess;
-        showMode(conv ? conv.fullAccess : full); break;
+        else if (conv?.id === ev.conversationId) { conv.fullAccess = ev.fullAccess; conv.model = ev.model ?? null; conv.effort = ev.effort ?? null; fillSettings(); }
+        showMode(cur().fullAccess); break;
       case "turn.completed":
-        busy = false; activeId = null; if (conv && ev.cid === conv.id) { conv.turnId = null; conv.approvals = []; }
+        busy = false; activeId = null; if (conv && ev.cid === conv.id) { conv.turnId = null; conv.approvals = []; conv.last = ev.status; conv.error = ev.status === "failed" ? ev.error ?? "The turn failed" : null; }
         refreshList();
         if (ev.cid !== conv?.id) { refreshNote(); break; }
         for (const id of [...cards.keys()]) dropApproval(id);
@@ -192,8 +289,8 @@
     conv = draft ? null : s.conversation;
     if (conv) store("cd-conv", conv.id);
     if (conv) { const p = conv.provider; if (![...sel.options].some((o) => o.value === p)) { const o = el("option", "", p); o.value = p; sel.append(o); } sel.value = p; }
-    showMode(conv ? conv.fullAccess : full);
-    render(); drawList(); refreshNote(); sync();
+    showMode(cur().fullAccess);
+    fillSettings(); render(); drawList(); refreshNote(); sync();
   };
   const open = (id) => { draft = false; return load(id).catch(() => showNote("Could not open that chat", true)); };
   const connect = () => {
@@ -206,7 +303,10 @@
       seq = ev.seq; reduce(ev);
     };
   };
-  const newChat = () => { draft = true; conv = null; render(); drawList(); showMode(full); refreshNote(); sync(); box.focus(); };
+  const newChat = () => { // a new chat always starts on Full access and the agent's defaults, whatever the last chat used
+    draft = true; conv = null; Object.assign(fresh, { fullAccess: true, model: null, effort: null });
+    render(); drawList(); showMode(true); fillSettings(); refreshNote(); sync(); box.focus();
+  };
   newBtn.onclick = newChat;
   csel.onchange = () => (csel.value ? open(csel.value) : newChat());
   const endRename = () => { rin.hidden = true; csel.hidden = false; };
@@ -234,7 +334,7 @@
     if (!text || busy || posting || !ready()) return;
     posting = true; sync();
     try {
-      const r = await post("/send", { text, provider: sel.value, conversationId: conv?.id });
+      const r = await post("/send", conv ? { text, provider: sel.value, conversationId: conv.id } : { text, provider: sel.value, fullAccess: fresh.fullAccess, model: fresh.model, effort: fresh.effort });
       if (r.ok) {
         box.value = "";
         const { conversationId } = await r.json().catch(() => ({}));
@@ -250,10 +350,28 @@
 
   badge.onchange = async () => {
     const want = badge.value === "full";
+    if (!conv) { fresh.fullAccess = want; showMode(want); return; } // an unsaved chat keeps it until its first message
     const res = await post("/settings", { fullAccess: want, conversationId: conv?.id }).catch(() => null);
-    if (res?.ok) { if (conv) conv.fullAccess = want; full = want; showMode(want); refreshNote(); }
-    else { showMode(conv ? conv.fullAccess : full); showNote(res ? (await res.json().catch(() => ({}))).error || "Could not change the access mode" : "Could not reach cdesign", true); }
+    if (res?.ok) { conv.fullAccess = want; showMode(want); refreshNote(); }
+    else { showMode(cur().fullAccess); showNote(res ? (await res.json().catch(() => ({}))).error || "Could not change the access mode" : "Could not reach cdesign", true); }
   };
+
+  /** Applies a model/effort choice: saved chats persist it right away (the server validates), an unsaved chat just remembers it for its first message. */
+  const choose = async (patch) => {
+    const c = caps(), s = cur();
+    const next = { model: s.model, effort: s.effort, ...patch };
+    if (patch.model !== undefined && next.effort && !effortsFor(c, next.model).includes(next.effort)) {
+      showNote(`"${next.effort}" effort is not available for ${next.model || "the default model"}, so effort went back to the default.`);
+      next.effort = null;
+    }
+    if (!conv) { Object.assign(fresh, next); fillSettings(); sync(); return; }
+    const r = await post("/settings", { conversationId: conv.id, model: next.model, effort: next.effort }).catch(() => null);
+    if (r?.ok) { conv.model = next.model; conv.effort = next.effort; }
+    else showNote(r ? (await r.json().catch(() => ({}))).error || "Could not change the setting" : "Could not reach cdesign", true);
+    fillSettings(); sync();
+  };
+  msel.onchange = () => choose({ model: msel.value || null });
+  esel.onchange = () => choose({ effort: esel.value || null });
 
   const STATE = { missing: "not installed", login: "not logged in", unsupported: "update needed", error: "error" };
   const discover = async () => {
@@ -263,8 +381,8 @@
     sel.replaceChildren(...providers.map((p) => { const o = el("option", "", p.label + (p.state === "ready" ? "" : ` (${STATE[p.state] || "unavailable"})`)); o.title = p.message; o.value = p.id; return o; }));
     const p = providers.find((x) => x.id === sel.value) || providers[0];
     if (conv) sel.value = conv.provider;
-    refreshNote(); sync();
+    fillSettings(); refreshNote(); sync();
   };
-  sel.onchange = () => { refreshNote(); sync(); };
+  sel.onchange = () => { Object.assign(fresh, { model: null, effort: null }); fillSettings(); refreshNote(); sync(); };
   (async () => { await load().catch(() => showNote("Could not load the chat", true)); await discover(); connect(); })();
 })();

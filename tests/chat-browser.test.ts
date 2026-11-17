@@ -118,7 +118,7 @@ test.skipIf(!chrome)("browser: Chat/Files tabs, resize/collapse, Codex send with
     const stopBtn = "document.querySelector('.cc-form button:not(.go)')";
     await ev("{const b=document.querySelector('.cc-badge');b.value='normal';b.dispatchEvent(new Event('change'))}");
     await until(() => ev("document.querySelector('.cc-badge').title.startsWith('Normal')"));
-    expect(await ev("fetch('/__cd/chat').then((r)=>r.json()).then((s)=>s.fullAccess)")).toBe(false);
+    expect(await ev("fetch('/__cd/chat').then((r)=>r.json()).then((s)=>s.conversation.fullAccess)")).toBe(false);
     await type("please ask first");
     await until(() => ev(`!!${card}`));
     expect(await ev(`${card}.textContent`)).toContain("touch fake-codex-approved.txt");
@@ -137,7 +137,9 @@ test.skipIf(!chrome)("browser: Chat/Files tabs, resize/collapse, Codex send with
     await until(() => ev("[...document.querySelectorAll('#chat select option')].some((o)=>o.textContent==='Claude')"));
     expect(await ev("document.querySelector('#chat select').disabled")).toBe(true); // a chat keeps its agent
     await ev("[...document.querySelectorAll('.cc-convs button')].find((b)=>b.textContent==='New').click()");
+    expect(await ev("document.querySelector('.cc-badge').value")).toBe("full"); // a new chat starts on Full access even though the last one was Normal
     await ev("{const s=document.querySelector('#chat select');s.value='claude';s.dispatchEvent(new Event('change'))}");
+    await ev("{const b=document.querySelector('.cc-badge');b.value='normal';b.dispatchEvent(new Event('change'))}");
     await type("please ask first");
     await until(() => ev(`!!${card}`));
     expect(await ev(`${card}.textContent`)).toContain("touch fake-claude-approved.txt");

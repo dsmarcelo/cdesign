@@ -14,7 +14,7 @@
  *           {type:"control_request",request_id,request:{subtype:"can_use_tool",tool_name,input,description,blocked_path}}; {type:"control_cancel_request",request_id};
  *           {type:"result",subtype:"success"|"error_during_execution"|...,is_error,result}
  */
-import { MAX_LINE, atLeast, probe, rec, str, type Item, type ItemKind, type Provider, type ProviderSession, type StartOptions } from "./chat-providers";
+import { MAX_LINE, atLeast, probe, rec, str, type Capabilities, type Item, type ItemKind, type Provider, type ProviderSession, type StartOptions, type TurnSettings } from "./chat-providers";
 
 const CLAUDE_MIN = "2.1.326";
 const FILE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
@@ -51,6 +51,8 @@ class ClaudeSession implements ProviderSession {
   constructor(private o: StartOptions, bin: string) {
     const args = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
       "--permission-prompt-tool", "stdio", "--permission-mode", "default", "--allow-dangerously-skip-permissions"];
+    if (o.model) args.push("--model", o.model);
+    if (o.effort) args.push("--effort", o.effort);
     if (o.resume) args.push("--resume", o.resume);
     this.proc = Bun.spawn([bin, ...args], { cwd: o.root, stdin: "pipe", stdout: "pipe", stderr: "pipe" });
     this.read(this.proc.stdout as ReadableStream<Uint8Array>).catch(() => {});
@@ -206,7 +208,7 @@ class ClaudeSession implements ProviderSession {
     this.o.onEvent({ type: "approval.resolved", id, outcome: allow ? "allowed" : "denied" });
     return true;
   }
-  async send(text: string, fullAccess: boolean) {
+  async send(text: string, fullAccess: boolean, _settings: TurnSettings) {
     const want = fullAccess ? "bypassPermissions" : "default";
     if (want !== this.mode) {
       try { await this.control({ subtype: "set_permission_mode", mode: want }, 10000); }
@@ -229,9 +231,37 @@ class ClaudeSession implements ProviderSession {
   }
 }
 
+/** Claude Code has no model-listing command; what `claude --help` documents (model aliases, effort levels) is the supported set. */
+export function parseClaudeHelp(help: string): { aliases: string[]; efforts: string[] } {
+  const flat = help.replace(/\s+/g, " ");
+  const alias = flat.match(/--model <model> .*?\(e\.g\. ((?:'[^']+'(?:, | or |, or )?)+)\)/)?.[1] ?? "";
+  const effort = flat.match(/--effort <level> .*?\(([a-z]+(?:, [a-z]+)*)\)/)?.[1] ?? "";
+  return { aliases: [...alias.matchAll(/'([^']+)'/g)].map((m) => m[1]), efforts: effort ? effort.split(", ") : [] };
+}
+
 export const claude: Provider = {
   id: "claude",
   label: "Claude",
+  perTurn: false, // --model/--effort are process flags: a change resumes the saved session in a new process
+  async capabilities() {
+    const none = (note: string): Capabilities => ({ source: "fallback", note, models: [], efforts: [], defaultLabel: "Default" });
+    const bin = Bun.which("claude");
+    if (!bin) return none("Claude Code is not installed, so its models are unknown.");
+    try {
+      const h = await probe([bin, "--help"]);
+      const { aliases, efforts } = parseClaudeHelp(h.out);
+      if (!aliases.length && !efforts.length) return none("Claude Code does not list its models; only its default can be used.");
+      return {
+        source: "fallback",
+        note: "Claude Code does not list its models. These are the aliases and effort levels its --help documents; an unsupported pairing is reported by Claude when the turn starts.",
+        models: aliases.map((a) => ({ id: a, label: a, efforts })),
+        efforts,
+        defaultLabel: "Default",
+      };
+    } catch (e) {
+      return none(`Could not read Claude Code's help (${(e as Error).message.slice(0, 120)}); only its default can be used.`);
+    }
+  },
   async discover() {
     const base = { id: "claude", label: "Claude" };
     const bin = Bun.which("claude");

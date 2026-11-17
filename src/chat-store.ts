@@ -8,6 +8,11 @@ export type Conversation = {
   title: string;
   provider: string;
   fullAccess: boolean;
+  /** Chosen model / reasoning effort; null = the provider default. Saved with the chat so reopening restores it. */
+  model: string | null;
+  effort: string | null;
+  /** How the most recent finished turn ended (null before the first). */
+  last: "completed" | "interrupted" | "failed" | null;
   /** Provider-side session id: what lets a reopened chat continue its own context instead of the latest unrelated CLI session. */
   sessionId: string | null;
   createdAt: number;
@@ -56,6 +61,9 @@ export function loadConversations(root: string): Conversation[] {
         title: typeof c.title === "string" && c.title ? c.title : "Chat",
         provider: c.provider,
         fullAccess: c.fullAccess !== false,
+        model: typeof c.model === "string" && c.model ? c.model : null,
+        effort: typeof c.effort === "string" && c.effort ? c.effort : null,
+        last: c.last === "completed" || c.last === "interrupted" || c.last === "failed" ? c.last : null,
         sessionId: typeof c.sessionId === "string" ? c.sessionId : null,
         createdAt: Number(c.createdAt) || 0,
         updatedAt: Number(c.updatedAt) || 0,

@@ -24,10 +24,13 @@ async function run(text: string, id: string) {
   if (text.includes("edit")) writeFileSync("fake-agent-edit.txt", "edited by fake codex " + Date.now());
   const cmd = { id: "c" + id, type: "commandExecution", command: "ls -la", status: "inProgress", aggregatedOutput: "" };
   note("item/started", { threadId: thr, turnId: id, item: cmd });
-  note("item/commandExecution/outputDelta", { threadId: thr, turnId: id, itemId: cmd.id, delta: "total 0\n" });
-  note("item/completed", { threadId: thr, turnId: id, item: { ...cmd, status: "completed", aggregatedOutput: "total 0\n", exitCode: 0 } });
+  const out = text.includes("longtool") ? Array.from({ length: 3000 }, (_, i) => `line ${i} ${"x".repeat(60)}`).join("\n") + "\n" : "total 0\n";
+  note("item/commandExecution/outputDelta", { threadId: thr, turnId: id, itemId: cmd.id, delta: out });
+  note("item/completed", { threadId: thr, turnId: id, item: { ...cmd, status: "completed", aggregatedOutput: out, exitCode: 0 } });
   note("item/started", { threadId: thr, turnId: id, item: msg });
-  for (const part of text.includes("html") ? ["<img src=x onerror=document.title=1>"] : ["Hello", " from", " fake Codex"]) { await sleep(30); note("item/agentMessage/delta", { threadId: thr, turnId: id, itemId: msg.id, delta: part }); }
+  // "markdown": formatting, hostile markup and unsafe links, split so a fence and a link are cut mid-stream
+  const parts = text.includes("markdown") ? ["Intro **bold** and `code`.\n\n- one\n- <b>two</b>\n\n```ts\nconst a = '<scr", "ipt>document.title=2</script>';\n```\n\n[bad](javascript:document.title=3) [data](data:text/html,x) [ok](https://example.com/p) <img src=x onerror=document.title=4> ", "<script>document.title=5</script>\n\n" + "W".repeat(400)] : text.includes("html") ? ["<img src=x onerror=document.title=1>"] : ["Hello", " from", " fake Codex"];
+  for (const part of parts) { await sleep(30); note("item/agentMessage/delta", { threadId: thr, turnId: id, itemId: msg.id, delta: part }); }
   if (text.includes("crash")) process.exit(3);
   if (/\bask\b/.test(text) || text.includes("filechange") || text.includes("question")) {
     const file = text.includes("filechange"), q = text.includes("question");
@@ -46,7 +49,7 @@ async function run(text: string, id: string) {
   }
   if (text.includes("slow")) { ignore = text.includes("ignore"); while (!interrupted) await sleep(20); }
   const status = interrupted ? "interrupted" : "completed";
-  note("item/completed", { threadId: thr, turnId: id, item: { ...msg, text: interrupted ? "Hello from" : text.includes("html") ? "<img src=x onerror=document.title=1>" : "Hello from fake Codex" } });
+  note("item/completed", { threadId: thr, turnId: id, item: { ...msg, text: interrupted ? "Hello from" : parts.join("") } });
   note("turn/completed", { threadId: thr, turn: { id, status, items: [] } });
 }
 const dec = new TextDecoder(); let buf = "";
@@ -58,6 +61,14 @@ for await (const chunk of process.stdin as any) {
     log(m);
     if (m.method === undefined && m.id !== undefined && decide) { decide(m); continue; }
     if (m.method === "initialize") { if (process.env.FAKE_CODEX_INIT_DELAY) await sleep(Number(process.env.FAKE_CODEX_INIT_DELAY)); send({ id: m.id, result: { userAgent: "fake" } }); }
+    else if (m.method === "model/list") {
+      if (process.env.FAKE_CODEX_MODELS === "fail") send({ id: m.id, error: { code: -32601, message: "model/list unsupported" } });
+      else send({ id: m.id, result: { data: [
+        { id: "fake-big", model: "fake-big", displayName: "Fake Big", isDefault: true, hidden: false, defaultReasoningEffort: "medium", supportedReasoningEfforts: [{ reasoningEffort: "low", description: "" }, { reasoningEffort: "medium", description: "" }, { reasoningEffort: "high", description: "" }] },
+        { id: "fake-mini", model: "fake-mini", displayName: "Fake Mini", isDefault: false, hidden: false, defaultReasoningEffort: "low", supportedReasoningEfforts: [{ reasoningEffort: "low", description: "" }] },
+        { id: "fake-secret", model: "fake-secret", displayName: "Hidden", isDefault: false, hidden: true, defaultReasoningEffort: "low", supportedReasoningEfforts: [] },
+      ], nextCursor: null } });
+    }
     else if (m.method === "thread/start") send({ id: m.id, result: { thread: { id: thr } } });
     else if (m.method === "thread/resume") {
       if (process.env.FAKE_CODEX_RESUME === "fail") send({ id: m.id, error: { code: -32600, message: `no rollout found for thread id ${m.params.threadId}` } });

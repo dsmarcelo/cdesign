@@ -9,7 +9,7 @@ import { exportWebsite, previewWebsite, websiteDefaults, saveWebsite, type Websi
 import { publishWebsite, publishingStatus, shareScreen, listShares, deleteShare } from "./publish";
 import { colorTokens, sizeTokens } from "./tokens";
 import { applyEdit, editInfo } from "./edit";
-import { ProjectChat, ChatError, MAX_BODY } from "./chat";
+import { ProjectChat, ChatError, MAX_BODY, capabilitiesOf } from "./chat";
 import { PROVIDERS } from "./chat-registry";
 const websitePreviews = new Map<string, ReturnType<typeof previewWebsite>>();
 const websiteJobs = new Set<string>();
@@ -307,7 +307,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       const chat = chatOf(project);
       try {
         if (p === "/__cd/chat" && req.method === "GET") return json(chat.snapshot(url.searchParams.get("c")), 200);
-        if (p === "/__cd/chat/providers" && req.method === "GET") return json({ root, providers: await Promise.all(Object.values(PROVIDERS).map((x) => x.discover())) });
+        if (p === "/__cd/chat/providers" && req.method === "GET") return json({ root, providers: await Promise.all(Object.values(PROVIDERS).map(async (x) => ({ ...(await x.discover()), capabilities: await capabilitiesOf(x.id) }))) });
         if (p === "/__cd/chat/events" && req.method === "GET") {
           const after = +(req.headers.get("last-event-id") ?? url.searchParams.get("after") ?? 0) || 0;
           let ctrl!: ReadableStreamDefaultController;
@@ -323,7 +323,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
           let body: unknown;
           try { body = JSON.parse(raw); } catch { throw new ChatError(400, "Invalid JSON"); }
           if (p.endsWith("/send")) return json(await chat.send(body), 202);
-          if (p.endsWith("/settings")) return json(chat.setAccess(body));
+          if (p.endsWith("/settings")) return json(await chat.setSettings(body));
           if (p.endsWith("/rename")) return json(chat.rename(body));
           if (p.endsWith("/delete")) { chat.remove(body); return json({ ok: true }); }
           if (p.endsWith("/approve")) { chat.approve(body); return json({ ok: true }, 202); }
