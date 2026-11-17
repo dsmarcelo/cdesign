@@ -13,6 +13,8 @@ A lightweight viewer for React TSX and HTML prototypes, built for coding agents.
 
 Linux/macOS (bash) and Windows (PowerShell). One command installs Bun if missing, cdesign into `~/.local/share/cdesign`, a `cdesign` launcher in `~/.local/bin`, and registers the MCP server with every agent found (Claude Code, Codex, Antigravity `agy`). Update with `cdesign update` (re-runs the installer).
 
+On Linux, installation also adds cdesign to the applications list. Opening it launches the local project picker in your browser and starts a tunnel automatically. The viewer shows the current tunnel URL or an error; install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) for the default quick tunnel, or configure a fixed tunnel below. Anyone with the tunnel link can view all open projects and send comments while it is running.
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dsmarcelo/cdesign/main/install.sh | bash
 ```
@@ -40,6 +42,7 @@ Tell your agent to run `cdesign open`. Then in the viewer, press `C`, click elem
 
 | Command | What it does |
 |---|---|
+| `app` | Open the project picker in a browser and start the tunnel (used by the Linux app launcher) |
 | `open [dir] [--port n] [--no-browser] [--tunnel] [--full]` | Open the viewer with compact directions and current page/selection. `--full` opts into the usage skill and legacy inventories. `--tunnel` also shares it over the internet |
 | `tunnel [dir]` / `tunnel stop [dir]` | Share the whole viewer (every open project, switchable in the header; `dir` picks the one visitors land on) through a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) quick tunnel. Prints a random link; there is no other authentication, so anyone with the link can view and comment while the tunnel runs |
 | `tunnel set --provider ngrok --domain <name.ngrok-free.dev>` / `tunnel set --provider cloudflare --hostname <host> --token <token> [--port n]` | Make `tunnel` use a **fixed domain** (stored in `~/.cdesign/tunnel.json`). The link is just the domain, with no authentication: anyone who knows it can view your open projects and send comments to your agent while the tunnel runs. **ngrok** is the free route: one static domain per free account (install ngrok, run `ngrok config add-authtoken …`, claim the domain at dashboard.ngrok.com > Domains). **cloudflare** needs a domain on your Cloudflare account and a named tunnel whose public hostname points to `http://localhost:<port>` (default 4748). `tunnel show` prints it, `tunnel unset` returns to random quick-tunnel URLs |

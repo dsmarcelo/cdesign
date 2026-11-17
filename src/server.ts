@@ -106,6 +106,8 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
   // ----- tunnel: a second listener for the whole viewer (every project, switchable in the UI), exposed by `cloudflared` quick tunnel (random URL) or the fixed domain from `tunnel set`; no auth: whoever has the link can open it -----
   type Tunnel = { url: string; proc: ReturnType<typeof Bun.spawn>; srv: ReturnType<typeof Bun.serve> };
   let tunnel: Tunnel | null = null;
+  let tunnelStarting: Promise<Tunnel> | null = null;
+  let tunnelError = "";
   let tunnelHome = ""; // project a visitor lands on until they pick another (cookie)
   const stopTunnel = () => {
     const t = tunnel;
@@ -179,6 +181,15 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     return t;
   }
 
+  function ensureTunnel(): Promise<Tunnel> {
+    if (tunnel) return Promise.resolve(tunnel);
+    if (!tunnelStarting) {
+      tunnelError = "";
+      tunnelStarting = startTunnel().catch((e) => { tunnelError = (e as Error).message; throw e; }).finally(() => { tunnelStarting = null; });
+    }
+    return tunnelStarting;
+  }
+
   const shutdown = () => {
     stopTunnel();
     try { rmSync(daemonPath()); } catch { /* ignore */ }
@@ -220,6 +231,11 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
 
     // ----- daemon-level API -----
     if (p === "/__cd/projects" && req.method === "GET") return json(remote ? { current: via!.id, remote: true, projects: [...projects.values()].map((q) => ({ id: q.id, name: basename(q.root), url: `/?project=${q.id}`, tabs: q.clients.size })) } : list(project));
+    if (!via && p === "/__cd/tunnel" && req.method === "GET") return json({ url: tunnel?.url ?? null, starting: !!tunnelStarting, error: tunnelError });
+    if (!via && p === "/__cd/tunnel" && req.method === "POST") {
+      try { return json({ url: (await ensureTunnel()).url }); }
+      catch (e) { return json({ error: (e as Error).message }, 500); }
+    }
     if (via && (p.startsWith("/__cd/projects") || p === "/__cd/shutdown" || p === "/__cd/setup")) return new Response("forbidden", { status: 403 });
     if (p === "/__cd/setup" && req.method === "GET") {
       const root = url.searchParams.get("root") ?? "";
@@ -257,7 +273,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       if (!a) return json({ error: "unknown project" }, 404);
       if (tn[2]) return (stopTunnel(), json({ ok: true }));
       try {
-        const t = await startTunnel();
+        const t = await ensureTunnel();
         tunnelHome = a.id;
         lastActive = Date.now();
         return json({ url: `${t.url}/?project=${a.id}` });

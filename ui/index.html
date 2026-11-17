@@ -58,6 +58,7 @@
   #pick{position:fixed;inset:0;background:var(--bg);display:none;place-content:center;gap:8px;padding:24px;z-index:9;width:min(480px,100%);margin:auto;align-content:center}
   body.nop #pick{display:grid} body.nop>:not(#pick):not(#toast){display:none}
   #pick h2{margin:0 0 8px;font-size:16px} #pick .f{border:1px solid var(--line);color:#fafafa} #pick small{color:var(--mut)}
+  .tunnel-status{min-width:0;color:var(--mut);font-size:12px;overflow-wrap:anywhere} .tunnel-status a{color:inherit} #tunnel-status{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#fafafa;color:#111;padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:80vw}
   #toast.on{opacity:1}
   #bar{display:contents} #more,#bb,#pill{display:none}
@@ -104,6 +105,7 @@
   <button id="more" class="ic" title="Show/hide toolbar"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg></button>
   <div id="bar">
   <select id="proj" title="Switch project"></select>
+  <span id="tunnel-status" class="tunnel-status" role="status" aria-live="polite"></span>
   <span id="agent" title="Is an agent running `cdesign wait`?"></span>
   <span id="w" class="grp"><button class="ic on" data-w="100%" title="Full width"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3" width="12.5" height="8" rx="1.5"/><path d="M5.5 13.5h5"/></svg></button><button class="ic" data-w="768px" title="Tablet (768px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="1.75" width="10" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="phone" title="Phone: pick a device, exact screen size"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="resp" title="Responsive: drag the edges to resize width and height"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="2.75" width="9.5" height="9.5" rx="1.5"/><path d="M14.25 7.5v6.75H7.5M10.5 14.25l3.75-3.75"/></svg></button><button class="ic" data-w="split" title="Split: mobile on the left, full width on the right"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3.25" width="4" height="9.5" rx="1"/><rect x="7.75" y="3.25" width="6.5" height="9.5" rx="1"/></svg></button></span><span id="devs" class="grp"><select id="dev" title="Phone screen size (CSS px)"></select><button id="rot" class="ic" title="Rotate screen"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5" transform="rotate(45 8 8)"/></svg></button><button id="fit" title="Real size / fit height">Real size</button></span>
   <button id="bb" title="Move the toolbar to the bottom/top of the screen">Toolbar: top</button>
@@ -564,12 +566,28 @@ async function projects() {
   if (current) return current;
   document.body.classList.add("nop"); // bare localhost: pick a project
   const pk = $("#pick");
-  pk.innerHTML = "<h2>cdesign</h2>";
+  pk.innerHTML = '<h2>cdesign</h2><p id="pick-tunnel" class="tunnel-status" role="status" aria-live="polite"></p>';
   for (const p of l) { const b = document.createElement("button"); b.className = "f"; b.innerHTML = `${p.name}<br><small>${p.root}</small>`; b.onclick = () => (location.href = p.url); pk.appendChild(b); }
   const a = document.createElement("button"); a.textContent = "Add folder…"; a.onclick = addFolder; pk.appendChild(a);
   return null;
 }
-projects().then((cur) => { if (cur) start(); });
+async function tunnelStatus() {
+  try {
+    const r = await fetch("/__cd/tunnel");
+    if (!r.ok) return;
+    const t = await r.json();
+    for (const el of [$("#tunnel-status"), $("#pick-tunnel")]) {
+      if (!el) continue;
+      el.replaceChildren();
+      const message = t.starting ? "Starting tunnel…" : t.error ? "Tunnel unavailable: " + t.error : t.url ? "Tunnel: " : "Tunnel offline";
+      el.title = t.url || message;
+      el.append(document.createTextNode(message));
+      if (t.url) { const a = document.createElement("a"); a.href = t.url; a.textContent = t.url; a.target = "_blank"; a.rel = "noopener"; el.append(a); }
+    }
+  } catch { /* daemon is reconnecting */ }
+}
+projects().then((cur) => { tunnelStatus(); if (cur) start(); });
+setInterval(tunnelStatus, 5000);
 function start() {
 const es = new EventSource("/__cd/events?tab=" + tabId);
 es.onopen = report; // also after a reconnect: the server forgets a tab when its stream closes

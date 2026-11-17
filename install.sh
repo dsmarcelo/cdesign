@@ -36,6 +36,27 @@ exec "$BUN_PATH" "$SHARE/src/cli.ts" "\$@"
 LAUNCHER
 chmod +x "$BIN/cdesign"
 
+if [ "$(uname -s)" = Linux ]; then
+  APPS="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+  mkdir -p "$APPS"
+  # Desktop Exec quoting is not shell quoting; escape characters interpreted by the desktop parser.
+  DESKTOP_BIN="${BIN//\\/\\\\}"
+  DESKTOP_BIN="${DESKTOP_BIN//\"/\\\"}"
+  DESKTOP_BIN="${DESKTOP_BIN//\$/\\\$}"
+  DESKTOP_BIN="${DESKTOP_BIN//\`/\\\`}"
+  cat > "$APPS/cdesign.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=cdesign
+Comment=Open the cdesign viewer
+Exec="$DESKTOP_BIN/cdesign" app
+Icon=$SHARE/ui/icon.svg
+Terminal=false
+Categories=Development;
+DESKTOP
+  command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" || true
+fi
+
 "$BIN/cdesign" install-mcp || true
 
 echo "Installed: $BIN/cdesign"

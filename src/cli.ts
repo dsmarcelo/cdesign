@@ -224,6 +224,16 @@ switch (cmd) {
     console.log(`cdesign viewer: http://localhost:${server.port}`);
     break;
   }
+  case "app": {
+    const s = await ensureDaemon();
+    const url = `http://localhost:${s.port}/`;
+    const opener = process.platform === "win32" ? ["cmd", "/c", "start", "", url] : process.platform === "darwin" ? ["open", url] : ["xdg-open", url];
+    try { Bun.spawn(opener, { stdio: ["ignore", "ignore", "ignore"] }).unref(); } catch { console.error(`Open ${url} in your browser`); }
+    const r = await fetch(`http://127.0.0.1:${s.port}/__cd/tunnel`, { method: "POST" });
+    const result = await r.json() as { url?: string; error?: string };
+    console.log(r.ok ? `Tunnel: ${result.url}` : `Tunnel not started: ${result.error}`);
+    break;
+  }
   case "open": {
     const options = setupOptions();
     const port = flag("--port");
@@ -568,6 +578,7 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
   default:
     console.log("cdesign export [dir] [--name slug] [--start design/pages/Home.tsx] [--pages file,file] [--out dir] [--preview]\ncdesign publish [dir] [--name slug] [--start file]\ncdesign publish setup --project-dir <linked-folder> --origin https://cdesign-ds.vercel.app");
     console.log(`cdesign <command>
+  app                                   open the project picker and start the tunnel
   open [dir] [--mode react|html] [--tailwind|--no-tailwind] [--port n] [--no-browser] [--tunnel] [--full]  open the viewer with compact agent directions; --full opts into the old guide/inventories
   tunnel [dir] | tunnel stop [dir]      share the project (random link, no auth): fixed domain if set, else a random cloudflared quick tunnel
   tunnel set --provider ngrok --domain <name.ngrok-free.dev> | --provider cloudflare --hostname <h> --token <t> [--port n]
