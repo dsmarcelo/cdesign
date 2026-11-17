@@ -204,3 +204,17 @@ test("reconnecting with a sequence number replays only missed events", async () 
   expect(await read(s.seq - 1)).toEqual([s.seq]);
   expect(await read(s.seq)).toEqual([]);
 });
+
+test("Stop during a slow startup cancels it: the canceled prompt never runs and the next turn is clean", async () => {
+  const c = await boot({ FAKE_CODEX_INIT_DELAY: "1500", CDESIGN_CHAT_STOP_GRACE_MS: "300" });
+  expect((await c.post("chat/send", { text: "please edit" })).status).toBe(202);
+  expect((await c.post("chat/stop", {})).status).toBe(202);
+  const s1 = await c.until(async () => { const x = await c.snap(); return x.conversation.status === "idle" ? x : null; });
+  expect(texts(s1, "message")).toHaveLength(0);
+  expect((await c.post("chat/send", { text: "hello" })).status).toBe(202);
+  const s2 = await c.until(async () => { const x = await c.snap(); return x.conversation.status === "idle" && texts(x, "message").length ? x : null; }, 15000);
+  expect(texts(s2, "message")).toHaveLength(1);
+  await Bun.sleep(2000); // the canceled startup resolves meanwhile
+  expect(existsSync(join(c.root, "fake-agent-edit.txt"))).toBe(false);
+  expect(texts(await c.snap(), "message")).toHaveLength(1);
+}, 30000);

@@ -85,12 +85,12 @@
     switch (ev.type) {
       case "turn.begin":
         if (!conv || conv.id !== ev.conversation.id) { conv = { ...ev.conversation, items: [] }; render(); }
-        busy = true; showNote("");
+        busy = true; conv.turnId = null; showNote("");
         conv.items.push({ id: ev.itemId, kind: "user", text: ev.text });
         if (log.querySelector(".cc-empty")) log.replaceChildren();
         stick(() => draw(conv.items.at(-1)));
         break;
-      case "turn.started": break;
+      case "turn.started": if (conv) conv.turnId = ev.turnId; break;
       case "item.started": if (conv && !find(ev.item.id)) { conv.items.push({ ...ev.item }); stick(() => draw(conv.items.at(-1))); } break;
       case "item.delta": {
         const it = find(ev.itemId); if (!it) break;
@@ -104,7 +104,7 @@
         draw(it); break;
       }
       case "turn.completed":
-        busy = false;
+        busy = false; if (conv) conv.turnId = null;
         for (const it of conv?.items || []) if (it.status === "inProgress") { it.status = ev.status === "completed" ? "completed" : ev.status; draw(it); }
         for (const n of log.querySelectorAll(".live")) n.classList.remove("live");
         if (ev.status === "failed") showNote(ev.error || "The turn failed", true);

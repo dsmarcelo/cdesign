@@ -3,7 +3,8 @@ import { PROVIDERS, type Item, type ProviderEvent, type ProviderSession, type Tu
 /** Per-project chat state. In memory only: durable history is a later task. Events never touch the preview broadcast (`push` in server.ts). */
 export const MAX_PROMPT = 20000;
 export const MAX_BODY = 100 * 1024;
-const MAX_ITEMS = 500, MAX_TEXT = 200_000, MAX_OUTPUT = 50_000, MAX_LOG = 2000, STOP_GRACE_MS = 5000;
+const MAX_ITEMS = 500, MAX_TEXT = 200_000, MAX_OUTPUT = 50_000, MAX_LOG = 2000;
+const stopGrace = () => Number(process.env.CDESIGN_CHAT_STOP_GRACE_MS) || 5000;
 
 export class ChatError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -134,7 +135,7 @@ export class ProjectChat {
           onEvent: (e) => { if (gen === this.gen) this.onProvider(e); },
           onExit: (msg) => { if (gen !== this.gen) return; this.session = null; this.finish("failed", msg); },
         });
-        if (this.closed) return s.close();
+        if (this.closed || gen !== this.gen || !this.active) return s.close(); // Stop or a newer start overtook this slow startup: never run the canceled prompt
         this.session = Object.assign(s, { provider: providerId });
       }
       await this.session!.send(text);
@@ -165,7 +166,7 @@ export class ProjectChat {
       this.session?.close();
       this.session = null;
       this.finish("interrupted");
-    }, STOP_GRACE_MS);
+    }, stopGrace());
   }
 
   close() {

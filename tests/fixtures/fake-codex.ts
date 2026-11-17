@@ -38,7 +38,7 @@ for await (const chunk of process.stdin as any) {
   while ((i = buf.indexOf("\n")) >= 0) {
     const m = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
     log(m);
-    if (m.method === "initialize") send({ id: m.id, result: { userAgent: "fake" } });
+    if (m.method === "initialize") { if (process.env.FAKE_CODEX_INIT_DELAY) await sleep(Number(process.env.FAKE_CODEX_INIT_DELAY)); send({ id: m.id, result: { userAgent: "fake" } }); }
     else if (m.method === "thread/start") send({ id: m.id, result: { thread: { id: "thr_1" } } });
     else if (m.method === "turn/start") {
       const id = "t" + ++turn; interrupted = false;

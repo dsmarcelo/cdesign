@@ -87,6 +87,15 @@ test.skipIf(!chrome)("browser: Chat/Files tabs, resize/collapse, Codex send with
     await ev("document.querySelector('.cc-form button:not(.go)').click()");
     await until(() => ev("[...document.querySelectorAll('.cc-msg.message')].at(-1)?.textContent==='Hello from' && document.querySelector('.cc-note')?.textContent.startsWith('Stopped')"));
 
+    // after a reload the idle snapshot has no turn id: Stop must still work on the next turn
+    await cmd("Page.navigate", { url: `http://${projectId(root)}.localhost:${port}/` });
+    await until(() => ev("document.readyState==='complete' && !!document.querySelector('#chat textarea') && !!document.querySelector('.cc-msg.user') && document.querySelector('#chat select option')?.textContent==='Codex'"));
+    await ev("{const t=document.querySelector('#chat textarea');t.value='slow again';t.dispatchEvent(new Event('input'));document.querySelector('.cc-form .go').click()}");
+    await until(() => ev("[...document.querySelectorAll('.cc-msg.message')].at(-1)?.textContent==='Hello from fake Codex' && !!document.querySelector('.cc-form button:not(.go)').offsetParent"));
+    await ev("document.querySelector('.cc-form button:not(.go)').click()");
+    await until(() => ev("[...document.querySelectorAll('.cc-msg.message')].at(-1)?.textContent==='Hello from' && document.querySelector('.cc-note')?.textContent.startsWith('Stopped')"));
+    await until(() => ev("!!document.querySelector('#fr').contentDocument?.querySelector('main')"));
+
     // an agent edit in the project reloads the preview; chat output alone does not
     await ev("document.querySelector('#fr').contentWindow.__marker=1");
     await ev("{const t=document.querySelector('#chat textarea');t.value='please edit';t.dispatchEvent(new Event('input'));document.querySelector('.cc-form .go').click()}");
