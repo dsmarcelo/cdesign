@@ -222,6 +222,35 @@ test("Stop during a slow startup cancels it: the canceled prompt never runs and 
   expect(texts(await c.snap(), "message")).toHaveLength(1);
 }, 30000);
 
+test("a canceled startup that later fails cannot fail or release a newer running turn", async () => {
+  const marker = logFile("fake-codex-failed-once");
+  const c = await boot({ FAKE_CODEX_INIT_DELAY: "1500", FAKE_CODEX_INIT_FAIL: marker, CDESIGN_CHAT_STOP_GRACE_MS: "300" });
+  expect((await c.post("chat/send", { text: "first" })).status).toBe(202);
+  expect((await c.post("chat/stop", {})).status).toBe(202);
+  const idle1 = await c.until(async () => { const x = await c.snap(); return x.conversation.status === "idle" ? x : null; });
+  // the second turn is still starting when the first startup's late failure arrives
+  expect((await c.post("chat/send", { text: "second", conversationId: idle1.conversation.id })).status).toBe(202);
+  const s = await c.until(async () => { const x = await c.snap(); return !x.busy && texts(x, "message").length ? x : null; }, 15000);
+  expect(s.conversation).toMatchObject({ status: "idle", error: null });
+  expect(texts(s, "message")).toHaveLength(1);
+}, 30000);
+
+test("Stop and shutdown kill a provider that is still initializing", async () => {
+  const log = logFile("fake-codex-pid");
+  const c = await boot({ FAKE_CODEX_LOG: log, FAKE_CODEX_INIT_DELAY: "60000", CDESIGN_CHAT_STOP_GRACE_MS: "300" });
+  const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  await c.post("chat/send", { text: "first" });
+  const pid1 = (await c.until(() => jsonl(log).find((l) => l.pid)))?.pid as number;
+  expect(alive(pid1)).toBe(true);
+  await c.post("chat/stop", {});
+  await c.until(() => !alive(pid1), 5000);
+  await c.post("chat/send", { text: "second", conversationId: (await c.snap()).conversation.id });
+  const pid2 = (await c.until(() => jsonl(log).filter((l) => l.pid).map((l) => l.pid).find((p) => p !== pid1))) as number;
+  expect(alive(pid2)).toBe(true);
+  c.daemon.kill("SIGTERM");
+  await c.until(() => !alive(pid2), 5000);
+}, 30000);
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Claude support, Normal/Full access and approvals. Fakes mimic the framing verified live against Claude Code 2.1.326 / codex-cli 0.169.0.
 

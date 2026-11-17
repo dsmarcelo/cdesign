@@ -289,6 +289,7 @@ export const claude: Provider = {
     const bin = Bun.which("claude");
     if (!bin) throw new Error("Claude Code not found on PATH.");
     const s = new ClaudeSession(o, bin);
+    o.onSpawn?.(s);
     try {
       await s.init();
     } catch (e) {

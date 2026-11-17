@@ -1,7 +1,7 @@
 // Fake `codex` for tests (thread/resume continues the given thread id; FAKE_CODEX_RESUME=fail rejects it): answers --version / login status and speaks enough of `app-server` JSON-RPC to drive the chat.
 // Approvals: "ask" requests approval for a command, "filechange" for a file change (accept runs/writes fake-codex-approved.txt, decline marks it declined);
 // "question" sends an item/tool/requestUserInput the adapter cannot answer. Prompt keywords: "slow" streams then waits for an interrupt; "ignore" also ignores the interrupt; "crash" dies mid-stream; "html" replies with markup; "edit" writes fake-agent-edit.txt in its cwd.
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 const [a, b] = process.argv.slice(2);
 const log = (o: object) => process.env.FAKE_CODEX_LOG && appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify(o) + "\n");
 if (a === "--version") { console.log(`codex-cli ${process.env.FAKE_CODEX_VERSION ?? "0.169.0"}`); process.exit(0); }
@@ -12,6 +12,9 @@ if (a === "login" && b === "status") {
 if (a !== "app-server") process.exit(2);
 if (process.env.FAKE_CODEX_START === "die") { console.error("boom: cannot start"); process.exit(5); }
 log({ argv: process.argv.slice(2), cwd: process.cwd(), pid: process.pid });
+// FAKE_CODEX_INIT_FAIL=<marker file>: the first process spawned dies after its init delay, later ones succeed
+const failInit = !!process.env.FAKE_CODEX_INIT_FAIL && !existsSync(process.env.FAKE_CODEX_INIT_FAIL);
+if (failInit) writeFileSync(process.env.FAKE_CODEX_INIT_FAIL!, "x");
 const uid = Math.random().toString(36).slice(2, 6); // item ids are unique across processes, like real ones
 let thr = "thr_" + Math.random().toString(36).slice(2, 8);
 const send = (o: object) => process.stdout.write(JSON.stringify(o) + "\n");
@@ -62,7 +65,7 @@ for await (const chunk of process.stdin as any) {
     const m = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
     log(m);
     if (m.method === undefined && m.id !== undefined && decide) { decide(m); continue; }
-    if (m.method === "initialize") { if (process.env.FAKE_CODEX_INIT_DELAY) await sleep(Number(process.env.FAKE_CODEX_INIT_DELAY)); send({ id: m.id, result: { userAgent: "fake" } }); }
+    if (m.method === "initialize") { if (process.env.FAKE_CODEX_INIT_DELAY) await sleep(Number(process.env.FAKE_CODEX_INIT_DELAY)); if (failInit) process.exit(7); send({ id: m.id, result: { userAgent: "fake" } }); }
     else if (m.method === "model/list") {
       if (process.env.FAKE_CODEX_MODELS === "fail") send({ id: m.id, error: { code: -32601, message: "model/list unsupported" } });
       else send({ id: m.id, result: { data: [

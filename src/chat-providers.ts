@@ -55,6 +55,8 @@ export type StartOptions = {
   resume?: string;
   onEvent: (e: ProviderEvent) => void;
   onExit: (message: string) => void;
+  /** Called as soon as the child process exists (before initialization finishes) so the caller can kill it while it is still starting. */
+  onSpawn?: (child: { close(): void }) => void;
 };
 export interface ProviderSession {
   /** Provider-side session id once known, so a dead process can be resumed with the same context. */
@@ -347,6 +349,7 @@ export const codex: Provider = {
     const bin = Bun.which("codex");
     if (!bin) throw new Error("Codex CLI not found on PATH.");
     const s = new CodexSession(o, bin);
+    o.onSpawn?.(s);
     try {
       await s.init();
     } catch (e) {
