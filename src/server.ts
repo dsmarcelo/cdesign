@@ -9,6 +9,8 @@ import { exportWebsite, previewWebsite, websiteDefaults, saveWebsite, type Websi
 import { publishWebsite, publishingStatus, shareScreen, listShares, deleteShare } from "./publish";
 import { colorTokens, sizeTokens } from "./tokens";
 import { applyEdit, editInfo } from "./edit";
+import { ProjectChat, ChatError, MAX_BODY } from "./chat";
+import { PROVIDERS } from "./chat-providers";
 const websitePreviews = new Map<string, ReturnType<typeof previewWebsite>>();
 const websiteJobs = new Set<string>();
 const UI = join(import.meta.dir, "..", "ui");
@@ -43,6 +45,8 @@ const json = (v: unknown, status = 200) => Response.json(v, { status });
 /** One process serves every registered project. A request's project comes from its Host (`<id>.localhost`), or `?project=<id>` on the bare host (used by the CLI). */
 export async function serveDaemon(preferred = DEFAULT_PORT) {
   const projects = new Map<string, Project>();
+  const chats = new Map<string, ProjectChat>(); // private per-project chat: its own streams, never `push`ed to preview clients
+  const chatOf = (p: Project) => chats.get(p.id) ?? (chats.set(p.id, new ProjectChat(p.root)), chats.get(p.id)!);
   const idleMs = +(process.env.CDESIGN_IDLE_SECONDS ?? 120) * 1000;
   let lastActive = Date.now();
   let server: ReturnType<typeof Bun.serve>;
@@ -93,6 +97,8 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
   function removeProject(p: Project) {
     for (const w of p.watchers) w.close();
     for (const c of p.clients) try { c.close(); } catch { /* already closed */ }
+    chats.get(p.id)?.close();
+    chats.delete(p.id);
     invalidateReact(p.root);
     projects.delete(p.id);
     persist();
@@ -192,6 +198,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
 
   const shutdown = () => {
     stopTunnel();
+    for (const c of chats.values()) c.close(); // no agent keeps running after the daemon
     try { rmSync(daemonPath()); } catch { /* ignore */ }
     process.exit(0);
   };
@@ -202,7 +209,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
   setInterval(() => { for (const p of projects.values()) presence(p); }, 3000); // a killed `wait` stops beating: notice it going stale
   // nothing left to serve (no viewer tab, no listening agent) for a while: exit, so no process is left behind
   setInterval(() => {
-    if ([...projects.values()].some((p) => p.clients.size || listening(p.root))) lastActive = Date.now();
+    if ([...projects.values()].some((p) => p.clients.size || listening(p.root) || chats.get(p.id)?.busy)) lastActive = Date.now();
     else if (Date.now() - lastActive > idleMs) shutdown();
   }, Math.min(5000, Math.max(200, idleMs / 4)));
 
@@ -227,6 +234,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     }
 
     if (p === "/__cd/overlay.js") return new Response(Bun.file(join(UI, "overlay.js")));
+    if (p === "/__cd/chat.js" || p === "/__cd/chat.css") return new Response(Bun.file(join(UI, p.slice(6))), { headers: { "cache-control": "no-store" } });
     if (p === "/") return new Response(Bun.file(join(UI, "index.html")));
 
     // ----- daemon-level API -----
@@ -291,6 +299,39 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     lastActive = Date.now();
     const tab = (id: string) => project!.tabs.get(id) ?? (project!.tabs.set(id, { file: null, at: 0, selection: null }), project!.tabs.get(id)!);
     const current = () => [...project!.tabs.values()].filter((t) => t.file).sort((a, b) => b.at - a.at)[0] ?? null;
+
+    if (p === "/__cd/chat" || p.startsWith("/__cd/chat/")) {
+      if (via || remote) return json({ error: "Chat is available only in the local viewer" }, 403);
+      const origin = req.headers.get("origin");
+      if (origin && (origin === "null" || new URL(origin).host !== hostHeader)) return new Response("forbidden", { status: 403 });
+      const chat = chatOf(project);
+      try {
+        if (p === "/__cd/chat" && req.method === "GET") return json(chat.snapshot(), 200);
+        if (p === "/__cd/chat/providers" && req.method === "GET") return json({ root, providers: await Promise.all(Object.values(PROVIDERS).map((x) => x.discover())) });
+        if (p === "/__cd/chat/events" && req.method === "GET") {
+          const after = +(req.headers.get("last-event-id") ?? url.searchParams.get("after") ?? 0) || 0;
+          let ctrl!: ReadableStreamDefaultController;
+          return new Response(new ReadableStream({
+            start(c) { ctrl = c; c.enqueue(enc.encode(": hi\n\n")); chat.subscribe(c, after); },
+            cancel() { chat.unsubscribe(ctrl); },
+          }), { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } });
+        }
+        if ((p === "/__cd/chat/send" || p === "/__cd/chat/stop") && req.method === "POST") {
+          if (+(req.headers.get("content-length") ?? 0) > MAX_BODY) throw new ChatError(413, "Request too large");
+          const raw = await req.text();
+          if (raw.length > MAX_BODY) throw new ChatError(413, "Request too large");
+          let body: unknown;
+          try { body = JSON.parse(raw); } catch { throw new ChatError(400, "Invalid JSON"); }
+          if (p.endsWith("/send")) return json(await chat.send(body), 202);
+          chat.stop(body);
+          return json({ ok: true }, 202);
+        }
+      } catch (e) {
+        if (e instanceof ChatError) return json({ error: e.message }, e.status);
+        throw e;
+      }
+      return json({ error: "Not found" }, 404);
+    }
 
     if (p === "/__cd/website" || p === "/__cd/website/export" || p === "/__cd/website/publish") {
       if (via || remote) return json({error:"Website publishing is available only in the local viewer"},403);

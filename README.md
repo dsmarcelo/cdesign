@@ -237,6 +237,15 @@ Components are plain HTML fragments under `components/` or `features/`, resolved
 
 These teach workflows, not an app-specific visual style. Nothing is installed per project.
 
+## Chat with a local agent
+
+On a desktop screen the left sidebar has **Chat** (selected first) and **Files** tabs; drag its right edge to resize it and use the header button to collapse it. Comments stay on the right. In Chat, pick an installed agent, type a message and press Enter: the reply streams in, commands and file changes appear as expandable activity, and **Stop** ends the turn while keeping what the agent already said. The agent runs in the exact project folder, so its edits reach the preview through the usual live reload.
+
+- **Codex only for now.** cdesign starts `codex app-server` over stdio and uses your existing `codex login`; nothing is stored or sent elsewhere. Tested with codex-cli 0.169.0, which is also the minimum: it needs the `app-server` JSON-RPC protocol with `thread/start`, `turn/start`, `turn/interrupt` and item/turn notifications. A missing, too-old or logged-out Codex is explained in the pane (discovery runs `codex --version` and `codex login status`, never a model turn).
+- **Full access** is on and shown in the pane: the agent can read, write and run commands in the project without asking. Managed or provider restrictions may still apply.
+- One turn runs per project at a time; a second submit is refused. The conversation is kept in memory only (it is gone after the daemon restarts) and is not available on small screens.
+- Chat is local-only: its history, streams and controls return 403 to shared-tunnel visitors, who keep the preview and comment experience. Send to agent / `cdesign wait` for external agents is unchanged.
+
 ## Data
 
 Comments are stored in `<project>/.cdesign/comments.json`. `.cdesign/` holds only local state (comments, screenshots, agent status); cdesign puts a `.gitignore` containing `*` inside it automatically, so nothing there is committed and you don't need to edit your own `.gitignore`.
