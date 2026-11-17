@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { dataDir, ensureDataDir } from "./store";
 import { type Capabilities, type ProviderEvent, type ProviderSession, type TurnSettings, type TurnStatus } from "./chat-providers";
 import { PROVIDERS } from "./chat-registry";
+import { resolveContext, withContext, type ContextRef } from "./chat-context";
 import { loadConversations, removeConversation, saveConversation, type Conversation } from "./chat-store";
 export type { Conversation };
 
@@ -17,7 +18,7 @@ export class ChatError extends Error {
 }
 
 export type ChatEvent =
-  | { type: "turn.begin"; conversation: { id: string; title: string; provider: string; fullAccess: boolean; model: string | null; effort: string | null }; text: string; itemId: string }
+  | { type: "turn.begin"; conversation: { id: string; title: string; provider: string; fullAccess: boolean; model: string | null; effort: string | null }; text: string; itemId: string; context?: ContextRef[] }
   | ProviderEvent
   | { type: "reset" }
   | { type: "list" } // conversations were created, renamed or deleted: refetch the list
@@ -40,7 +41,7 @@ export function apply(conv: Conversation, ev: ChatEvent) {
   switch (ev.type) {
     case "turn.begin":
       conv.status = "running"; conv.turnId = null; conv.error = null; conv.approvals = []; conv.fullAccess = ev.conversation.fullAccess; conv.model = ev.conversation.model; conv.effort = ev.conversation.effort;
-      conv.items.push({ id: ev.itemId, kind: "user", text: ev.text });
+      conv.items.push({ id: ev.itemId, kind: "user", text: ev.text, ...(ev.context?.length ? { context: ev.context } : {}) });
       break;
     case "turn.started": conv.turnId = ev.turnId; break;
     case "item.started": if (!find(ev.item.id)) conv.items.push({ ...ev.item }); break;
@@ -205,6 +206,7 @@ export class ProjectChat {
     // an omitted model/effort keeps the chat's saved one; a new chat starts on the provider default
     const model = settingOf(b.model, "model") ?? (b.model === undefined ? conv?.model ?? null : null);
     const effort = settingOf(b.effort, "effort") ?? (b.effort === undefined ? conv?.effort ?? null : null);
+    const context = resolveContext(this.root, b.context); // snapshot now: later navigation or selection changes never touch this message
     if (this.active) {
       const at = this.activeId ? this.convs.get(this.activeId) : undefined;
       throw new ChatError(409, `The agent is already working in this project${at ? `, in the chat "${at.title}"` : ""}. Wait for it to finish or Stop it first.`, { activeConversationId: this.activeId });
@@ -226,9 +228,9 @@ export class ProjectChat {
     conv.updatedAt = Date.now();
     conv.model = model; conv.effort = effort;
     if (!created && typeof b.fullAccess === "boolean") conv.fullAccess = b.fullAccess;
-    this.emit({ type: "turn.begin", conversation: { id: conv.id, title: conv.title, provider: conv.provider, fullAccess: conv.fullAccess, model, effort }, text, itemId: "u" + rid() });
+    this.emit({ type: "turn.begin", conversation: { id: conv.id, title: conv.title, provider: conv.provider, fullAccess: conv.fullAccess, model, effort }, text, itemId: "u" + rid(), ...(context.length ? { context } : {}) });
     if (created) this.emit({ type: "list" }, null);
-    void this.run(conv, text);
+    void this.run(conv, withContext(text, context));
     return { conversationId: conv.id };
   }
 

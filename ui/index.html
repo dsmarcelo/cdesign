@@ -99,6 +99,7 @@
   #share-list{list-style:none;margin:0;padding:0;display:grid;gap:8px;max-height:260px;overflow:auto} #share-list li{display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:8px;border:1px solid var(--line);border-radius:8px}
   #share-list .info{flex:1 1 180px;min-width:0;display:grid;gap:2px;font-size:13px} #share-list .info b,#share-list .info small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap} #share-list .info small{color:var(--mut)}
   #share-list .del.sure{background:#dc2626;border-color:#dc2626;color:#fff} #share-box footer{display:flex;justify-content:flex-end} #share-instructions{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+  body.remote .addchat{display:none}
 </style>
 <header>
   <button id="tl" class="ic on" title="Hide/show sidebar"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M6 3v10"/></svg></button>
@@ -349,6 +350,9 @@ async function comments() {
     const mk = (t, p) => { const b = document.createElement("button"); b.textContent = t; b.onclick = () => fetch(`/__cd/comments/${c.id}/${p}`, { method: "POST" }); d.appendChild(b); };
     mk(c.status === "done" ? "Reopen" : "Done", c.status === "done" ? "open" : "done");
     mk("Delete", "delete");
+    const ac = document.createElement("button"); ac.textContent = "Add to chat"; ac.className = "addchat"; ac.title = "Attach this comment to your next chat message (it is not sent to the agent automatically)";
+    ac.onclick = () => dispatchEvent(new CustomEvent("cd-add-comment", { detail: { id: c.id, file: c.file, cdId: c.cdId, text: c.text } }));
+    d.appendChild(ac);
     d.onclick = (e) => { if (e.target.tagName !== "BUTTON" && c.file !== cur) setCur(c.file); };
     $("#cm").appendChild(d);
   }
@@ -560,6 +564,7 @@ async function addFolder() {
 }
 async function projects() {
   const { current, projects: l, remote } = await (await fetch("/__cd/projects")).json();
+  document.body.classList.toggle("remote", !!remote); // shared visitors have no chat, so no Add to chat
   const sel = $("#proj");
   sel.innerHTML = "";
   for (const p of l) sel.add(new Option(p.name, p.url, false, p.id === current));

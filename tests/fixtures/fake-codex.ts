@@ -1,7 +1,7 @@
 // Fake `codex` for tests (thread/resume continues the given thread id; FAKE_CODEX_RESUME=fail rejects it): answers --version / login status and speaks enough of `app-server` JSON-RPC to drive the chat.
 // Approvals: "ask" requests approval for a command, "filechange" for a file change (accept runs/writes fake-codex-approved.txt, decline marks it declined);
 // "question" sends an item/tool/requestUserInput the adapter cannot answer. Prompt keywords: "slow" streams then waits for an interrupt; "ignore" also ignores the interrupt; "crash" dies mid-stream; "html" replies with markup; "edit" writes fake-agent-edit.txt in its cwd.
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 const [a, b] = process.argv.slice(2);
 const log = (o: object) => process.env.FAKE_CODEX_LOG && appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify(o) + "\n");
 if (a === "--version") { console.log(`codex-cli ${process.env.FAKE_CODEX_VERSION ?? "0.169.0"}`); process.exit(0); }
@@ -22,6 +22,8 @@ async function run(text: string, id: string) {
   const msg = { id: "m" + id, type: "agentMessage", text: "" };
   note("turn/started", { threadId: thr, turn: { id, status: "inProgress", items: [] } });
   if (text.includes("edit")) writeFileSync("fake-agent-edit.txt", "edited by fake codex " + Date.now());
+  // "design-edit" / "design-revert" swap a heading in design/pages/Page.html, so tests can watch the preview reload (a reversible design edit)
+  if (/design-(edit|revert)/.test(text)) { const f = "design/pages/Page.html", html = readFileSync(f, "utf8"); writeFileSync(f, text.includes("design-edit") ? html.replace(">Hi<", ">Edited<") : html.replace(">Edited<", ">Hi<")); }
   const cmd = { id: "c" + id, type: "commandExecution", command: "ls -la", status: "inProgress", aggregatedOutput: "" };
   note("item/started", { threadId: thr, turnId: id, item: cmd });
   const out = text.includes("longtool") ? Array.from({ length: 3000 }, (_, i) => `line ${i} ${"x".repeat(60)}`).join("\n") + "\n" : "total 0\n";
