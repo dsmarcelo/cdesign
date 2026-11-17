@@ -109,6 +109,7 @@ export class ProjectChat {
   private stopping = false;
   private gen = 0;
   private stopTimer: Timer | undefined;
+  private starting: { close(): void } | null = null; // child still initializing: owned here so Stop and shutdown can kill it
   private saveTimer: Timer | undefined;
   private dirty = new Set<string>();
   private log: Logged[] = [];
@@ -319,6 +320,7 @@ export class ProjectChat {
     const fullAccess = conv.fullAccess;
     const want: TurnSettings = { ...(conv.model ? { model: conv.model } : {}), ...(conv.effort ? { effort: conv.effort } : {}) };
     let resume = conv.sessionId ?? undefined;
+    let gen = -1; // the session generation this run belongs to; a later failure of an invalidated run is ignored
     // a saved session that cannot be resumed says so and stays recoverable; the prompt is never resubmitted elsewhere
     const why = (msg: string) => (resume && !conv.turnId ? `The saved ${provider.label} session could not be resumed (${msg}). Start a new chat to continue.` : msg);
     try {
@@ -330,25 +332,37 @@ export class ProjectChat {
         resume = conv.sessionId ?? undefined;
       }
       if (!this.session) {
-        const gen = ++this.gen; // a closed or replaced session must not speak for the current one
+        gen = ++this.gen; // a closed or replaced session must not speak for the current one
+        const mine = gen;
         const s = await provider.start({
           root: this.root,
           fullAccess,
           ...want,
           resume,
-          onEvent: (e) => { if (gen === this.gen) this.onProvider(e); },
-          onExit: (msg) => { if (gen !== this.gen) return; this.noteSession(); this.session = null; this.finish("failed", why(msg)); },
+          onSpawn: (child) => { if (mine === this.gen && !this.closed) this.starting = child; else child.close(); },
+          onEvent: (e) => { if (mine === this.gen) this.onProvider(e); },
+          onExit: (msg) => { if (mine !== this.gen) return; this.noteSession(); this.session = null; this.finish("failed", why(msg)); },
         });
+        this.starting = null;
         if (this.closed || gen !== this.gen || !this.active) return s.close(); // Stop or a newer start overtook this slow startup: never run the canceled prompt
         this.session = Object.assign(s, { provider: provider.id, cid: conv.id, settings: want });
         this.noteSession();
       }
+      gen = this.gen;
       this.session!.settings = want;
       await this.session!.send(text, fullAccess, want);
       if (this.stopping) await this.session!.interrupt().catch(() => {});
     } catch (e) {
+      if (gen >= 0 && gen !== this.gen) return; // canceled or replaced meanwhile: must not fail a newer turn
+      this.starting = null;
       this.finish("failed", why((e as Error).message));
     }
+  }
+
+  private killStarting() {
+    const c = this.starting;
+    this.starting = null;
+    c?.close();
   }
 
   /** Remembers the provider session id on the running conversation so it can be resumed after the process or daemon is gone. */
@@ -378,6 +392,7 @@ export class ProjectChat {
       if (!this.active) return;
       this.gen++;
       this.noteSession();
+      this.killStarting();
       this.session?.close();
       this.session = null;
       this.finish("interrupted");
@@ -390,6 +405,7 @@ export class ProjectChat {
     if (this.active) {
       this.gen++;
       this.noteSession();
+      this.killStarting();
       this.session?.close();
       this.session = null;
       this.finish("interrupted");
@@ -397,6 +413,7 @@ export class ProjectChat {
     this.flush();
     this.closed = true;
     this.gen++;
+    this.killStarting();
     this.session?.close();
     this.session = null;
     for (const c of this.clients) try { c.close(); } catch { /* already closed */ }
