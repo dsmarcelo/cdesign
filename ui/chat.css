@@ -8,8 +8,8 @@
 #lrs{position:absolute;top:0;right:0;bottom:0;width:6px;cursor:ew-resize;z-index:4;touch-action:none}
 #lrs:hover,body.drag #lrs{background:var(--acc);opacity:.5}
 .cc-top{display:flex;align-items:center;gap:6px;flex:none}
-.cc-top select{flex:1;min-width:0}
-.cc-badge{font-size:11px;padding:2px 7px;border-radius:999px;border:1px solid var(--line);color:var(--mut);white-space:nowrap}
+.cc-top select:first-child{flex:1;min-width:0}
+.cc-badge{font-size:11px;background:none;cursor:pointer;padding:2px 7px;border-radius:999px;border:1px solid var(--line);color:var(--mut);white-space:nowrap}
 .cc-badge.full{color:#fbbf24;border-color:#fbbf2466}
 .cc-note{flex:none;font-size:12px;padding:8px;border-radius:8px;border:1px solid var(--line);color:var(--mut);overflow-wrap:anywhere}
 .cc-note.err{border-color:#dc2626;color:#fca5a5}
@@ -34,3 +34,8 @@
   #files{display:block!important;padding-bottom:72px}
 }
 body.hl #lside{display:none}
+.cc-approval{border:1px solid #fbbf2466;border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;font-size:12px}
+.cc-approval b{font-weight:600}
+.cc-approval pre{margin:0;max-height:140px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:11px ui-monospace,monospace;background:var(--bg);border-radius:6px;padding:6px 8px}
+.cc-approval small{color:var(--mut);overflow-wrap:anywhere}
+.cc-approval div{display:flex;gap:6px;justify-content:flex-end}

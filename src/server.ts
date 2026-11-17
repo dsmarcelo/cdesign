@@ -10,7 +10,7 @@ import { publishWebsite, publishingStatus, shareScreen, listShares, deleteShare 
 import { colorTokens, sizeTokens } from "./tokens";
 import { applyEdit, editInfo } from "./edit";
 import { ProjectChat, ChatError, MAX_BODY } from "./chat";
-import { PROVIDERS } from "./chat-providers";
+import { PROVIDERS } from "./chat-registry";
 const websitePreviews = new Map<string, ReturnType<typeof previewWebsite>>();
 const websiteJobs = new Set<string>();
 const UI = join(import.meta.dir, "..", "ui");
@@ -316,13 +316,15 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
             cancel() { chat.unsubscribe(ctrl); },
           }), { headers: { "content-type": "text/event-stream", "cache-control": "no-store" } });
         }
-        if ((p === "/__cd/chat/send" || p === "/__cd/chat/stop") && req.method === "POST") {
+        if ((p === "/__cd/chat/send" || p === "/__cd/chat/stop" || p === "/__cd/chat/approve" || p === "/__cd/chat/settings") && req.method === "POST") {
           if (+(req.headers.get("content-length") ?? 0) > MAX_BODY) throw new ChatError(413, "Request too large");
           const raw = await req.text();
           if (raw.length > MAX_BODY) throw new ChatError(413, "Request too large");
           let body: unknown;
           try { body = JSON.parse(raw); } catch { throw new ChatError(400, "Invalid JSON"); }
           if (p.endsWith("/send")) return json(await chat.send(body), 202);
+          if (p.endsWith("/settings")) return json(chat.setAccess(body));
+          if (p.endsWith("/approve")) { chat.approve(body); return json({ ok: true }, 202); }
           chat.stop(body);
           return json({ ok: true }, 202);
         }
