@@ -39,3 +39,8 @@ body.hl #lside{display:none}
 .cc-approval pre{margin:0;max-height:140px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:11px ui-monospace,monospace;background:var(--bg);border-radius:6px;padding:6px 8px}
 .cc-approval small{color:var(--mut);overflow-wrap:anywhere}
 .cc-approval div{display:flex;gap:6px;justify-content:flex-end}
+.cc-convs{display:flex;gap:4px;flex:none}
+.cc-convs select,.cc-convs input{flex:1;min-width:0}
+.cc-convs button{padding:2px 8px;font-size:12px}
+.cc-convs [hidden]{display:none}
+.cc-note[data-go]{cursor:pointer}
