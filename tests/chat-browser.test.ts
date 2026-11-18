@@ -14,7 +14,7 @@ async function until<T>(fn: () => T | Promise<T>, timeout = 15000): Promise<NonN
   throw new Error("Timed out waiting for browser state");
 }
 
-test.skipIf(!chrome)("browser: Chat/Files tabs, resize/collapse, Codex send with tool activity, Stop and reload after an agent edit", async () => {
+test.skipIf(!chrome)("browser: Chat/Files tabs, resize/collapse, Codex send with tool activity hidden, Stop and reload after an agent edit", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cdesign-chat-browser-"));
   const root = join(dir, "project"), home = join(dir, "home"), bin = join(dir, "bin"), profile = join(dir, "chrome");
   mkdirSync(root); mkdirSync(home); mkdirSync(bin);
@@ -74,14 +74,11 @@ test.skipIf(!chrome)("browser: Chat/Files tabs, resize/collapse, Codex send with
     expect(await shown("#lside")).toBe(true);
     expect(await ev("document.querySelector('#chat textarea').value")).toBe("draft stays");
 
-    // send through fake Codex: streamed reply and expandable tool activity
+    // send through fake Codex: streamed reply with tool activity hidden
     await ev("{const t=document.querySelector('#chat textarea');t.value='hello';t.dispatchEvent(new Event('input'));document.querySelector('.cc-form .go').click()}");
     await until(() => ev("document.querySelector('.cc-msg.message')?.textContent==='Hello from fake Codex' && !document.querySelector('.cc-form button:not(.go)').offsetParent"));
     expect(await ev("document.querySelector('.cc-msg.user').textContent")).toBe("hello");
-    expect(await ev("document.querySelector('.cc-tool summary span').textContent")).toBe("ls -la");
-    expect(await ev("document.querySelector('.cc-tool').open")).toBe(false);
-    await ev("document.querySelector('.cc-tool summary').click()");
-    expect(await ev("document.querySelector('.cc-tool').open && document.querySelector('.cc-tool pre').textContent")).toBe("total 0\n");
+    expect(await ev("document.querySelector('.cc-tool') === null")).toBe(true);
 
     // Stop keeps the partial reply
     await ev("{const t=document.querySelector('#chat textarea');t.value='slow task';t.dispatchEvent(new Event('input'));document.querySelector('.cc-form .go').click()}");
@@ -92,6 +89,7 @@ test.skipIf(!chrome)("browser: Chat/Files tabs, resize/collapse, Codex send with
     // after a reload the idle snapshot has no turn id: Stop must still work on the next turn
     await cmd("Page.navigate", { url: `http://${projectId(root)}.localhost:${port}/` });
     await until(() => ev("document.readyState==='complete' && !!document.querySelector('#chat textarea') && !!document.querySelector('.cc-msg.user') && document.querySelector('#chat select option')?.textContent==='Codex'"));
+    expect(await ev("document.querySelector('.cc-tool') === null")).toBe(true);
     await ev("{const t=document.querySelector('#chat textarea');t.value='slow again';t.dispatchEvent(new Event('input'));document.querySelector('.cc-form .go').click()}");
     await until(() => ev("[...document.querySelectorAll('.cc-msg.message')].at(-1)?.textContent==='Hello from fake Codex' && !!document.querySelector('.cc-form button:not(.go)').offsetParent"));
     await ev("document.querySelector('.cc-form button:not(.go)').click()");

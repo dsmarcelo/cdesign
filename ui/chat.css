@@ -39,11 +39,6 @@
 .cc-msg.user{align-self:flex-end;background:var(--acc);max-width:92%}
 .cc-msg.message{background:var(--line);white-space:normal}
 .cc-msg.live::after{content:"▍";margin-left:1px;opacity:.7}
-.cc-tool{border:1px solid var(--line);border-radius:8px;font-size:12px}
-.cc-tool summary{font-weight:500;padding:5px 8px;gap:6px;color:var(--mut)}
-.cc-tool summary span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,monospace}
-.cc-tool summary i{font-style:normal;font-size:10px;text-transform:uppercase}
-.cc-tool pre{margin:0;padding:6px 8px;max-height:200px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border-top:1px solid var(--line);font:11px ui-monospace,monospace}
 .cc-empty{color:var(--mut);padding:12px 4px}
 .cc-form{flex:none;display:flex;flex-direction:column;gap:6px}
 .cc-form textarea{width:100%;min-height:64px;max-height:200px;resize:vertical;background:var(--bg);color:inherit;border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit}

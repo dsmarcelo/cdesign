@@ -216,22 +216,14 @@
   };
   const nodes = new Map();
   const draw = (it) => {
+    if (it.kind !== "user" && it.kind !== "message") return;
     let n = nodes.get(it.id);
     if (!n) {
-      if (it.kind === "command" || it.kind === "file" || it.kind === "tool") {
-        n = el("details", "cc-tool"); const s = el("summary"); s.append(el("span"), el("i")); const out = el("pre"); out.tabIndex = 0; out.setAttribute("aria-label", "Tool output"); n.append(s, out);
-      } else n = el("div", "cc-msg " + it.kind);
+      n = el("div", "cc-msg " + it.kind);
       nodes.set(it.id, n); log.append(n);
     }
-    if (n.tagName === "DETAILS") {
-      n.querySelector("span").textContent = it.title || it.kind;
-      n.querySelector("i").textContent = it.status && it.status !== "completed" ? it.status : "";
-      n.querySelector("pre").textContent = it.output || "(no output)";
-    } else {
-      if (it.kind === "message") markdown(n, it.text || ""); else n.textContent = it.text || "";
-      n.classList.toggle("live", it.kind === "message" && busy && conv?.items.at(-1) === it);
-    }
-    return n;
+    if (it.kind === "message") markdown(n, it.text || ""); else n.textContent = it.text || "";
+    n.classList.toggle("live", it.kind === "message" && busy && conv?.items.at(-1) === it);
   };
   const cards = new Map();
   const drawApproval = (a) => {
