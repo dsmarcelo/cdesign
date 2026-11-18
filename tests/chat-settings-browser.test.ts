@@ -40,54 +40,72 @@ test.skipIf(!chrome)("browser: model/effort selectors persist per chat, hostile 
     const { sessionId } = await send("Target.attachToTarget", { targetId, flatten: true });
     const cmd = (method: string, params = {}) => send(method, params, sessionId);
     const ev = async (expression: string) => { const r = await cmd("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }); if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description); return r.result.value; };
-    const open = async () => { await cmd("Page.navigate", { url: `http://${projectId(root)}.localhost:${port}/` }); await until(() => ev("document.readyState==='complete' && !!document.querySelector('#chat textarea') && document.querySelector('[aria-label=Model]')?.options.length>1")); };
+    const open = async () => { await cmd("Page.navigate", { url: `http://${projectId(root)}.localhost:${port}/` }); await until(() => ev("document.readyState==='complete' && !!document.querySelector('#chat textarea') && !!document.querySelector('.cc-pick-name')?.textContent && !document.querySelector('.cc-pick-name').textContent.startsWith('Agent')")); };
     await cmd("Page.enable");
     await open();
 
     const $ = (sel: string) => `document.querySelector(${JSON.stringify(sel)})`;
-    const model = "document.querySelector('[aria-label=Model]')", effort = "document.querySelector('[aria-label=\"Reasoning effort\"]')", status = $(".cc-status");
-    const pick = (el: string, v: string) => ev(`{const s=${el};s.value=${JSON.stringify(v)};s.dispatchEvent(new Event('change'))}`);
+    const status = $(".cc-status");
+    // the model picker is one list for every agent (grouped by agent) plus the effort chips of the chosen model
+    const openPick = () => ev("{const m=document.querySelector('.cc-pmenu');if(m.hidden)document.querySelector('.cc-pick').click()}");
+    const models = async (group: string) => { await openPick(); return ev(`(()=>{const out=[];let on=false;for(const n of document.querySelector('.cc-pmenu').children){if(n.classList.contains('cc-grp'))on=n.textContent===${JSON.stringify(group)};else if(on&&n.classList.contains('cc-opt'))out.push(n.textContent)}return out})()`); };
+    const efforts = async () => { await openPick(); return ev("[...document.querySelectorAll('.cc-efforts button')].map((b)=>b.textContent)"); };
+    const chooseModel = async (group: string, label: string) => { await openPick(); await ev(`(()=>{let on=false;for(const n of document.querySelector('.cc-pmenu').children){if(n.classList.contains('cc-grp'))on=n.textContent===${JSON.stringify(group)};else if(on&&n.textContent===${JSON.stringify(label)})return n.click()}throw new Error('no such model')})()`); };
+    const chooseEffort = async (label: string) => { await openPick(); await ev(`[...document.querySelectorAll('.cc-efforts button')].find((b)=>b.textContent===${JSON.stringify(label)}).click()`); };
+    const shown = () => ev("document.querySelector('.cc-pick-name').textContent + '|' + document.querySelector('.cc-pick-effort').textContent");
     const type = (text: string) => ev(`{const t=document.querySelector('#chat textarea');t.value=${JSON.stringify(text)};t.dispatchEvent(new Event('input'));document.querySelector('.cc-form .go').click()}`);
     const users = () => ev("document.querySelectorAll('.cc-msg.user').length");
     /** Sends and waits for that turn (not an earlier one) to finish. */
     const ask = async (text: string) => { const n = await users(); await type(text); await until(async () => (await users()) > n); await done(); };
-    const opts = (el: string) => ev(`[...${el}.options].map((o)=>o.textContent)`);
-    const done = () => until(() => ev(`!document.querySelector('.cc-form button:not(.go)').offsetParent && ${status}.dataset.state==='completed'`));
+    const done = () => until(() => ev(`!document.querySelector('.cc-form .stop').offsetParent && ${status}.dataset.state==='completed'`));
     const turns = () => readFileSync(codexLog, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((l) => l.method === "turn/start");
 
-    // selectors are labeled, list what the agent reports, and a new chat is Full access with a clear empty state
-    expect(await opts(model)).toEqual(["Default (Fake Big)", "Fake Big", "Fake Mini"]);
-    expect(await opts(effort)).toEqual(["Default effort", "low", "medium", "high"]);
+    // every agent's models show at once, grouped by agent; a new chat is Full access with a clear empty state
+    expect(await models("Codex")).toEqual(["Default (Fake Big)", "Fake Big", "Fake Mini"]);
+    expect(await ev("[...document.querySelectorAll('.cc-pmenu .cc-grp')].map((g)=>g.textContent)")).toContain("Claude");
+    expect(await efforts()).toEqual(["Default", "Low", "Medium", "High"]);
     expect(await ev(`${status}.textContent`)).toContain("nothing sent");
     expect(await ev("document.querySelector('.cc-badge').value")).toBe("full");
-    expect(await ev(`${model}.disabled || ${effort}.disabled`)).toBe(false);
+    expect(await ev("document.querySelector('.cc-pick').disabled")).toBe(false);
 
     // choosing the small model drops the efforts it lacks; the choice reaches Codex on the first turn
-    await pick(effort, "high");
-    await pick(model, "fake-mini");
-    expect(await opts(effort)).toEqual(["Default effort", "low"]);
-    expect(await ev(`${effort}.value`)).toBe(""); // "high" is not available there: reset, and told so
-    expect(await ev(".cc-note".length ? `${$(".cc-note")}.textContent` : "''")).toContain("went back to the default");
-    await pick(effort, "low");
+    await chooseEffort("High");
+    expect(await shown()).toBe("Codex Default (Fake Big)|High");
+    await chooseModel("Codex", "Fake Mini");
+    expect(await efforts()).toEqual(["Default", "Low"]);
+    expect(await shown()).toBe("Fake Mini|"); // "high" is not available there: reset, and told so
+    expect(await ev(`${$(".cc-note")}.textContent`)).toContain("went back to the default");
+    await chooseEffort("Low");
     await ask("hello");
     expect(turns()[0].params).toMatchObject({ model: "fake-mini", effort: "low" });
-    expect(await ev(`${model}.value + '/' + ${effort}.value`)).toBe("fake-mini/low");
+    expect(await shown()).toBe("Fake Mini|Low");
 
     // reopen: the chat restores its own settings; a new chat is back on defaults and Full access
     await open();
-    expect(await ev(`${model}.value + '/' + ${effort}.value`)).toBe("fake-mini/low");
-    await ev("[...document.querySelectorAll('.cc-convs button')].find((b)=>b.textContent==='New').click()");
-    expect(await ev(`${model}.value + '/' + ${effort}.value + '/' + document.querySelector('.cc-badge').value`)).toBe("//full");
-    await ev("{const c=document.querySelector('.cc-convs select');c.value=[...c.options].find((o)=>o.textContent==='hello').value;c.dispatchEvent(new Event('change'))}");
-    await until(() => ev(`${model}.value==='fake-mini'`));
+    await until(async () => (await shown()) === "Fake Mini|Low");
+    await ev("document.querySelector('.cc-convs [aria-label=\"New chat\"]').click()");
+    expect(await shown()).toBe("Codex Default (Fake Big)|");
+    expect(await ev("document.querySelector('.cc-badge').value")).toBe("full");
+    await ev("document.querySelector('.cc-title').click()");
+    await ev("[...document.querySelectorAll('.cc-row .cc-open')].find((o)=>o.textContent==='hello').click()");
+    await until(async () => (await shown()) === "Fake Mini|Low");
+
+    // another agent's model never edits this chat: it opens a new chat with that agent
+    await chooseModel("Claude", "Default");
+    expect(await ev("document.querySelectorAll('.cc-msg.user').length")).toBe(0);
+    expect(await ev(`${$(".cc-note")}.textContent`)).toContain("new chat with Claude");
+    expect((await shown()).startsWith("Claude")).toBe(true);
+    await ev("document.querySelector('.cc-title').click()");
+    await ev("[...document.querySelectorAll('.cc-row .cc-open')].find((o)=>o.textContent==='hello').click()");
+    await until(async () => (await shown()) === "Fake Mini|Low");
 
     // while the agent works nothing can be changed, and the status says what is happening
     await type("slow one");
     await until(() => ev(`${status}.dataset.state==='streaming'`));
-    expect(await ev(`${model}.disabled && ${effort}.disabled && document.querySelector('.cc-badge').disabled`)).toBe(true);
-    await ev("document.querySelector('.cc-form button:not(.go)').click()");
+    expect(await ev("document.querySelector('.cc-pick').disabled && document.querySelector('.cc-badge').disabled")).toBe(true);
+    await ev("document.querySelector('.cc-form .stop').click()");
     await until(() => ev(`${status}.dataset.state==='stopped'`));
-    expect(await ev(`${model}.disabled`)).toBe(false);
+    expect(await ev("document.querySelector('.cc-pick').disabled")).toBe(false);
     expect(await ev("document.querySelector('.cc-form .go').disabled")).toBe(true); // blank prompt: Send disabled
 
     // hostile markup: formatted where safe, inert everywhere, including while the reply is still streaming
@@ -106,12 +124,9 @@ test.skipIf(!chrome)("browser: model/effort selectors persist per chat, hostile 
     expect(await ev("document.querySelectorAll('#chat img, #chat script, #chat b').length")).toBe(0);
     expect(await ev(`${$(".cc-log")}.scrollWidth <= ${$(".cc-log")}.clientWidth`)).toBe(true); // 400 unbroken characters wrap instead of overflowing
 
-    // long tool output is expandable and bounded inside the pane; the composer stays on screen
+    // tool activity is not shown in the transcript, however long its output; the composer stays on screen
     await ask("longtool run");
-    await ev("{const d=[...document.querySelectorAll('.cc-tool')].at(-1);d.querySelector('summary').click()}");
-    const box = await ev("(()=>{const p=[...document.querySelectorAll('.cc-tool pre')].at(-1);return {h:p.clientHeight,s:p.scrollHeight}})()");
-    expect(box.h).toBeLessThanOrEqual(210);
-    expect(box.s).toBeGreaterThan(box.h * 5);
+    expect(await ev("document.querySelector('.cc-tool') === null")).toBe(true);
     expect(await ev("(()=>{const r=document.querySelector('#chat textarea').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})()")).toBe(true);
 
     // reading older output is not interrupted by new output; "Latest" brings the reader back
@@ -125,8 +140,8 @@ test.skipIf(!chrome)("browser: model/effort selectors persist per chat, hostile 
     expect(await ev(`${$(".cc-jump")}.hidden`)).toBe(true);
 
     // keyboard: every control has a name and takes focus; Tab leaves the message box; narrow sidebar does not hide the composer or overflow
-    expect(await ev("[...document.querySelectorAll('#chat select, #chat button:not([hidden]), #chat textarea')].filter((e)=>!(e.getAttribute('aria-label')||e.textContent.trim())).length")).toBe(0);
-    expect(await ev("[...document.querySelectorAll('#chat select, #chat button:not([hidden]), #chat textarea')].filter((e)=>!e.disabled).every((e)=>{e.focus();return document.activeElement===e})")).toBe(true);
+    expect(await ev("[...document.querySelectorAll('#chat select, #chat button:not([hidden]), #chat textarea')].filter((e)=>e.offsetParent).filter((e)=>!(e.getAttribute('aria-label')||e.textContent.trim())).length")).toBe(0);
+    expect(await ev("[...document.querySelectorAll('#chat select, #chat button:not([hidden]), #chat textarea')].filter((e)=>e.offsetParent && !e.disabled).every((e)=>{e.focus();return document.activeElement===e})")).toBe(true);
     await ev("document.querySelector('#chat textarea').focus()");
     await cmd("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });
     await cmd("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9 });

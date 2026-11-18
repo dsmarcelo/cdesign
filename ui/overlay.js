@@ -4,6 +4,9 @@
 
   const css = document.createElement("style");
   css.textContent = `
+  @media (forced-colors:none){
+    :is(.__cd-pop,.__cd-insp),:is(.__cd-pop,.__cd-insp) *{scrollbar-width:thin;scrollbar-color:#71717a transparent}
+  }
   .__cd-hl{outline:2px solid #2563eb!important;outline-offset:1px;cursor:crosshair!important}
   .__cd-sel{outline:2px dashed #16a34a!important;outline-offset:2px}
   .__cd-pin{position:absolute;z-index:2147483646;width:22px;height:22px;border-radius:50%;background:#2563eb;color:#fff;

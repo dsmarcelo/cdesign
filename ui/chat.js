@@ -76,8 +76,8 @@
     }
     box.replaceChildren(...out);
   };
-  const sel = el("select"); sel.title = "Agent";
-  sel.setAttribute("aria-label", "Agent");
+  /** Not on screen: it holds the agent of the chat on screen (or of the next new chat); the model picker in the composer drives it. */
+  const sel = el("select");
   const badge = el("select", "cc-badge full"); badge.setAttribute("aria-label", "Access mode");
   for (const [v, t] of [["full", "Full access"], ["normal", "Normal"]]) { const o = el("option", "", t); o.value = v; badge.append(o); }
   const MODE_HELP = {
@@ -86,27 +86,42 @@
   };
   const showMode = (full) => { badge.value = full ? "full" : "normal"; badge.classList.toggle("full", full); badge.title = MODE_HELP[badge.value]; };
   showMode(true);
-  const msel = el("select"); msel.setAttribute("aria-label", "Model");
-  const esel = el("select"); esel.setAttribute("aria-label", "Reasoning effort");
-  const top = el("div", "cc-top"); top.append(sel, badge);
-  const tune = el("div", "cc-top cc-tune"); tune.append(msel, esel);
+  const ICONS = { plus: "M12 5v14M5 12h14", trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3", up: "M12 19V5M5 12l7-7 7 7", stop: "M7 7h10v10H7z", chevron: "M6 9l6 6 6-6" };
+  const icon = (name) => {
+    const NS = "http://www.w3.org/2000/svg", svg = document.createElementNS(NS, "svg"), path = document.createElementNS(NS, "path");
+    for (const [k, v] of Object.entries({ viewBox: "0 0 24 24", width: "16", height: "16", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" })) svg.setAttribute(k, v);
+    path.setAttribute("d", ICONS[name]); svg.append(path); return svg;
+  };
+  const button = (cls, label, ic) => { const b = el("button", cls); b.type = "button"; b.setAttribute("aria-label", label); b.title = label; if (ic) b.append(icon(ic)); return b; };
+  // chat switcher: the title opens the list of saved chats (each row can be deleted); "+" starts a new chat
   const bar = el("div", "cc-convs");
-  const csel = el("select"); csel.setAttribute("aria-label", "Conversation");
-  const rin = el("input"); rin.hidden = true; rin.maxLength = 80; rin.setAttribute("aria-label", "Chat name");
-  const newBtn = el("button", "", "New"), renBtn = el("button", "", "Rename"), delBtn = el("button", "", "Delete");
-  newBtn.title = "Start a new chat"; renBtn.title = "Rename this chat"; delBtn.title = "Delete this chat (cdesign's saved copy only)";
-  bar.append(csel, rin, newBtn, renBtn, delBtn);
+  const titleBtn = el("button", "cc-title"); titleBtn.type = "button"; titleBtn.setAttribute("aria-haspopup", "menu"); titleBtn.setAttribute("aria-expanded", "false"); titleBtn.title = "Switch chat";
+  const titleText = el("span", "cc-title-text", "New chat"); titleBtn.append(titleText, icon("chevron"));
+  const newBtn = button("cc-icon", "New chat", "plus");
+  const cmenu = el("div", "cc-menu"); cmenu.hidden = true; cmenu.setAttribute("role", "menu"); cmenu.setAttribute("aria-label", "Chats");
+  bar.append(titleBtn, newBtn, cmenu);
+  const meta = el("div", "cc-meta");
   const status = el("div", "cc-status"); status.setAttribute("role", "status");
+  meta.append(status, badge);
   const note = el("div", "cc-note"); note.hidden = true; note.setAttribute("role", "status");
   const log = el("div", "cc-log"); log.setAttribute("aria-live", "polite"); log.tabIndex = 0; log.setAttribute("aria-label", "Conversation");
   const jump = el("button", "cc-jump", "↓ Latest"); jump.hidden = true; jump.title = "Scroll to the newest message";
   const wrap = el("div", "cc-logwrap"); wrap.append(log, jump);
-  const box = el("textarea"); box.placeholder = "Ask the agent to change this design…"; box.setAttribute("aria-label", "Message");
-  const hint = el("small", "", "Enter to send, Shift+Enter for a new line");
-  const sendBtn = el("button", "go", "Send"), stopBtn = el("button", "", "Stop"); stopBtn.hidden = true;
-  const form = el("div", "cc-form"); const row = el("div"); row.append(hint, stopBtn, sendBtn); form.append(box, row);
+  const box = el("textarea"); box.placeholder = "Ask the agent to change this design…"; box.setAttribute("aria-label", "Message"); box.title = "Enter to send, Shift+Enter for a new line";
+  // composer: message box on top, then the model picker (every agent's models in one list) and Send/Stop
+  const pick = el("button", "cc-pick"); pick.type = "button"; pick.setAttribute("aria-haspopup", "listbox"); pick.setAttribute("aria-expanded", "false");
+  const pickName = el("span", "cc-pick-name"), pickEffort = el("span", "cc-pick-effort");
+  pick.append(pickName, pickEffort);
+  const pmenu = el("div", "cc-menu cc-pmenu"); pmenu.hidden = true;
+  const sendBtn = button("go cc-send", "Send", "up"), stopBtn = button("cc-send stop", "Stop", "stop"); stopBtn.hidden = true;
+  sendBtn.title = "Send (Enter)";
+  const form = el("div", "cc-form"); const row = el("div", "cc-tools"); row.append(pick, stopBtn, sendBtn); form.append(box, row, pmenu);
   const chipsBox = el("div", "cc-chips"); chipsBox.setAttribute("aria-label", "Context sent with your message");
-  root.append(top, tune, bar, status, note, wrap, chipsBox, form);
+  root.append(bar, meta, note, wrap, chipsBox, form);
+  const closeMenus = () => { cmenu.hidden = pmenu.hidden = true; titleBtn.setAttribute("aria-expanded", "false"); pick.setAttribute("aria-expanded", "false"); };
+  const toggle = (menu, trigger, fill) => { const was = menu.hidden; closeMenus(); if (was) { fill(); menu.hidden = false; trigger.setAttribute("aria-expanded", "true"); } };
+  document.addEventListener("pointerdown", (e) => { if (!e.target.closest(".cc-menu, .cc-title, .cc-pick")) closeMenus(); });
+  root.addEventListener("keydown", (e) => { if (e.key === "Escape" && (!cmenu.hidden || !pmenu.hidden)) { const t = !cmenu.hidden ? titleBtn : pick; closeMenus(); t.focus(); } });
 
   // ---- design context: the open page and selected element of THIS tab (refreshed from the server), plus comments added explicitly ----
   // A chip the user removed stays removed only for that page/element; a changed page or selection brings its automatic chip back for the next message.
@@ -163,34 +178,56 @@
     sendBtn.disabled = busy || posting || !ready() || !box.value.trim();
     badge.disabled = busy || posting; // the mode applies between turns
     stopBtn.hidden = !mine();
-    renBtn.disabled = !conv;
-    delBtn.disabled = !conv || mine();
-    sel.disabled = !!conv; // a chat keeps its agent
     box.disabled = false;
-    msel.disabled = esel.disabled = busy || posting || msel.options.length < 2 && esel.options.length < 2; // settings apply between turns
-    if (busy || posting) { msel.title = esel.title = "Model and effort change between turns; wait for the agent or Stop it"; }
-    else fillTitles();
+    pick.disabled = busy || posting; // settings apply between turns
+    if (pick.disabled) closeMenus();
+    pick.title = pick.disabled ? "Model and effort change between turns; wait for the agent or Stop it" : caps().note;
     showStatus();
   };
   const caps = () => providers.find((p) => p.id === (conv?.provider ?? sel.value))?.capabilities ?? { source: "fallback", note: "", models: [], efforts: [], defaultLabel: "Default" };
   const cur = () => conv ?? fresh;
   const effortsFor = (c, model) => (model ? c.models.find((m) => m.id === model)?.efforts ?? c.efforts : c.efforts);
-  const fillTitles = () => {
-    const c = caps();
-    msel.title = c.models.length ? c.note : "This agent did not list its models, so only its default can be used. " + c.note;
-    esel.title = effortsFor(c, cur().model).length ? "Reasoning effort for the next turn" : "This agent did not list reasoning efforts for this model, so only its default can be used.";
+  const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+  const NONE = { source: "fallback", note: "", models: [], efforts: [], defaultLabel: "Default" };
+  const provider = () => conv?.provider ?? sel.value;
+  /** The picker: one list with every agent's models (an agent that is not usable is shown but disabled), then the effort levels of the chosen model. */
+  const drawPicker = () => {
+    const s = cur(), here = provider(), nodes = [];
+    for (const p of providers) {
+      const c = p.capabilities ?? NONE, ok = p.state === "ready";
+      nodes.push(el("div", "cc-grp", p.label));
+      if (!ok) nodes.push(el("div", "cc-hint", p.message || STATE[p.state] || "unavailable"));
+      const rows = [["", c.models.length ? c.defaultLabel : c.defaultLabel + " (models not listed)"], ...c.models.map((m) => [m.id, m.label])];
+      if (here === p.id && s.model && !c.models.some((m) => m.id === s.model)) rows.push([s.model, s.model + " (not offered now)"]);
+      for (const [id, label] of rows) {
+        const b = el("button", "cc-opt", label); b.type = "button"; b.setAttribute("role", "option"); b.disabled = !ok;
+        const on = here === p.id && (s.model ?? "") === id; b.setAttribute("aria-selected", String(on)); b.classList.toggle("on", on);
+        b.onclick = () => { closeMenus(); chooseModel(p.id, id); };
+        nodes.push(b);
+      }
+    }
+    const efforts = effortsFor(caps(), s.model);
+    nodes.push(el("div", "cc-grp", "Effort"));
+    if (!efforts.length) nodes.push(el("div", "cc-hint", "This agent did not list reasoning efforts for this model, so only its default can be used."));
+    else {
+      const chips = el("div", "cc-efforts");
+      for (const e of ["", ...efforts]) {
+        const b = el("button", "", e ? cap(e) : "Default"); b.type = "button"; b.setAttribute("aria-pressed", String((s.effort ?? "") === e)); b.classList.toggle("on", (s.effort ?? "") === e);
+        b.onclick = () => { closeMenus(); choose({ effort: e || null }); };
+        chips.append(b);
+      }
+      if (s.effort && !efforts.includes(s.effort)) chips.append(el("span", "cc-hint", cap(s.effort) + " (not supported)"));
+      nodes.push(chips);
+    }
+    pmenu.replaceChildren(...nodes);
   };
-  /** Rebuilds the model/effort selectors from the agent's reported capabilities and the chat's saved values. */
+  /** Refreshes the picker button and its list from the agents' reported capabilities and the chat's saved values. */
   const fillSettings = () => {
-    const c = caps(), s = cur();
-    const opt = (v, t) => { const o = el("option", "", t); o.value = v; return o; };
-    const models = [opt("", c.models.length ? c.defaultLabel : c.defaultLabel + " (models not listed)"), ...c.models.map((m) => opt(m.id, m.label))];
-    if (s.model && !c.models.some((m) => m.id === s.model)) models.push(opt(s.model, s.model + " (not offered now)"));
-    msel.replaceChildren(...models); msel.value = s.model ?? "";
-    const efforts = effortsFor(c, s.model);
-    const list = [opt("", efforts.length ? "Default effort" : "Default effort (not listed)"), ...efforts.map((e) => opt(e, e))];
-    if (s.effort && !efforts.includes(s.effort)) list.push(opt(s.effort, s.effort + " (not supported)"));
-    esel.replaceChildren(...list); esel.value = s.effort ?? "";
+    const c = caps(), s = cur(), p = providers.find((x) => x.id === provider());
+    pickName.textContent = s.model ? c.models.find((m) => m.id === s.model)?.label ?? s.model : `${p?.label ?? "Agent"} ${c.defaultLabel}`;
+    pickEffort.textContent = s.effort ? cap(s.effort) : "";
+    pick.setAttribute("aria-label", "Model and effort: " + pickName.textContent + (s.effort ? ", " + s.effort : ""));
+    if (!pmenu.hidden) drawPicker();
   };
   const STATUS = { empty: "New chat: nothing sent yet", starting: "Starting the agent…", approval: "Waiting for your approval", streaming: "Working…", other: "Working in another chat", completed: "Done", stopped: "Stopped", interrupted: "Interrupted", failed: "Failed", idle: "Ready" };
   /** One word for where this chat stands, kept apart from the explanatory note below it. */
@@ -210,9 +247,30 @@
     const p = providers.find((x) => x.id === sel.value);
     showNote(!conv && p && p.state !== "ready" ? p.message : "", true);
   };
+  let armed = null, armedTimer = 0; // the chat whose trash button was clicked once: a second click inside 3s deletes it
   const drawList = () => {
-    csel.replaceChildren(...[["", "New chat"], ...convs.map((c) => [c.id, (c.id === activeId && busy ? "● " : "") + c.title])].map(([v, t]) => { const o = el("option", "", t); o.value = v; return o; }));
-    csel.value = conv?.id ?? "";
+    const running = (c) => c.id === activeId && busy;
+    const saved = convs.find((c) => c.id === conv?.id);
+    titleText.textContent = (saved && running(saved) ? "● " : "") + (saved?.title ?? conv?.title ?? "New chat");
+    const rows = convs.map((c) => {
+      const r = el("div", "cc-row"); r.dataset.id = c.id; r.classList.toggle("on", c.id === conv?.id);
+      const go = el("button", "cc-open", (running(c) ? "● " : "") + c.title); go.type = "button"; go.setAttribute("role", "menuitem");
+      go.onclick = () => { closeMenus(); open(c.id); };
+      const del = button("cc-trash", armed === c.id ? "Click again to delete " + c.title : "Delete " + c.title, "trash");
+      del.title = running(c) ? "Stop the agent before deleting this chat" : "Delete this chat (cdesign's saved copy only)";
+      del.disabled = running(c); del.classList.toggle("armed", armed === c.id);
+      del.onclick = () => armDelete(c);
+      r.append(go, del); return r;
+    });
+    cmenu.replaceChildren(...(rows.length ? rows : [el("div", "cc-hint", "No saved chats yet")]));
+  };
+  const armDelete = async (c) => { // two clicks: the first arms, so a stray click never deletes
+    if (c.id === activeId && busy) return;
+    if (armed !== c.id) { armed = c.id; clearTimeout(armedTimer); armedTimer = setTimeout(() => { armed = null; drawList(); }, 3000); drawList(); return; }
+    clearTimeout(armedTimer); armed = null;
+    const r = await post("/delete", { conversationId: c.id }).catch(() => null);
+    if (!r?.ok) { drawList(); return showNote(r ? (await r.json().catch(() => ({}))).error || "Could not delete" : "Could not reach cdesign", true); }
+    if (c.id === conv?.id) { draft = false; conv = null; store("cd-conv", ""); await load().catch(() => {}); } else await refreshList();
   };
   const nodes = new Map();
   const draw = (it) => {
@@ -342,27 +400,9 @@
     draft = true; conv = null; Object.assign(fresh, { fullAccess: true, model: null, effort: null });
     render(); drawList(); showMode(true); fillSettings(); refreshNote(); sync(); box.focus();
   };
-  newBtn.onclick = newChat;
-  csel.onchange = () => (csel.value ? open(csel.value) : newChat());
-  const endRename = () => { rin.hidden = true; csel.hidden = false; };
-  renBtn.onclick = () => { if (!conv) return; rin.value = conv.title; csel.hidden = true; rin.hidden = false; rin.focus(); rin.select(); };
-  rin.onblur = endRename;
-  rin.onkeydown = async (e) => {
-    if (e.key === "Escape") return endRename();
-    if (e.key !== "Enter" || !conv) return;
-    const r = await post("/rename", { conversationId: conv.id, title: rin.value }).catch(() => null);
-    if (r?.ok) { endRename(); await load().catch(() => {}); }
-    else showNote(r ? (await r.json().catch(() => ({}))).error || "Could not rename" : "Could not reach cdesign", true);
-  };
-  let armed = 0;
-  delBtn.onclick = async () => { // two clicks: the first arms, so a stray click never deletes
-    if (!conv || mine()) return;
-    if (!armed) { delBtn.textContent = "Sure?"; armed = setTimeout(() => { armed = 0; delBtn.textContent = "Delete"; }, 3000); return; }
-    clearTimeout(armed); armed = 0; delBtn.textContent = "Delete";
-    const r = await post("/delete", { conversationId: conv.id }).catch(() => null);
-    if (r?.ok) { draft = false; conv = null; store("cd-conv", ""); await load().catch(() => {}); }
-    else showNote(r ? (await r.json().catch(() => ({}))).error || "Could not delete" : "Could not reach cdesign", true);
-  };
+  newBtn.onclick = () => { closeMenus(); newChat(); };
+  titleBtn.onclick = () => toggle(cmenu, titleBtn, drawList);
+  pick.onclick = () => toggle(pmenu, pick, drawPicker);
 
   const send = async () => {
     const text = box.value.trim();
@@ -407,19 +447,25 @@
     else showNote(r ? (await r.json().catch(() => ({}))).error || "Could not change the setting" : "Could not reach cdesign", true);
     fillSettings(); sync();
   };
-  msel.onchange = () => choose({ model: msel.value || null });
-  esel.onchange = () => choose({ effort: esel.value || null });
+  /** Picks a model of any agent. A saved chat keeps its agent, so another agent's model opens a new chat instead of changing this one. */
+  const chooseModel = async (pid, model) => {
+    if (pid === provider()) return choose({ model: model || null });
+    const label = providers.find((p) => p.id === pid)?.label ?? pid, from = !!conv;
+    sel.value = pid;
+    if (conv) newChat();
+    Object.assign(fresh, { model: model || null, effort: null });
+    fillSettings(); refreshNote(); sync();
+    if (from) showNote(`A chat keeps its agent, so this is a new chat with ${label}.`);
+  };
 
   const STATE = { missing: "not installed", login: "not logged in", unsupported: "update needed", error: "error" };
   const discover = async () => {
     try {
       providers = (await (await api("/providers")).json()).providers;
     } catch { providers = []; showNote("Could not look for installed agents", true); }
-    sel.replaceChildren(...providers.map((p) => { const o = el("option", "", p.label + (p.state === "ready" ? "" : ` (${STATE[p.state] || "unavailable"})`)); o.title = p.message; o.value = p.id; return o; }));
-    const p = providers.find((x) => x.id === sel.value) || providers[0];
-    if (conv) sel.value = conv.provider;
+    sel.replaceChildren(...providers.map((p) => { const o = el("option", "", p.label); o.value = p.id; return o; }));
+    sel.value = conv ? conv.provider : providers.find((p) => p.state === "ready")?.id ?? providers[0]?.id ?? "";
     fillSettings(); refreshNote(); sync();
   };
-  sel.onchange = () => { Object.assign(fresh, { model: null, effort: null }); fillSettings(); refreshNote(); sync(); };
   (async () => { await load().catch(() => showNote("Could not load the chat", true)); await discover(); connect(); })();
 })();

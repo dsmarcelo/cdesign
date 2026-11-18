@@ -10,17 +10,38 @@
   html{background:#111113;overscroll-behavior:none}
   :root{color-scheme:dark;--bg:#111113;--panel:#18181b;--line:#27272a;--mut:#a1a1aa;--acc:#2563eb}
   *{box-sizing:border-box}
-  body{margin:0;height:100vh;height:100dvh;display:grid;grid-template-columns:var(--lw,230px) 1fr var(--rw,300px);grid-template-rows:44px 1fr;background:var(--bg);color:#fafafa;font:13px system-ui}
-  header{grid-column:1/4;display:flex;align-items:center;gap:8px;padding:0 12px;border-bottom:1px solid var(--line)}
-  header b{margin-right:auto}
-  #agent{font-size:12px;color:var(--mut);margin-right:8px} #agent::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:#52525b;margin-right:6px} #agent.on{color:#fafafa} #agent.on::before{background:#22c55e}
+  @media (forced-colors:none){
+    *{scrollbar-width:thin;scrollbar-color:#71717a transparent}
+  }
+  body{margin:0;height:100vh;height:100dvh;display:grid;grid-template-columns:var(--lw,230px) 1fr var(--rw,300px);grid-template-rows:auto minmax(0,1fr);background:var(--bg);color:#fafafa;font:13px system-ui}
+  .viewer-bar{grid-column:1/4;display:flex;align-items:center;gap:8px;min-width:0;overflow-x:auto;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
+  .viewer-bar > b{font-size:14px;letter-spacing:-.02em}
+  .bar-context,.bar-actions{display:flex;align-items:center;gap:4px}
+  .bar-context{flex:1 1 180px;min-width:0}
+  .bar-actions,.viewer-bar .grp{flex:none}
+  .viewer-bar > b{flex:none}
+  .viewer-bar #dev{max-width:120px}
+  .viewer-bar #proj{width:100%;min-width:64px;max-width:165px}
+  .viewer-bar :is(button,select){height:32px}
+  .viewer-bar button{display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;padding:0 9px;border-radius:6px;touch-action:manipulation}
+  .viewer-bar button.ic{width:32px;padding:0;flex:none}
+  .viewer-bar button svg{width:16px;height:16px;flex:none}
+  .viewer-bar button.on:not(.go){background:var(--line);border-color:var(--mut)}
+  .viewer-bar button.go{color:#fff}
+  .viewer-bar :is(button,select):focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+  @media (hover:hover){.viewer-bar button:not(:disabled):hover{border-color:var(--mut)}}
+  .viewer-bar #w{gap:2px;padding:2px;background:var(--bg);border:1px solid var(--line);border-radius:8px}
+  .viewer-bar #w button{border-color:transparent;height:28px}
+  #agent{display:inline-grid;place-items:center;position:relative;width:22px;flex:none;color:var(--mut)}
+  #agent svg{width:16px;height:16px}
+  #agent::after{content:"";position:absolute;right:0;bottom:-1px;width:7px;height:7px;border-radius:50%;background:var(--mut);outline:2px solid var(--panel)}
+  #agent.on::after{background:#22c55e} #agent.working::after{background:#f59e0b}
   button{background:var(--panel);color:inherit;border:1px solid var(--line);border-radius:8px;padding:5px 10px;font:inherit;cursor:pointer}
   button.on{background:var(--acc);border-color:var(--acc)}
   aside{overflow:auto;padding:8px;background:var(--panel)}
   aside.l{grid-area:2/1} main{grid-area:2/2} aside.r{grid-area:2/3}
   body.hl{--lw:0px} body.hr{--rw:0px} body.hl aside.l,body.hr aside.r{display:none}
   .grp{display:inline-flex;gap:4px}
-  header button.ic{padding:5px 7px;line-height:0} header button.ic svg{width:16px;height:16px}
   aside.l{border-right:1px solid var(--line)} aside.r{border-left:1px solid var(--line)}
   details{margin:0}
   summary{list-style:none;cursor:pointer;padding:6px 8px;border-radius:6px;color:#fafafa;font-weight:600;font-size:12px;display:flex;align-items:center;gap:6px;user-select:none}
@@ -59,17 +80,20 @@
   #pick{position:fixed;inset:0;background:var(--bg);display:none;place-content:center;gap:8px;padding:24px;z-index:9;width:min(480px,100%);margin:auto;align-content:center}
   body.nop #pick{display:grid} body.nop>:not(#pick):not(#toast){display:none}
   #pick h2{margin:0 0 8px;font-size:16px} #pick .f{border:1px solid var(--line);color:#fafafa} #pick small{color:var(--mut)}
-  .tunnel-status{min-width:0;color:var(--mut);font-size:12px;overflow-wrap:anywhere} .tunnel-status a{color:inherit} #tunnel-status{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tunnel-status{min-width:0;color:var(--mut);font-size:12px;overflow-wrap:anywhere} .tunnel-status a{color:inherit}
   #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#fafafa;color:#111;padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:80vw}
   #toast.on{opacity:1}
-  #bar{display:contents} #more,#bb,#pill{display:none}
+  #bar{display:contents} .viewer-bar #more,.viewer-bar #bb,#pill{display:none}
   @media (max-width:700px){
     body{grid-template-columns:1fr;grid-template-rows:1fr}
-    header{grid-column:1;padding:0;height:0;border:0}
-    header>:not(#bar){display:none}
-    #bar{display:none;position:fixed;left:12px;right:12px;bottom:calc(72px + env(safe-area-inset-bottom));z-index:20;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 12px;background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 24px #0006}
+    .viewer-bar{grid-column:1;padding:0;height:0;border:0}
+    .viewer-bar>:not(#bar){display:none}
+    #bar{display:none;position:fixed;left:12px;right:12px;bottom:calc(72px + env(safe-area-inset-bottom));z-index:20;align-items:center;gap:6px;padding:8px;overflow-x:auto;overscroll-behavior:contain;background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 24px #0006}
     body.bar #bar{display:flex}
-    #bar #proj{flex:1 1 140px;max-width:none} #bar #agent{flex:1 1 100%;order:-1;margin:0} #bar #bb{display:none}
+    .bar-context{flex:0 0 auto}
+    #bar #proj{width:112px;font-size:16px}
+    #bar :is(button,select),#bar #w button{height:44px}
+    #bar button.ic{width:44px}
     aside.l,aside.r{position:fixed;top:env(safe-area-inset-top);bottom:env(safe-area-inset-bottom);z-index:10;width:min(300px,85vw);padding-bottom:72px}
     aside.l{left:env(safe-area-inset-left)} aside.r{right:env(safe-area-inset-right)}
     main{grid-area:1/1;padding:0}
@@ -86,8 +110,17 @@
     html[data-theme=light] #pill button{color:#18181b}
     html[data-theme=light] #pill button.on{background:#e4e4e7}
   }
-  #website-dialog{width:min(560px,calc(100vw - 32px));max-height:85vh;overflow:auto;border:1px solid #52525b;border-radius:12px;background:var(--bg,#18181b);color:var(--fg,#fafafa);padding:24px}
-  #website-dialog::backdrop{background:#0008} #website-form{display:grid;gap:16px} #website-form h2,#website-form p{margin:0}
+  #project-tools{position:fixed;inset:auto;margin:0;width:184px;max-width:calc(100vw - 16px);padding:4px;background:var(--panel);color:inherit;border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px #0004}
+  #project-tools button{width:100%;display:flex;align-items:center;gap:8px;text-align:left;background:none;border:0;padding:8px}
+  #project-tools button:focus-visible{outline:2px solid var(--acc);outline-offset:-2px}
+  @media (hover:hover){#project-tools button:hover{background:var(--line)}}
+  #project-tools svg{width:16px;height:16px;flex:none;color:var(--mut)}
+  #project-tools #tunnel.on svg{color:#22c55e}
+  @media (pointer:coarse){#project-tools button{min-height:44px}}
+  #tunnel-dialog,#website-dialog{width:min(560px,calc(100vw - 32px));max-height:85vh;overflow:auto;border:1px solid #52525b;border-radius:12px;background:var(--bg,#18181b);color:var(--fg,#fafafa);padding:24px}
+  #tunnel-dialog h2{margin:0 0 12px;font-size:16px}
+  #tunnel-dialog form{display:flex;justify-content:flex-end;margin-top:16px}
+  #tunnel-dialog::backdrop,#website-dialog::backdrop{background:#0008} #website-form{display:grid;gap:16px} #website-form h2,#website-form p{margin:0}
   #website-form>label{display:grid;gap:6px} #website-form input:not([type=checkbox]),#website-form select{width:100%;padding:8px}
   #website-pages{display:grid;gap:8px;max-height:220px;overflow:auto} #website-pages label{display:flex;align-items:center;gap:8px}
   #website-form footer{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px} #website-status{white-space:pre-wrap;overflow-wrap:anywhere} #website-instructions{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
@@ -101,23 +134,25 @@
   #share-list .del.sure{background:#dc2626;border-color:#dc2626;color:#fff} #share-box footer{display:flex;justify-content:flex-end} #share-instructions{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
   body.remote .addchat{display:none}
 </style>
-<header>
+<header class="viewer-bar">
   <button id="tl" class="ic on" title="Hide/show sidebar"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M6 3v10"/></svg></button>
   <b>cdesign</b>
   <button id="more" class="ic" title="Show/hide toolbar"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg></button>
   <div id="bar">
+  <div class="bar-context">
   <select id="proj" title="Switch project"></select>
-  <span id="tunnel-status" class="tunnel-status" role="status" aria-live="polite"></span>
-  <span id="agent" title="Is an agent running `cdesign wait`?"></span>
-  <span id="w" class="grp"><button class="ic on" data-w="100%" title="Full width"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3" width="12.5" height="8" rx="1.5"/><path d="M5.5 13.5h5"/></svg></button><button class="ic" data-w="768px" title="Tablet (768px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="1.75" width="10" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="phone" title="Phone: pick a device, exact screen size"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="resp" title="Responsive: drag the edges to resize width and height"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="2.75" width="9.5" height="9.5" rx="1.5"/><path d="M14.25 7.5v6.75H7.5M10.5 14.25l3.75-3.75"/></svg></button><button class="ic" data-w="split" title="Split: mobile on the left, full width on the right"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3.25" width="4" height="9.5" rx="1"/><rect x="7.75" y="3.25" width="6.5" height="9.5" rx="1"/></svg></button></span><span id="devs" class="grp"><select id="dev" title="Phone screen size (CSS px)"></select><button id="rot" class="ic" title="Rotate screen"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5" transform="rotate(45 8 8)"/></svg></button><button id="fit" title="Real size / fit height">Real size</button></span>
+  <button id="project-tools-toggle" class="ic" popovertarget="project-tools" aria-label="Project tools" title="Project tools"><svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg></button>
+  <span id="agent" role="img" aria-label="No agent listening" title="No agent listening"><svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="11" height="8.5" rx="2"/><path d="M8 5V2m-2.5 7h.01m5 0h.01"/></svg></span>
+  </div>
+  <span id="w" class="grp"><button class="ic on" data-w="100%" title="Full width"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3" width="12.5" height="8" rx="1.5"/><path d="M5.5 13.5h5"/></svg></button><button class="ic" data-w="768px" title="Tablet (768px)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="1.75" width="10" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="phone" title="Phone: pick a device, exact screen size"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5"/><path d="M7 12.25h2"/></svg></button><button class="ic" data-w="resp" title="Responsive: drag the edges to resize width and height"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="2.75" width="9.5" height="9.5" rx="1.5"/><path d="M14.25 7.5v6.75H7.5M10.5 14.25l3.75-3.75"/></svg></button><button class="ic" data-w="split" title="Split: mobile on the left, full width on the right"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="1.75" y="3.25" width="4" height="9.5" rx="1"/><rect x="7.75" y="3.25" width="6.5" height="9.5" rx="1"/></svg></button></span><span id="devs" class="grp"><select id="dev" title="Phone screen size (CSS px)"></select><button id="rot" class="ic" title="Rotate screen"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="1.75" width="7" height="12.5" rx="1.5" transform="rotate(45 8 8)"/></svg></button><button id="fit" class="ic" aria-label="Fit preview height" title="Fit preview height"><svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 2h12M2 14h12M8 4v8M6 6l2-2 2 2m-4 4 2 2 2-2"/></svg></button></span>
   <button id="bb" title="Move the toolbar to the bottom/top of the screen">Toolbar: top</button>
-  <button id="share" title="Create a private link to the open screen">Share screen</button>
-  <button id="website">Export website</button>
-  <button id="theme" title="Toggle light/dark preview">Light</button>
+  <div class="bar-actions">
+  <button id="theme" class="ic" aria-label="Dark preview" title="Toggle light/dark preview"><svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.75"/><path d="M8 1v2m0 10v2M1 8h2m10 0h2M3 3l1.5 1.5m7 7L13 13m0-10-1.5 1.5m-7 7L3 13"/></svg></button>
   <button id="sel" class="ic" title="Select element for the agent (S)"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M3.5 2.5l9 4.2-3.9 1.3-1.3 3.9z"/><path d="M8.6 8l3 3.2"/></svg></button>
-  <button id="mode">Comment (C)</button>
-  <button id="send" class="go" disabled>Send to agent</button>
+  <button id="mode" aria-label="Comment (C)" class="ic" title="Comment (C)"><svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H2v8h3v3l4-3h5z"/></svg></button>
+  <button id="send" aria-label="Send to agent" class="ic go" disabled title="Send to agent"><svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m2 2 12 6-12 6 2-6zm2 6h10"/></svg></button>
   <button id="tr" class="ic on" title="Hide/show comments"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M10 3v10"/></svg></button>
+  </div>
   </div>
 </header>
 <aside class="l" id="lside" data-tab="chat">
@@ -136,6 +171,16 @@
 </div>
 <div id="pick"></div>
 <div id="toast"></div>
+<div id="project-tools" popover aria-label="Project tools">
+  <button id="share" aria-label="Share screen" title="Create a private link to the open screen"><svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2m-3 3 3-3 3 3M4 8H2.5v6h11V8H12"/></svg><span>Share screen</span></button>
+  <button id="website" aria-label="Export website" title="Export website"><svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M2 6h12m-8 4h4"/></svg><span>Export website</span></button>
+  <button id="tunnel" aria-label="Tunnel details" title="Tunnel details"><svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6"/><ellipse cx="8" cy="8" rx="2.75" ry="6"/><path d="M2 8h12"/></svg><span>Tunnel details</span></button>
+</div>
+<dialog id="tunnel-dialog" aria-labelledby="tunnel-title">
+  <h2 id="tunnel-title">Tunnel</h2>
+  <div id="tunnel-status" class="tunnel-status" role="status" aria-live="polite"></div>
+  <form method="dialog"><button>Close</button></form>
+</dialog>
 <dialog id="website-dialog" aria-labelledby="website-title">
   <form id="website-form">
     <h2 id="website-title">Export website</h2>
@@ -338,7 +383,8 @@ async function comments() {
   const l = await (await fetch("/__cd/comments")).json();
   const drafts = l.filter((c) => c.status === "draft").length;
   $("#send").disabled = !drafts;
-  $("#send").textContent = drafts ? `Send to agent (${drafts})` : "Send to agent";
+  $("#send").title = drafts ? `Send to agent (${drafts})` : "Send to agent";
+  $("#send").setAttribute("aria-label", $("#send").title);
   $("#cm").innerHTML = l.length ? "" : '<small style="color:var(--mut)">No comments yet. Toggle Comment and click an element.</small>';
   for (const c of l) {
     const d = document.createElement("div");
@@ -362,8 +408,9 @@ let agentOn = false;
 async function agent() {
   agentOn = (await (await fetch("/__cd/agent")).json()).listening;
   const working = !agentOn && (await (await fetch("/__cd/comments")).json()).some((c) => c.status === "sent");
-  $("#agent").className = agentOn ? "on" : "";
-  $("#agent").textContent = agentOn ? "Agent listening" : working ? "Agent working" : "No agent listening";
+  $("#agent").className = agentOn ? "on" : working ? "working" : "";
+  $("#agent").title = agentOn ? "Agent listening" : working ? "Agent working" : "No agent listening";
+  $("#agent").setAttribute("aria-label", $("#agent").title);
 }
 const PROMPT = "Run `cdesign review` and apply the comments I sent in the cdesign viewer.";
 function toast(t) { $("#toast").textContent = t; $("#toast").classList.add("on"); setTimeout(() => $("#toast").classList.remove("on"), 4000); }
@@ -452,7 +499,7 @@ const current = () => theme() || (matchMedia("(prefers-color-scheme: dark)").mat
 function applyTheme() {
   const t = current();
   document.documentElement.dataset.theme = t;
-  $("#theme").textContent = t === "dark" ? "Dark" : "Light";
+  $("#theme").setAttribute("aria-pressed", String(t === "dark"));
   $("#theme").classList.toggle("on", t === "dark");
   for (const f of frames()) try { f.contentDocument.documentElement.setAttribute("data-theme", t); } catch {}
 }
@@ -486,7 +533,8 @@ const phone = () => {
   const s = fit ? Math.min(1, ($("main").clientHeight - 24) / h) : 1;
   f.style.setProperty("--dw", w + "px"); f.style.setProperty("--dh", h + "px"); f.style.setProperty("--ds", s);
   d.style.width = Math.round(w * s) + "px"; d.style.height = Math.round(h * s) + "px";
-  $("#dev").value = dev; $("#fit").textContent = fit ? "Fit height" : "Real size";
+  $("#dev").value = dev; $("#fit").setAttribute("aria-pressed", String(fit));
+  $("#fit").classList.toggle("on", fit);
 };
 $("#dev").onchange = () => { dev = $("#dev").value; store("cd-dev", dev); phone(); };
 $("#rot").onclick = () => { rot = !rot; store("cd-rot", rot ? "1" : ""); phone(); };
@@ -583,15 +631,30 @@ async function projects() {
   const a = document.createElement("button"); a.textContent = "Add folder…"; a.onclick = addFolder; pk.appendChild(a);
   return null;
 }
+const projectTools = $("#project-tools");
+projectTools.addEventListener("beforetoggle", (event) => {
+  if (event.newState !== "open") return;
+  const trigger = $("#project-tools-toggle").getBoundingClientRect();
+  const below = trigger.top < innerHeight / 2;
+  projectTools.style.left = Math.max(8, Math.min(trigger.left, innerWidth - 192)) + "px";
+  projectTools.style.top = below ? trigger.bottom + 6 + "px" : "auto";
+  projectTools.style.bottom = below ? "auto" : innerHeight - trigger.top + 6 + "px";
+});
+projectTools.addEventListener("click", (event) => {
+  if (event.target.closest("button")) projectTools.hidePopover();
+}, { capture: true });
+$("#tunnel").onclick = () => $("#tunnel-dialog").showModal();
 async function tunnelStatus() {
   try {
     const r = await fetch("/__cd/tunnel");
     if (!r.ok) return;
     const t = await r.json();
+    $("#tunnel").classList.toggle("on", Boolean(t.url));
     for (const el of [$("#tunnel-status"), $("#pick-tunnel")]) {
       if (!el) continue;
-      el.replaceChildren();
       const message = t.starting ? "Starting tunnel…" : t.error ? "Tunnel unavailable: " + t.error : t.url ? "Tunnel: " : "Tunnel offline";
+      if (el.title === (t.url || message)) continue;
+      el.replaceChildren();
       el.title = t.url || message;
       el.append(document.createTextNode(message));
       if (t.url) { const a = document.createElement("a"); a.href = t.url; a.textContent = t.url; a.target = "_blank"; a.rel = "noopener"; el.append(a); }
