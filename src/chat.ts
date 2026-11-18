@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { dataDir, ensureDataDir } from "./store";
+import { dataDir, ensureDataDir, update } from "./store";
 import { type Capabilities, type ProviderEvent, type ProviderSession, type TurnSettings, type TurnStatus } from "./chat-providers";
 import { PROVIDERS } from "./chat-registry";
 import { resolveContext, withContext, type ContextRef } from "./chat-context";
@@ -229,6 +229,9 @@ export class ProjectChat {
     conv.updatedAt = Date.now();
     conv.model = model; conv.effort = effort;
     if (!created && typeof b.fullAccess === "boolean") conv.fullAccess = b.fullAccess;
+    // the agent now has these comments in its prompt: they leave the undelivered pool (resolve still marks them done)
+    const ids = new Set(context.flatMap((r) => (r.kind === "comment" ? [r.id] : [])));
+    if (ids.size) update(this.root, (l) => l.forEach((c) => ids.has(c.id) && (c.status === "draft" || c.status === "queued") && (c.status = "sent")));
     this.emit({ type: "turn.begin", conversation: { id: conv.id, title: conv.title, provider: conv.provider, fullAccess: conv.fullAccess, model, effort }, text, itemId: "u" + rid(), ...(context.length ? { context } : {}) });
     if (created) this.emit({ type: "list" }, null);
     void this.run(conv, withContext(text, context));

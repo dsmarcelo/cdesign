@@ -57,14 +57,15 @@ test.skipIf(!chrome)("browser: select an element, manage context chips, add a co
     await ev("document.querySelector('.cc-chip[data-type=selection] button').click()");
     expect((await chips()).map((c: string) => c.split(":")[0])).toEqual(["page"]);
 
-    // a comment is attached only through Add to chat, and only once
+    // an undelivered comment is attached automatically, once
     const base = `http://${projectId(root)}.localhost:${port}`;
     const made = await (await fetch(`${base}/__cd/comments`, { method: "POST", body: JSON.stringify({ file: "design/pages/Page.html", cdId: "2:1", selector: "h1.t", text: "Larger heading" }) })).json() as any;
-    await until(() => ev("!!document.querySelector('#cm .addchat')"));
-    await ev("document.querySelector('#cm .addchat').click()");
-    await ev("document.querySelector('#cm .addchat').click()");
+    await until(async () => (await chips()).some((c: string) => c.startsWith("comment:")));
     expect((await chips()).filter((c: string) => c.startsWith("comment:")).length).toBe(1);
     expect((await (await fetch(`${base}/__cd/comments`)).json() as any[]).find((c) => c.id === made.id).status).toBe("draft");
+
+    // an empty message with a comment attached is sendable (it defaults to the review prompt)
+    expect(await ev("document.querySelector('.cc-form .go').disabled")).toBe(false);
 
     // send: the agent edits the page, the preview reloads, and the message shows what was sent
     await ev("{const t=document.querySelector('#chat textarea');t.value='design-edit now';t.dispatchEvent(new Event('input'));document.querySelector('.cc-form .go').click()}");

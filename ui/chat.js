@@ -123,9 +123,9 @@
   document.addEventListener("pointerdown", (e) => { if (!e.target.closest(".cc-menu, .cc-title, .cc-pick")) closeMenus(); });
   root.addEventListener("keydown", (e) => { if (e.key === "Escape" && (!cmenu.hidden || !pmenu.hidden)) { const t = !cmenu.hidden ? titleBtn : pick; closeMenus(); t.focus(); } });
 
-  // ---- design context: the open page and selected element of THIS tab (refreshed from the server), plus comments added explicitly ----
+  // ---- design context: the open page and selected element of THIS tab (refreshed from the server), plus the undelivered comments ----
   // A chip the user removed stays removed only for that page/element; a changed page or selection brings its automatic chip back for the next message.
-  let auto = { page: null, selection: null }; const dismissed = new Set(); const added = new Map();
+  let auto = { page: null, selection: null }; const dismissed = new Set(); const added = new Map(); // `added`: every undelivered comment (draft/queued), attached automatically; × drops one from this message only
   const keyOf = { page: (c) => "page:" + c.file, selection: (c) => "el:" + c.file + ":" + c.cdId };
   const WHY = { missing: "file no longer exists", stale: "element no longer exists" };
   const chipList = () => [
@@ -135,7 +135,7 @@
   const drawChips = () => {
     const nodes = [];
     for (const x of chipList()) nodes.push(chip(x.type, x.label, x.c.state, () => { dismissed.add(x.k); drawChips(); }));
-    for (const [id, c] of added) nodes.push(chip("comment", `${c.file} ${c.cdId}: ${c.text.length > 40 ? c.text.slice(0, 39) + "…" : c.text}`, "ok", () => { added.delete(id); drawChips(); }));
+    for (const [id, c] of added) if (!dismissed.has("c:" + id)) nodes.push(chip("comment", `${c.file} ${c.cdId}: ${c.text.length > 40 ? c.text.slice(0, 39) + "…" : c.text}`, "ok", () => { dismissed.add("c:" + id); drawChips(); }));
     chipsBox.replaceChildren(...nodes); chipsBox.hidden = !nodes.length;
   };
   const chip = (type, label, state, remove) => {
@@ -146,10 +146,11 @@
     n.append(x); return n;
   };
   /** The context to submit now: the chips that are visible and valid at this moment. */
+  const commentIds = () => [...added.keys()].filter((id) => !dismissed.has("c:" + id));
   const snapshotContext = () => {
     const out = {};
     for (const x of chipList()) if (x.c.state === "ok") out[x.type] = x.type === "page" ? { file: x.c.file } : { file: x.c.file, cdId: x.c.cdId, selector: x.c.selector, tag: x.c.tag };
-    if (added.size) out.comments = [...added.keys()];
+    const cs = commentIds(); if (cs.length) out.comments = cs;
     return Object.keys(out).length ? out : undefined;
   };
   const refreshContext = async () => {
@@ -162,8 +163,15 @@
     } catch { /* the next poll retries */ }
   };
   setInterval(refreshContext, 1000);
-  addEventListener("cd-add-comment", (e) => { const c = e.detail; if (c?.id) { added.set(c.id, c); tab("chat"); drawChips(); box.focus(); } });
-  drawChips();
+  /** The viewer announces its comment list: draft and queued ones ride along with the next message, newest last in the chips. */
+  const takeComments = (list) => {
+    added.clear();
+    for (const c of list ?? []) if (c.status === "draft" || c.status === "queued") added.set(c.id, c);
+    for (const k of [...dismissed]) if (k.startsWith("c:") && !added.has(k.slice(2))) dismissed.delete(k);
+    drawChips(); try { sync(); } catch { /* not built yet: the first sync reads commentIds() */ }
+  };
+  addEventListener("cd-comments", (e) => takeComments(e.detail));
+  takeComments(window.cdComments); // the viewer may have loaded them before this script ran
 
   // `conv` is the chat on screen (null = a new chat that is not saved until its first message); `busy` is project-wide, `activeId` the chat that owns the running turn
   let providers = [], conv = null, convs = [], activeId = null, busy = false, seq = 0, epoch = "", es = null, posting = false, full = true, draft = false;
@@ -175,7 +183,7 @@
   note.onclick = () => { if (note.dataset.go) open(note.dataset.go); };
   const mine = () => !!conv && busy && activeId === conv.id; // this chat owns the running turn
   const sync = () => {
-    sendBtn.disabled = busy || posting || !ready() || !box.value.trim();
+    sendBtn.disabled = busy || posting || !ready() || !(box.value.trim() || commentIds().length);
     badge.disabled = busy || posting; // the mode applies between turns
     stopBtn.hidden = !mine();
     box.disabled = false;
@@ -405,7 +413,7 @@
   pick.onclick = () => toggle(pmenu, pick, drawPicker);
 
   const send = async () => {
-    const text = box.value.trim();
+    const text = box.value.trim() || (commentIds().length ? "Run `cdesign review` and apply the comments I sent in the cdesign viewer." : "");
     if (!text || busy || posting || !ready()) return;
     posting = true; sync();
     try {
@@ -413,7 +421,7 @@
       const context = snapshotContext();
       const r = await post("/send", conv ? { text, provider: sel.value, conversationId: conv.id, context } : { text, provider: sel.value, fullAccess: fresh.fullAccess, model: fresh.model, effort: fresh.effort, context });
       if (r.ok) {
-        box.value = ""; added.clear(); drawChips();
+        box.value = ""; drawChips();
         const { conversationId } = await r.json().catch(() => ({}));
         if (draft && conversationId) { draft = false; await load(conversationId).catch(() => {}); } // the response can beat the first stream event
       } else { const j = await r.json().catch(() => ({})); showNote(j.error || "Could not send", true, j.activeConversationId); }

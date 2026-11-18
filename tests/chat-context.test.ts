@@ -113,7 +113,7 @@ test("context is validated against this project: foreign, missing and stale refe
   expect((await b.snap()).conversations).toEqual([]);
 });
 
-test("comments reach the agent only when added, once, and the external lifecycle is untouched", async () => {
+test("comments reach the agent only when attached, once, and leave the undelivered pool", async () => {
   const b = await boot();
   const made = await (await b.post("comments", { file: PAGE, cdId: "2:1", selector: "h1.t", text: "Make the heading bigger" })).json() as any;
   await b.send({ text: "plain message" });
@@ -128,8 +128,8 @@ test("comments reach the agent only when added, once, and the external lifecycle
   expect(user.context).toHaveLength(1);
 
   const after = (await (await fetch(b.url("comments"))).json() as any[]).find((c) => c.id === made.id);
-  expect(after.status).toBe("draft"); // not queued, sent or resolved by chat
-  expect((await (await b.post("send", {})).json() as any).queued).toBe(1); // Send to agent still works
+  expect(after.status).toBe("sent"); // delivered by chat: not re-attached, still resolvable
+  expect((await (await b.post("send", {})).json() as any).queued).toBe(0);
 });
 
 test("an agent's design edit reloads the preview, and the edit is reversible", async () => {
