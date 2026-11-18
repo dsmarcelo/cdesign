@@ -240,7 +240,10 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
 
     // ----- daemon-level API -----
     if (p === "/__cd/projects" && req.method === "GET") return json(remote ? { current: via!.id, remote: true, projects: [...projects.values()].map((q) => ({ id: q.id, name: basename(q.root), url: `/?project=${q.id}`, tabs: q.clients.size })) } : list(project));
-    if (!via && p === "/__cd/tunnel" && req.method === "GET") return json({ url: tunnel?.url ?? null, starting: !!tunnelStarting, error: tunnelError });
+    if (!via && p === "/__cd/tunnel" && req.method === "GET") {
+      lastActive = Date.now(); // The project picker has no event stream but is still an open viewer.
+      return json({ url: tunnel?.url ?? null, starting: !!tunnelStarting, error: tunnelError });
+    }
     if (!via && p === "/__cd/tunnel" && req.method === "POST") {
       try { return json({ url: (await ensureTunnel()).url }); }
       catch (e) { return json({ error: (e as Error).message }, 500); }
@@ -272,8 +275,10 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     const rm = p.match(/^\/__cd\/projects\/([^/]+)\/remove$/);
     if (rm && req.method === "POST") {
       const a = projects.get(rm[1]);
-      if (a) removeProject(a);
-      if (!projects.size) setTimeout(shutdown, 200); // last project closed: nothing left to serve
+      if (a) {
+        removeProject(a);
+        if (!projects.size) stopTunnel();
+      }
       return json({ ok: true, remaining: projects.size });
     }
     const tn = p.match(/^\/__cd\/projects\/([^/]+)\/tunnel(\/stop)?$/);

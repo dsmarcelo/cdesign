@@ -1,0 +1,28 @@
+pkgname=cdesign-desktop
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Native viewer for React and HTML prototypes with element-level comments'
+arch=('x86_64')
+url='https://github.com/dsmarcelo/cdesign'
+depends=('bun' 'dbus' 'gtk3' 'hicolor-icon-theme' 'webkit2gtk-4.1' 'xdg-utils' 'xdotool')
+makedepends=('cargo' 'pkgconf')
+options=('!strip' '!debug')
+
+build() {
+  # This recipe builds the checkout containing it.
+  cd "$startdir/../.."
+  bun install --frozen-lockfile
+  CARGO_TARGET_DIR="$srcdir/target" bun run desktop:build --ci --bundles deb
+}
+
+package() {
+  local bundles=("$srcdir"/target/release/bundle/deb/*_"$pkgver"_amd64.deb)
+  if [[ ${#bundles[@]} -ne 1 || ! -f ${bundles[0]} ]]; then
+    printf 'Expected one Tauri package for cdesign %s\n' "$pkgver" >&2
+    return 1
+  fi
+  # Reuse Tauri's file layout and desktop entry, then use Arch's Bun at runtime.
+  ar p "${bundles[0]}" data.tar.gz > "$srcdir/data.tar.gz"
+  tar -xzf "$srcdir/data.tar.gz" -C "$pkgdir"
+  ln -sfn bun "$pkgdir/usr/bin/cdesign-bun"
+}

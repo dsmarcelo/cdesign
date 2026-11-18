@@ -224,6 +224,19 @@ switch (cmd) {
     console.log(`cdesign viewer: http://localhost:${server.port}`);
     break;
   }
+  case "desktop-url": {
+    // The native launcher and the CLI must use the same daemon and project registry.
+    const root = rest[0] ? resolve(rest[0]) : null;
+    if (root) {
+      if (!statSync(root).isDirectory()) throw new Error("Select a project folder.");
+      await setup(root, {});
+      console.log((await register(root)).url);
+    } else {
+      const { port } = await ensureDaemon();
+      console.log(`http://localhost:${port}/`);
+    }
+    break;
+  }
   case "app": {
     const s = await ensureDaemon();
     const url = `http://localhost:${s.port}/`;

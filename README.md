@@ -9,11 +9,37 @@ A lightweight viewer for React TSX and HTML prototypes, built for coding agents.
 - **Comments to the agent:** a comment carries the file, element id, selector, the element's source and your text. Comments stay drafts until you press **Send to agent**, which delivers them all as one batch to an agent running `cdesign wait`.
 - **Context on demand:** `cdesign open` returns short directions and the current target. Agents retrieve relevant guidance, component contracts and skills as needed; nothing is installed per project.
 
-## Install
+## Desktop app
+
+cdesign Desktop runs the viewer in a Tauri 2 window on Linux and Windows. Open a project from the project picker, choose **File → Open Folder…**, or pass the project directory as the first argument to the desktop executable. New projects opened from the native menu or executable use the React and Tailwind defaults. Desktop and CLI sessions use the same local daemon and project registry. Tunnel sharing starts only when requested through the viewer or CLI.
+
+From the checkout, run this as your regular user on Arch Linux (x86-64), Debian/Ubuntu, or Fedora:
+
+```bash
+./install-desktop.sh
+```
+
+The script detects the package manager and uses normal `sudo` prompts. It installs a local package if one is available, or installs the build dependencies and builds from source. On Windows, run the NSIS setup executable directly or pass it to the script from Git Bash.
+
+You can pass a downloaded package explicitly with `./install-desktop.sh /path/to/package`. The [Desktop installers workflow](https://github.com/dsmarcelo/cdesign/actions/workflows/desktop.yml) produces unsigned Arch, Debian, RPM, and Windows NSIS packages. Debian, RPM, and Windows packages bundle Bun. The Arch package pulls in system Bun through pacman. Use the CLI installation below to put `cdesign` on PATH and register its MCP server with your coding agents.
+
+### Build from source
+
+Install Bun, stable Rust, and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform. Use a native Linux GNU or Windows MSVC toolchain.
+
+```bash
+bun install --frozen-lockfile
+bun run desktop:dev
+bun run desktop:build
+```
+
+Installers appear under `src-tauri/target/release/bundle/`. The desktop build stages a copy of the runtime. Restart `desktop:dev` to pick up changes to the viewer runtime source.
+
+## CLI installation
 
 Linux/macOS (bash) and Windows (PowerShell). One command installs Bun if missing, cdesign into `~/.local/share/cdesign`, a `cdesign` launcher in `~/.local/bin`, and registers the MCP server with every agent found (Claude Code, Codex, Antigravity `agy`). Update with `cdesign update` (re-runs the installer).
 
-On Linux, installation also adds cdesign to the applications list. Opening it launches the local project picker in your browser and starts a tunnel automatically. The viewer shows the current tunnel URL or an error; install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) for the default quick tunnel, or configure a fixed tunnel below. Anyone with the tunnel link can view all open projects and send comments while it is running.
+On Linux, the CLI installation also adds a cdesign browser launcher to the applications list. Opening it launches the local project picker in your browser and starts a tunnel automatically. The viewer shows the current tunnel URL or an error; install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) for the default quick tunnel, or configure a fixed tunnel below. Anyone with the tunnel link can view all open projects and send comments while it is running.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dsmarcelo/cdesign/main/install.sh | bash

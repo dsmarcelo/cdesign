@@ -18,6 +18,7 @@
     "typescript": "~5.9.3"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2",
     "@types/bun": "^1.4.4",
     "@types/qrcode-terminal": "^0.12.2",
     "@types/react": "^19.3.0",
@@ -25,6 +26,8 @@
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit --target es2022 --module preserve --moduleResolution bundler --types bun --skipLibCheck src/*.ts tests/*.ts"
+    "typecheck": "tsc --noEmit --target es2022 --module preserve --moduleResolution bundler --types bun --skipLibCheck src/*.ts tests/*.ts",
+    "desktop:dev": "bun --bun tauri dev",
+    "desktop:build": "bun --bun tauri build"
   }
 }
