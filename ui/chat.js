@@ -32,6 +32,8 @@
   };
 
   // ---- chat DOM ----
+  /** How each agent's own terminal reopens a saved session: the chat's conversation lives there as well as in cdesign's copy. */
+  const RESUME = { claude: "claude --resume", codex: "codex resume" };
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
   // Agent text is untrusted: it is parsed into DOM nodes with textContent only (no innerHTML), so markup in it can never run.
   // Links are kept only for http(s)/mailto; anything else (javascript:, data:...) is shown as plain text.
@@ -62,6 +64,15 @@
         while (i < lines.length && !/^\s*```/.test(lines[i])) code.push(lines[i++]);
         i++;
         const pre = el("pre", "cc-code"); pre.tabIndex = 0; pre.append(el("code", "", code.join("\n"))); out.push(pre);
+      } else if (/^\s*#{1,6}\s+\S/.test(line)) {
+        const h = el("p", "cc-h"); inline(h, line.replace(/^\s*#{1,6}\s+/, "")); out.push(h); i++;
+      } else if (/^\s*\|/.test(line) && /^\s*\|?[\s:|-]*-[\s:|-]*$/.test(lines[i + 1] ?? "")) {
+        const cells = (l) => l.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+        const table = el("table", "cc-table"), head = el("tr");
+        for (const c of cells(line)) { const th = el("th"); inline(th, c); head.append(th); }
+        table.append(head); i += 2;
+        while (i < lines.length && /^\s*\|/.test(lines[i])) { const tr = el("tr"); for (const c of cells(lines[i++])) { const td = el("td"); inline(td, c); tr.append(td); } table.append(tr); }
+        const wrapT = el("div", "cc-tablewrap"); wrapT.append(table); out.push(wrapT);
       } else if (/^\s*([-*]|\d+[.)])\s+/.test(line)) {
         const ordered = /^\s*\d/.test(line), list = el(ordered ? "ol" : "ul");
         while (i < lines.length && /^\s*([-*]|\d+[.)])\s+/.test(lines[i])) { const li = el("li"); inline(li, lines[i].replace(/^\s*([-*]|\d+[.)])\s+/, "")); list.append(li); i++; }
@@ -70,7 +81,7 @@
       else {
         const p = el("p");
         const para = [];
-        while (i < lines.length && lines[i].trim() && !/^\s*```/.test(lines[i]) && !/^\s*([-*]|\d+[.)])\s+/.test(lines[i])) para.push(lines[i++]);
+        while (i < lines.length && lines[i].trim() && !/^\s*```/.test(lines[i]) && !/^\s*([-*]|\d+[.)])\s+/.test(lines[i]) && !/^\s*#{1,6}\s+\S/.test(lines[i]) && !/^\s*\|/.test(lines[i])) para.push(lines[i++]);
         para.forEach((l, k) => { if (k) p.append(el("br")); inline(p, l); });
         out.push(p);
       }
@@ -87,7 +98,7 @@
   };
   const showMode = (full) => { badge.value = full ? "full" : "normal"; badge.classList.toggle("full", full); badge.title = MODE_HELP[badge.value]; };
   showMode(true);
-  const ICONS = { plus: "M12 5v14M5 12h14", trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3", up: "M12 19V5M5 12l7-7 7 7", stop: "M7 7h10v10H7z", chevron: "M6 9l6 6 6-6" };
+  const ICONS = { plus: "M12 5v14M5 12h14", trash: "M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3", up: "M12 19V5M5 12l7-7 7 7", stop: "M7 7h10v10H7z", chevron: "M6 9l6 6 6-6", terminal: "M4 17l6-6-6-6M12 19h8" };
   const icon = (name) => {
     const NS = "http://www.w3.org/2000/svg", svg = document.createElementNS(NS, "svg"), path = document.createElementNS(NS, "path");
     for (const [k, v] of Object.entries({ viewBox: "0 0 24 24", width: "16", height: "16", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round", "aria-hidden": "true" })) svg.setAttribute(k, v);
@@ -99,8 +110,9 @@
   const titleBtn = el("button", "cc-title"); titleBtn.type = "button"; titleBtn.setAttribute("aria-haspopup", "menu"); titleBtn.setAttribute("aria-expanded", "false"); titleBtn.title = "Switch chat";
   const titleText = el("span", "cc-title-text", "New chat"); titleBtn.append(titleText, icon("chevron"));
   const newBtn = button("cc-icon", "New chat", "plus");
+  const resumeBtn = button("cc-icon", "Copy the command that continues this chat in a terminal", "terminal"); resumeBtn.disabled = true;
   const cmenu = el("div", "cc-menu"); cmenu.hidden = true; cmenu.setAttribute("role", "menu"); cmenu.setAttribute("aria-label", "Chats");
-  bar.append(titleBtn, newBtn, cmenu);
+  bar.append(titleBtn, newBtn, resumeBtn, cmenu);
   const meta = el("div", "cc-meta");
   const status = el("div", "cc-status"); status.setAttribute("role", "status");
   meta.append(status, badge);
@@ -108,7 +120,7 @@
   const log = el("div", "cc-log"); log.setAttribute("aria-live", "polite"); log.tabIndex = 0; log.setAttribute("aria-label", "Conversation");
   const jump = el("button", "cc-jump", "↓ Latest"); jump.hidden = true; jump.title = "Scroll to the newest message";
   const wrap = el("div", "cc-logwrap"); wrap.append(log, jump);
-  const box = el("textarea"); box.placeholder = "Ask the agent to change this design…"; box.setAttribute("aria-label", "Message"); box.title = "Enter to send, Shift+Enter for a new line";
+  const box = el("textarea"); box.placeholder = "Ask the agent to change this design… (/ for commands and skills)"; box.setAttribute("aria-label", "Message"); box.title = "Enter to send, Shift+Enter for a new line";
   // composer: message box on top, then the model picker (every agent's models in one list) and Send/Stop
   const pick = el("button", "cc-pick"); pick.type = "button"; pick.setAttribute("aria-haspopup", "listbox"); pick.setAttribute("aria-expanded", "false");
   const pickName = el("span", "cc-pick-name"), pickEffort = el("span", "cc-pick-effort");
@@ -116,10 +128,12 @@
   const pmenu = el("div", "cc-menu cc-pmenu"); pmenu.hidden = true;
   const sendBtn = button("go cc-send", "Send", "up"), stopBtn = button("cc-send stop", "Stop", "stop"); stopBtn.hidden = true;
   sendBtn.title = "Send (Enter)";
-  const form = el("div", "cc-form"); const row = el("div", "cc-tools"); row.append(pick, stopBtn, sendBtn); form.append(box, row, pmenu);
+  const smenu = el("div", "cc-menu cc-smenu"); smenu.hidden = true; smenu.id = "cc-slash"; smenu.setAttribute("role", "listbox"); smenu.setAttribute("aria-label", "Commands and skills");
+  box.setAttribute("aria-controls", "cc-slash"); box.setAttribute("aria-autocomplete", "list");
+  const form = el("div", "cc-form"); const row = el("div", "cc-tools"); row.append(pick, stopBtn, sendBtn); form.append(box, row, pmenu, smenu);
   const chipsBox = el("div", "cc-chips"); chipsBox.setAttribute("aria-label", "Context sent with your message");
   root.append(bar, meta, note, wrap, chipsBox, form);
-  const closeMenus = () => { cmenu.hidden = pmenu.hidden = true; titleBtn.setAttribute("aria-expanded", "false"); pick.setAttribute("aria-expanded", "false"); };
+  const closeMenus = () => { cmenu.hidden = pmenu.hidden = smenu.hidden = true; titleBtn.setAttribute("aria-expanded", "false"); pick.setAttribute("aria-expanded", "false"); };
   const toggle = (menu, trigger, fill) => { const was = menu.hidden; closeMenus(); if (was) { fill(); menu.hidden = false; trigger.setAttribute("aria-expanded", "true"); } };
   document.addEventListener("pointerdown", (e) => { if (!e.target.closest(".cc-menu, .cc-title, .cc-pick")) closeMenus(); });
   root.addEventListener("keydown", (e) => { if (e.key === "Escape" && (!cmenu.hidden || !pmenu.hidden)) { const t = !cmenu.hidden ? titleBtn : pick; closeMenus(); t.focus(); } });
@@ -178,6 +192,7 @@
   let providers = [], conv = null, convs = [], activeId = null, busy = false, seq = 0, epoch = "", es = null, posting = false, full = true, draft = false;
   // what a new (unsaved) chat will be created with; a saved chat uses its own fields
   let fresh = { fullAccess: true, model: null, effort: null };
+  let projectRoot = "";
   let renderedId = null;
   const ready = () => providers.find((p) => p.id === sel.value)?.state === "ready";
   const showNote = (text, err, go) => { note.hidden = !text; note.textContent = text || ""; note.classList.toggle("err", !!err); if (go) note.dataset.go = go; else delete note.dataset.go; };
@@ -187,6 +202,7 @@
     sendBtn.disabled = busy || posting || !ready() || !(box.value.trim() || commentIds().length);
     badge.disabled = busy || posting; // the mode applies between turns
     stopBtn.hidden = !mine();
+    resumeBtn.disabled = !conv?.sessionId || !RESUME[conv.provider];
     box.disabled = false;
     pick.disabled = busy || posting; // settings apply between turns
     if (pick.disabled) closeMenus();
@@ -283,13 +299,14 @@
   };
   const nodes = new Map();
   const draw = (it) => {
-    if (it.kind !== "user" && it.kind !== "message") return;
+    if (it.kind !== "user" && it.kind !== "message" && it.kind !== "notice") return;
     let n = nodes.get(it.id);
     if (!n) {
       n = el("div", "cc-msg " + it.kind);
       nodes.set(it.id, n); log.append(n);
     }
     if (it.kind === "message") markdown(n, it.text || ""); else n.textContent = it.text || "";
+    if (it.kind === "notice") n.dataset.status = it.status || "";
     n.classList.toggle("live", it.kind === "message" && busy && conv?.items.at(-1) === it);
   };
   const cards = new Map();
@@ -383,7 +400,7 @@
     sync();
   };
   const refreshList = async () => {
-    try { const s = await (await api("?c=" + encodeURIComponent(conv?.id ?? ""))).json(); convs = s.conversations; drawList(); } catch { /* the next event or reload fixes the list */ }
+    try { const s = await (await api("?c=" + encodeURIComponent(conv?.id ?? ""))).json(); convs = s.conversations; if (conv && s.conversation?.id === conv.id && s.conversation.sessionId) conv.sessionId = s.conversation.sessionId; drawList(); sync(); } catch { /* the next event or reload fixes the list */ }
   };
   const load = async (cid) => {
     const s = await (await api("?c=" + encodeURIComponent(draft ? "" : cid ?? conv?.id ?? store("cd-conv") ?? ""))).json();
@@ -434,8 +451,69 @@
 
   const stop = () => post("/stop", { conversationId: conv?.id, turnId: conv?.turnId }).then(async (r) => { if (!r.ok) showNote((await r.json().catch(() => ({}))).error || "Could not stop", true); });
   sendBtn.onclick = send; stopBtn.onclick = stop;
-  box.oninput = sync;
-  box.onkeydown = (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } };
+  // ---- slash commands: a message that starts with "/" lists the agent's own commands and skills; the agent runs whatever is typed ----
+  const cmdCache = new Map(); // provider -> { at, list }
+  const commandsFor = (pid) => cmdCache.get(pid)?.list ?? [];
+  const loadCommands = async (pid) => {
+    const hit = cmdCache.get(pid);
+    if (hit && Date.now() - hit.at < 60000) return;
+    try {
+      const r = await api("/commands?provider=" + encodeURIComponent(pid));
+      cmdCache.set(pid, { at: Date.now(), list: r.ok ? (await r.json()).commands ?? [] : [] });
+    } catch { /* the next keystroke retries */ }
+  };
+  let slashAt = 0, slashRows = [];
+  const slashQuery = () => { const m = box.value.match(/^\/([^\s]*)$/); return m ? m[1].toLowerCase() : null; };
+  const closeSlash = () => { smenu.hidden = true; slashRows = []; box.removeAttribute("aria-activedescendant"); box.setAttribute("aria-expanded", "false"); };
+  const paintSlash = () => {
+    const q = slashQuery();
+    if (q === null || !ready()) return closeSlash();
+    const list = commandsFor(provider());
+    slashRows = [...list.filter((c) => c.name.toLowerCase().startsWith(q)), ...list.filter((c) => !c.name.toLowerCase().startsWith(q) && c.name.toLowerCase().includes(q))].slice(0, 60);
+    if (!slashRows.length) return closeSlash();
+    slashAt = Math.min(slashAt, slashRows.length - 1);
+    smenu.replaceChildren(...slashRows.map((c, k) => {
+      const b = el("button", "cc-opt cc-cmd"); b.type = "button"; b.id = "cc-cmd-" + k; b.setAttribute("role", "option"); b.setAttribute("aria-selected", String(k === slashAt)); b.classList.toggle("on", k === slashAt);
+      const top = el("span", "cc-cmd-top"); top.append(el("b", "", "/" + c.name));
+      if (c.hint) top.append(el("i", "", c.hint));
+      if (c.local) top.append(el("em", "", "built-in"));
+      b.append(top);
+      if (c.description) b.append(el("small", "", c.description));
+      b.onpointerdown = (e) => e.preventDefault(); // keep the caret in the message box
+      b.onclick = () => chooseSlash(c);
+      return b;
+    }));
+    smenu.hidden = false; box.setAttribute("aria-expanded", "true"); box.setAttribute("aria-activedescendant", "cc-cmd-" + slashAt);
+    smenu.children[slashAt]?.scrollIntoView({ block: "nearest" });
+  };
+  const chooseSlash = (c) => { box.value = "/" + c.name + " "; closeSlash(); box.focus(); sync(); };
+  const showSlash = () => {
+    if (slashQuery() === null) return closeSlash();
+    const pid = provider(), had = cmdCache.has(pid);
+    paintSlash();
+    if (!had || Date.now() - cmdCache.get(pid).at >= 60000) loadCommands(pid).then(paintSlash);
+  };
+  box.oninput = () => { slashAt = 0; sync(); showSlash(); };
+  box.onblur = () => setTimeout(closeSlash, 120);
+  box.onkeydown = (e) => {
+    if (!smenu.hidden && slashRows.length && !e.isComposing) {
+      const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+      if (step) { e.preventDefault(); slashAt = (slashAt + step + slashRows.length) % slashRows.length; paintSlash(); return; }
+      if (e.key === "Escape") { e.preventDefault(); closeSlash(); return; }
+      // Enter on a command that is already typed in full sends it; otherwise it completes the highlighted one
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && slashRows[slashAt].name.toLowerCase() !== slashQuery())) { e.preventDefault(); chooseSlash(slashRows[slashAt]); return; }
+    }
+    if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); closeSlash(); send(); }
+  };
+
+  resumeBtn.onclick = async () => {
+    if (!conv?.sessionId || !RESUME[conv.provider]) return;
+    const quote = (t) => "'" + t.replace(/'/g, "'\\''") + "'";
+    const cmd = (projectRoot ? `cd ${quote(projectRoot)} && ` : "") + `${RESUME[conv.provider]} ${conv.sessionId}`;
+    const label = providers.find((p) => p.id === conv.provider)?.label ?? "the agent";
+    try { await Promise.race([navigator.clipboard.writeText(cmd), new Promise((_, no) => setTimeout(no, 1000))]); showNote(`Copied. Paste it in a terminal to continue this chat in ${label}: ${cmd}`); }
+    catch { showNote(`Run this in a terminal to continue this chat in ${label}: ${cmd}`); }
+  };
 
   badge.onchange = async () => {
     const want = badge.value === "full";
@@ -473,12 +551,14 @@
   const STATE = { missing: "not installed", login: "not logged in", unsupported: "update needed", error: "error" };
   const discover = async () => {
     try {
-      providers = (await (await api("/providers")).json()).providers;
+      const found = await (await api("/providers")).json();
+      providers = found.providers; projectRoot = found.root || "";
       if (!Array.isArray(providers)) throw new Error("Agent discovery unavailable");
     } catch { providers = []; showNote("Could not look for installed agents", true); }
     sel.replaceChildren(...providers.map((p) => { const o = el("option", "", p.label); o.value = p.id; return o; }));
     sel.value = conv ? conv.provider : providers.find((p) => p.state === "ready")?.id ?? providers[0]?.id ?? "";
     fillSettings(); refreshNote(); sync();
+    if (sel.value) loadCommands(sel.value);
   };
   (async () => { await load().catch(() => showNote("Could not load the chat", true)); await discover(); connect(); })();
 })();

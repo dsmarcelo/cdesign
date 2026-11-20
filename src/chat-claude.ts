@@ -14,11 +14,21 @@
  *           {type:"control_request",request_id,request:{subtype:"can_use_tool",tool_name,input,description,blocked_path}}; {type:"control_cancel_request",request_id};
  *           {type:"result",subtype:"success"|"error_during_execution"|...,is_error,result}
  */
-import { MAX_LINE, atLeast, probe, rec, str, type Capabilities, type Item, type ItemKind, type Provider, type ProviderSession, type StartOptions, type TurnSettings } from "./chat-providers";
+import { MAX_LINE, atLeast, probe, rec, str, type Capabilities, type Item, type ItemKind, type Provider, type ProviderSession, type SlashCommand, type StartOptions, type TurnSettings } from "./chat-providers";
 
 const CLAUDE_MIN = "2.1.326";
 const FILE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const QUESTION_TOOLS = new Set(["AskUserQuestion"]);
+
+/**
+ * Commands Claude Code runs itself, with no model turn (checked against 2.1.329: each answers with a synthetic message and a result of 0 turns).
+ * They reach the agent exactly as typed: design context or comments around `/compact` would become its summarization instructions.
+ */
+const LOCAL = new Set(["compact", "clear", "context", "usage", "rename", "recap", "reload-skills"]);
+/** Commands that would fight cdesign (model/effort belong to the picker, `config` can lift permissions) or only make sense in a terminal. */
+const HIDDEN = new Set(["model", "effort", "fast", "config", "mcp", "agents", "list-agents", "output-style", "autocompact", "heapdump", "doctor", "color", "focus", "reload-plugins", "login", "logout", "exit", "quit"]);
+const slashName = (text: string) => text.match(/^\/([A-Za-z0-9_][A-Za-z0-9_:.-]*)(?=\s|$)/)?.[1];
+const tokens = (n: unknown) => (typeof n === "number" ? (n >= 1000 ? `${(n / 1000).toFixed(1).replace(/\.0$/, "")}k` : String(n)) : "?");
 
 const kindOf = (name: string): ItemKind => (name === "Bash" ? "command" : FILE_TOOLS.has(name) ? "file" : "tool");
 /** One line saying what a tool call does, for the activity row and for approval prompts. */
@@ -106,6 +116,14 @@ class ClaudeSession implements ProviderSession {
     switch (m.type) {
       case "system":
         if (m.subtype === "init" && str(m.session_id)) this.sessionId = m.session_id;
+        else if (m.subtype === "status") this.compaction(m);
+        else if (m.subtype === "compact_boundary") {
+          const c = rec(m.compact_metadata);
+          this.compacting(`Conversation compacted (${tokens(c?.pre_tokens)} → ${tokens(c?.post_tokens)} tokens).`, "completed");
+        }
+        return;
+      case "conversation_reset": // /clear: the next message starts empty, under a new session id that the following init announces
+        emit({ type: "item.completed", item: { id: "reset-" + this.seen++, kind: "notice", text: "Context cleared. Claude starts the next message with an empty context.", status: "completed" } });
         return;
       case "control_response": {
         const r = rec(m.response);
@@ -126,6 +144,7 @@ class ClaudeSession implements ProviderSession {
       case "assistant": return this.assistant(m);
       case "user": {
         const content = rec(m.message)?.content;
+        if (typeof content === "string") return this.localOutput(content);
         if (!Array.isArray(content)) return;
         for (const b of content) {
           const r = rec(b);
@@ -145,6 +164,28 @@ class ClaudeSession implements ProviderSession {
         return;
       }
     }
+  }
+  private note = ""; // id of the compaction notice that is still running
+  /** `/compact` and automatic compaction report `status: "compacting"` first, then a boundary; a failed one ends with a null status and a non-success result. */
+  private compaction(m: Record<string, any>) {
+    if (m.status === "compacting" && !this.note) {
+      this.note = "compact-" + this.seen++;
+      this.o.onEvent({ type: "item.started", item: { id: this.note, kind: "notice", text: "Compacting the conversation…", status: "inProgress" } });
+    } else if (m.status === null && this.note && str(m.compact_result) && m.compact_result !== "success") {
+      this.compacting(`Compaction failed (${m.compact_result}).`, "failed");
+    }
+  }
+  private compacting(text: string, status: "completed" | "failed") {
+    const id = this.note || "compact-" + this.seen++; // an auto-compaction may report only its boundary
+    this.note = "";
+    this.o.onEvent({ type: "item.completed", item: { id, kind: "notice", text, status } });
+  }
+  /** Output of a local command arrives as a user message wrapped in `<local-command-stdout>`; "Compacted" only repeats the compaction notice. */
+  private localOutput(raw: string) {
+    const m = raw.match(/^<local-command-(stdout|stderr)>([\s\S]*)<\/local-command-\1>\s*$/);
+    const text = m?.[2].trim();
+    if (!m || !text || text === "Compacted") return;
+    this.o.onEvent({ type: "item.completed", item: { id: "local-" + this.seen++, kind: m[1] === "stderr" ? "notice" : "message", text, status: "completed" } });
   }
   private stream(m: Record<string, any>) {
     const ev = rec(m.event);
@@ -239,10 +280,53 @@ export function parseClaudeHelp(help: string): { aliases: string[]; efforts: str
   return { aliases: [...alias.matchAll(/'([^']+)'/g)].map((m) => m[1]), efforts: effort ? effort.split(", ") : [] };
 }
 
+/**
+ * What a `/` can start in this install: Claude Code lists its slash commands and skills (user, project and plugin ones) in the answer to `initialize`.
+ * It runs in the project folder so project skills are listed. A short-lived process asks and is killed; no message is sent, so it costs no model call.
+ */
+async function listCommands(root: string): Promise<SlashCommand[]> {
+  const bin = Bun.which("claude");
+  if (!bin) return [];
+  const proc = Bun.spawn([bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-mode", "default"], { cwd: root, stdin: "pipe", stdout: "pipe", stderr: "ignore" }); // project skills live under the project
+  const stdin = proc.stdin as { write(s: string): unknown; flush?(): unknown };
+  stdin.write(JSON.stringify({ type: "control_request", request_id: "cdcmds", request: { subtype: "initialize" } }) + "\n"); stdin.flush?.();
+  const timer = setTimeout(() => proc.kill(), 15000);
+  let found: unknown[] = [];
+  try {
+    const dec = new TextDecoder();
+    let buf = "";
+    read: for await (const c of proc.stdout as ReadableStream<Uint8Array>) {
+      buf += dec.decode(c, { stream: true });
+      if (buf.length > MAX_LINE && !buf.includes("\n")) break;
+      let i: number;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 1);
+        let m: Record<string, any> | null = null;
+        try { m = rec(JSON.parse(line)); } catch { /* not protocol output */ }
+        const r = m?.type === "control_response" ? rec(m.response) : null;
+        if (r?.request_id === "cdcmds") { if (Array.isArray(rec(r.response)?.commands)) found = rec(r.response)!.commands as unknown[]; break read; }
+      }
+    }
+  } finally { clearTimeout(timer); proc.kill(); }
+  const seen = new Set<string>();
+  const out: SlashCommand[] = [];
+  for (const c of found) {
+    const r = rec(c), name = str(r?.name);
+    if (!name || name.startsWith("__") || HIDDEN.has(name) || seen.has(name) || !/^[A-Za-z0-9_][A-Za-z0-9_:.-]*$/.test(name)) continue;
+    const description = (str(r?.description) ?? "").replace(/\s*\((?:user|project|plugin|builtin)\)$/, "");
+    if (/sessions only$/.test(description)) continue; // launched by a server/workflow, not typed
+    seen.add(name);
+    out.push({ name, description: description.slice(0, 400), hint: (str(r?.argumentHint) ?? "").slice(0, 100), local: LOCAL.has(name) });
+  }
+  return out.sort((a, b) => Number(b.local) - Number(a.local) || a.name.localeCompare(b.name));
+}
+
 export const claude: Provider = {
   id: "claude",
   label: "Claude",
   perTurn: false, // --model/--effort are process flags: a change resumes the saved session in a new process
+  isLocal: (text) => LOCAL.has(slashName(text) ?? ""),
+  commands: listCommands,
   async capabilities() {
     const none = (note: string): Capabilities => ({ source: "fallback", note, models: [], efforts: [], defaultLabel: "Default" });
     const bin = Bun.which("claude");

@@ -10,7 +10,7 @@ import { publishWebsite, publishingStatus, shareScreen, listShares, deleteShare 
 import { colorTokens, sizeTokens } from "./tokens";
 import { applyEdit, editInfo } from "./edit";
 import { contextChips } from "./chat-context";
-import { ProjectChat, ChatError, MAX_BODY, capabilitiesOf } from "./chat";
+import { ProjectChat, ChatError, MAX_BODY, capabilitiesOf, commandsOf } from "./chat";
 import { Updater } from "./updater";
 import { PROVIDERS } from "./chat-registry";
 const websitePreviews = new Map<string, ReturnType<typeof previewWebsite>>();
@@ -352,6 +352,11 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       try {
         if (p === "/__cd/chat" && req.method === "GET") return json(chat.snapshot(url.searchParams.get("c")), 200);
         if (p === "/__cd/chat/providers" && req.method === "GET") return json({ root, providers: await Promise.all(Object.values(PROVIDERS).map(async (x) => ({ ...(await x.discover()), capabilities: await capabilitiesOf(x.id) }))) });
+        if (p === "/__cd/chat/commands" && req.method === "GET") { // what `/` offers in the composer: the agent's own commands and skills
+          const id = url.searchParams.get("provider") ?? "";
+          if (!PROVIDERS[id]) return json({ error: "Unknown agent" }, 400);
+          return json({ provider: id, commands: await commandsOf(id, root) });
+        }
         if (p === "/__cd/chat/context" && req.method === "GET") { // the chips for one viewer tab of this project; an unknown tab simply has none
           const t = project.tabs.get(url.searchParams.get("tab") ?? "") ?? null;
           return json(contextChips(root, t && { file: t.file, selection: t.selection }));

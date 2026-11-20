@@ -1,5 +1,6 @@
 // Fake `claude` for tests: --version / `auth status`, and the stream-json framing verified against Claude Code 2.1.326.
 // Prompt keywords: "ask" requests approval for `touch fake-claude-approved.txt` (allowed -> writes it, denied -> tool error);
+// "/compact", "/context" and "/clear" answer like the real CLI's local commands (framing captured from Claude Code 2.1.329), with no turn;
 // "question" asks an AskUserQuestion; "slow" streams then waits for an interrupt; "crash" dies mid-stream; "badjson" prints junk first.
 import { appendFileSync, writeFileSync } from "node:fs";
 const args = process.argv.slice(2);
@@ -36,7 +37,24 @@ async function text(msg: string, parts: string[], index = 0) {
   stream({ type: "content_block_stop", index }, msg);
   send({ type: "assistant", message: { id: msg, role: "assistant", content: [{ type: "text", text: parts.join("") }] } });
 }
+/** Local commands: no model turn, only the notices/outputs the real CLI prints, then a result of 0 turns. */
+function local(prompt: string): boolean {
+  const name = prompt.match(/^\/([\w:.-]+)/)?.[1];
+  if (name === "compact") {
+    send({ type: "system", subtype: "status", status: "compacting" });
+    send({ type: "system", subtype: "status", status: null, compact_result: "success" });
+    send({ type: "system", subtype: "compact_boundary", compact_metadata: { trigger: "manual", pre_tokens: 41883, post_tokens: 11938 } });
+    send({ type: "user", message: { role: "user", content: "<local-command-stdout>Compacted </local-command-stdout>" } });
+  } else if (name === "context") {
+    send({ type: "assistant", message: { id: uid + "ctx", model: "<synthetic>", role: "assistant", content: [{ type: "text", text: "## Context Usage\n\n| Category | Tokens |\n|----------|--------|\n| System prompt | 3k |\n| Messages | 10 |" }] } });
+  } else if (name === "clear") {
+    send({ type: "conversation_reset", new_conversation_id: "sess-cleared", trigger: "clear" });
+  } else return false;
+  send({ type: "result", subtype: "success", is_error: false, num_turns: 0 });
+  return true;
+}
 async function run(prompt: string) {
+  if (local(prompt)) return;
   const n = ++turns, msg = uid + "msg" + n;
   interrupted = false;
   if (prompt.includes("badjson")) process.stdout.write("this is not json\n{broken\n");
@@ -76,7 +94,14 @@ for await (const chunk of process.stdin as any) {
     log(m);
     if (m.type === "control_request") {
       const sub = m.request.subtype, ok = (response: object = {}) => send({ type: "control_response", response: { subtype: "success", request_id: m.request_id, response } });
-      if (sub === "initialize") { if (process.env.FAKE_CLAUDE_INIT_DELAY) await sleep(Number(process.env.FAKE_CLAUDE_INIT_DELAY)); ok({ commands: [] }); }
+      if (sub === "initialize") { if (process.env.FAKE_CLAUDE_INIT_DELAY) await sleep(Number(process.env.FAKE_CLAUDE_INIT_DELAY)); ok({ commands: process.env.FAKE_CLAUDE_COMMANDS ? JSON.parse(process.env.FAKE_CLAUDE_COMMANDS) : [
+        { name: "ui-design", description: "Use when the user asks for a UI change. (user)", argumentHint: "" },
+        { name: "compact", description: "Free up context by summarizing the conversation so far", argumentHint: "<optional custom summarization instructions>" },
+        { name: "model", description: "Set the AI model for Claude Code", argumentHint: "<model>" },
+        { name: "__remote-workflow", description: "internal", argumentHint: "" },
+        { name: "clear", description: "Start a new session with empty context", argumentHint: "[name]" },
+        { name: "context", description: "Show current context usage", argumentHint: "" },
+      ] }); }
       else if (sub === "set_permission_mode") {
         if (m.request.mode === "bypassPermissions" && process.env.FAKE_CLAUDE_NO_BYPASS) send({ type: "control_response", response: { subtype: "error", request_id: m.request_id, error: "Cannot set permission mode to bypassPermissions", error_code: "bypass_not_launched" } });
         else { mode = m.request.mode; ok({ mode }); }

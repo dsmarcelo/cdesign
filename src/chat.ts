@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { dataDir, ensureDataDir, update } from "./store";
-import { type Capabilities, type ProviderEvent, type ProviderSession, type TurnSettings, type TurnStatus } from "./chat-providers";
+import { type Capabilities, type SlashCommand, type ProviderEvent, type ProviderSession, type TurnSettings, type TurnStatus } from "./chat-providers";
 import { PROVIDERS } from "./chat-registry";
 import { resolveContext, withContext, type ContextRef } from "./chat-context";
 import { loadConversations, removeConversation, saveConversation, type Conversation } from "./chat-store";
@@ -75,6 +75,18 @@ export function capabilitiesOf(id: string, fresh = false): Promise<Capabilities>
   if (hit && !fresh && Date.now() - hit.at < 60_000) return hit.value;
   const value = PROVIDERS[id].capabilities().catch((e): Capabilities => ({ source: "fallback", note: `Could not discover settings: ${(e as Error).message}`, models: [], efforts: [], defaultLabel: "Default" }));
   capCache.set(id, { at: Date.now(), value });
+  return value;
+}
+
+/** Slash commands change rarely (installing a skill is the usual cause) but listing them starts the agent once, so they are cached briefly. A failed listing is not kept. */
+const cmdCache = new Map<string, { at: number; value: Promise<SlashCommand[]> }>();
+export function commandsOf(id: string, root: string, fresh = false): Promise<SlashCommand[]> {
+  const p = PROVIDERS[id];
+  if (!p?.commands) return Promise.resolve([]);
+  const key = id + "\0" + root, hit = cmdCache.get(key);
+  if (hit && !fresh && Date.now() - hit.at < 60_000) return hit.value;
+  const value = p.commands(root).catch((): SlashCommand[] => (cmdCache.delete(key), []));
+  cmdCache.set(key, { at: Date.now(), value });
   return value;
 }
 
@@ -207,7 +219,9 @@ export class ProjectChat {
     // an omitted model/effort keeps the chat's saved one; a new chat starts on the provider default
     const model = settingOf(b.model, "model") ?? (b.model === undefined ? conv?.model ?? null : null);
     const effort = settingOf(b.effort, "effort") ?? (b.effort === undefined ? conv?.effort ?? null : null);
-    const context = resolveContext(this.root, b.context);
+    // a command the agent runs itself (`/compact`) is sent exactly as typed: no design context, and the comments stay undelivered
+    const local = !!provider.isLocal?.(text);
+    const context = local ? [] : resolveContext(this.root, b.context);
     if (this.active) {
       const at = this.activeId ? this.convs.get(this.activeId) : undefined;
       throw new ChatError(409, `The agent is already working in this project${at ? `, in the chat "${at.title}"` : ""}. Wait for it to finish or Stop it first.`, { activeConversationId: this.activeId });

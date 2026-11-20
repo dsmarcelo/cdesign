@@ -7,7 +7,8 @@
  * `item/commandExecution/outputDelta`, `serverRequest/resolved`, and the server requests `item/commandExecution/requestApproval` and `item/fileChange/requestApproval`.
  */
 
-export type ItemKind = "user" | "message" | "command" | "file" | "tool";
+/** `notice` is a one-line system note in the log (a compaction, a cleared context), never agent speech. */
+export type ItemKind = "user" | "message" | "command" | "file" | "tool" | "notice";
 export type Item = { id: string; kind: ItemKind; title?: string; text?: string; output?: string; status?: string; /** design context sent with a user message (see chat-context.ts) */ context?: unknown[] };
 export type TurnStatus = "completed" | "interrupted" | "failed";
 /** A pending permission request. `id` is the provider's own request id, unique within one session. */
@@ -69,9 +70,15 @@ export interface ProviderSession {
   interrupt(): Promise<void>;
   close(): void;
 }
+/** One thing the user can type after `/` in the composer. `local` commands run inside the agent CLI without a model turn, so cdesign sends them untouched (no design context, no comments). */
+export type SlashCommand = { name: string; description: string; hint: string; local: boolean };
 export interface Provider {
   id: string;
   label: string;
+  /** Slash commands and skills the installed agent accepts as a message starting with `/`; absent when the agent has none. */
+  commands?(root: string): Promise<SlashCommand[]>;
+  /** True when `text` is a `/command` that the agent runs locally, so it must reach the agent exactly as typed. */
+  isLocal?(text: string): boolean;
   /** True when model/effort can change on the next turn of a live session; otherwise the session is restarted (resumed) to apply them. */
   perTurn: boolean;
   discover(): Promise<ProviderInfo>;

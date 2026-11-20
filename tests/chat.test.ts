@@ -491,3 +491,66 @@ test("access and approval controls are local-only like the rest of chat", async 
   expect((await fetch(c.url("chat/settings"), { method: "POST", headers: { origin: "http://evil.example" }, body: JSON.stringify({ fullAccess: false }) })).status).toBe(403);
   expect((await c.snap()).fullAccess).toBe(true);
 }, 30000);
+
+test("Claude slash commands: the list comes from the CLI, local commands go through untouched, skills keep the design context", async () => {
+  const log = logFile("fake-claude");
+  const c = await boot({ FAKE_CLAUDE_LOG: log });
+  const r = await (await fetch(c.url("chat/commands?provider=claude"))).json();
+  const names = r.commands.map((x: any) => x.name);
+  expect(names).toEqual(["clear", "compact", "context", "ui-design"]); // local ones first; model and __internal ones are hidden
+  expect(r.commands.find((x: any) => x.name === "compact")).toMatchObject({ local: true, hint: "<optional custom summarization instructions>" });
+  expect(r.commands.find((x: any) => x.name === "ui-design")).toMatchObject({ local: false, description: "Use when the user asks for a UI change." });
+  expect((await fetch(c.url("chat/commands?provider=nope"))).status).toBe(400);
+  expect((await (await fetch(c.url("chat/commands?provider=codex"))).json()).commands).toEqual([]);
+  expect(jsonl(log).filter((l) => l.type === "user")).toHaveLength(0); // listing sends no message
+
+  writeFileSync(join(c.root, "page.html"), "<h1>Hi</h1>");
+  const ctx = { page: { file: "page.html" } };
+  await c.post("chat/send", { text: "hello", provider: "claude" });
+  const first = await idle(c);
+  const id = first.conversation.id;
+
+  // /context: sent as typed (the page context is dropped), its output is rendered, tables included
+  await c.post("chat/send", { text: "/context", provider: "claude", conversationId: id, context: ctx });
+  const s1 = await idle(c);
+  expect(texts(s1, "user").at(-1)).not.toHaveProperty("context");
+  expect(texts(s1, "message").at(-1).text).toContain("## Context Usage");
+  expect(jsonl(log).filter((l) => l.type === "user").at(-1).message.content).toBe("/context");
+
+  // /compact: a running notice becomes "compacted", and the stdout echo "Compacted" is not repeated
+  await c.post("chat/send", { text: "/compact keep the colors", provider: "claude", conversationId: id, context: ctx });
+  const s2 = await idle(c);
+  const notices = texts(s2, "notice");
+  expect(notices).toHaveLength(1);
+  expect(notices[0]).toMatchObject({ status: "completed", text: "Conversation compacted (41.9k → 11.9k tokens)." });
+  expect(texts(s2, "message")).toHaveLength(2); // hello reply + /context output only
+  expect(jsonl(log).filter((l) => l.type === "user").at(-1).message.content).toBe("/compact keep the colors");
+
+  // /clear leaves a visible marker
+  await c.post("chat/send", { text: "/clear", provider: "claude", conversationId: id });
+  expect(texts(await idle(c), "notice").at(-1).text).toContain("Context cleared");
+
+  // a skill is an ordinary message to the agent: the typed command stays first, the design context follows it
+  await c.post("chat/send", { text: "/ui-design make it calmer", provider: "claude", conversationId: id, context: ctx });
+  const s3 = await idle(c);
+  expect(texts(s3, "user").at(-1).context).toEqual([{ kind: "page", file: "page.html" }]);
+  const sent = jsonl(log).filter((l) => l.type === "user").at(-1).message.content as string;
+  expect(sent.startsWith("/ui-design make it calmer\n")).toBe(true);
+  expect(sent).toContain("Open page: page.html");
+}, 60000);
+
+test("a local command leaves attached comments undelivered", async () => {
+  const c = await boot();
+  const page = "design/pages/Page.html";
+  Bun.spawnSync(["mkdir", "-p", join(c.root, "design/pages")]);
+  writeFileSync(join(c.root, page), "<html><body>\n<h1 class=\"t\">Hi</h1>\n</body></html>");
+  const made = await (await c.post("comments", { file: page, cdId: "2:1", selector: "h1.t", text: "Make the heading bigger" })).json() as any;
+  await c.post("chat/send", { text: "/compact", provider: "claude", context: { comments: [made.id] } });
+  expect(texts(await idle(c), "user")[0]).not.toHaveProperty("context");
+  const status = async () => (await (await fetch(c.url("comments"))).json() as any[]).find((x) => x.id === made.id).status;
+  expect(await status()).toBe("draft"); // still waiting for a real message
+  const id = (await c.snap()).conversation.id;
+  await c.post("chat/send", { text: "apply this", provider: "claude", conversationId: id, context: { comments: [made.id] } });
+  await idle(c);
+  expect(await status()).toBe("sent");
+}, 30000);
