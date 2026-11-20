@@ -90,7 +90,7 @@ test("send streams a turn: message deltas, tool activity, exact project root, fu
   expect(lines[0].cwd).toBe(realpath(c.root));
   const start = lines.find((l) => l.method === "thread/start");
   expect(start.params).toMatchObject({ cwd: c.root, approvalPolicy: "never", sandbox: "danger-full-access" });
-  expect(lines.find((l) => l.method === "turn/start").params.input[0].text).toBe("hello there");
+  expect(lines.find((l) => l.method === "turn/start").params.input[0].text).toStartWith("hello there\n\n");
 });
 const realpath = (p: string) => require("node:fs").realpathSync(p);
 

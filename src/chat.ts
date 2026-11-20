@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { dataDir, ensureDataDir, update } from "./store";
 import { type Capabilities, type SlashCommand, type ProviderEvent, type ProviderSession, type TurnSettings, type TurnStatus } from "./chat-providers";
+import { folderGuidance } from "./context";
 import { PROVIDERS } from "./chat-registry";
 import { resolveContext, withContext, type ContextRef } from "./chat-context";
 import { loadConversations, removeConversation, saveConversation, type Conversation } from "./chat-store";
@@ -250,7 +251,8 @@ export class ProjectChat {
     if (ids.size) update(this.root, (l) => l.forEach((c) => ids.has(c.id) && (c.status === "draft" || c.status === "queued") && (c.status = "sent")));
     this.emit({ type: "turn.begin", conversation: { id: conv.id, title: conv.title, provider: conv.provider, fullAccess: conv.fullAccess, model, effort }, text, itemId: "u" + rid(), ...(context.length ? { context } : {}) });
     if (created) this.emit({ type: "list" }, null);
-    void this.run(conv, withContext(text, context));
+    const prompt = withContext(text, context);
+    void this.run(conv, local ? prompt : `${prompt}\n\nWhen authoring cdesign files, follow this folder guidance. ${folderGuidance}`);
     return { conversationId: conv.id };
   }
 

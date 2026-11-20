@@ -74,6 +74,8 @@ test.skipIf(!chrome)("browser: Chat/Files tabs, resize/collapse, Codex send with
     expect(await shown("#files")).toBe(true);
     expect(await shown("#chat")).toBe(false);
     expect(await ev("document.querySelector('#files').textContent.includes('Home')")).toBe(true);
+    expect(await ev("document.querySelector('#files > details > summary').textContent")).toBe("pages");
+    expect(await ev("document.querySelector('#files button.f').title")).toBe("design/pages/Home.tsx");
     await ev("document.querySelector('#tab-chat').click()");
     expect(await ev("document.querySelector('#chat textarea').value")).toBe("draft stays");
 

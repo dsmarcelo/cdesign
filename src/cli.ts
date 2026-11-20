@@ -13,7 +13,7 @@ import { relocateImports } from "./tsx";
 import { componentPreview } from "./previews";
 import { setup, readConfig, type SetupOptions } from "./project";
 import * as tk from "./tokens";
-import { context, guidanceFiles, startup } from "./context";
+import { context, folderGuidance, guidanceFiles, startup } from "./context";
 import { beat, dataDir, ensureDataDir, daemonPath, projectId, readComments, readTunnelConfig, writeTunnelConfig, update, commentsPath, type Comment } from "./store";
 
 const [cmd = "help", ...rest] = process.argv.slice(2);
@@ -452,6 +452,9 @@ Source of truth: \`design/tokens.json\` (query it with \`cdesign tokens search|s
 
 ## Guidance
 Add focused documents under \`design/foundations/\` or \`design/patterns/\` when needed, and link them here. Keep related rules together. Label preferred examples, alternatives, work in progress and imported references explicitly; record authority and freshness when sources disagree.
+
+## Folder organization
+${folderGuidance}
 
 ## Components
 Files in \`design/components/<ui|shared|layout>/\` and \`design/features/<feature>/\`, each with a \`previews/<name>.preview.html\` in a \`previews/\` folder beside it. Used as \`<c-name prop="x">children</c-name>\`.

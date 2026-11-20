@@ -89,7 +89,8 @@ test("send snapshots the page and element for the agent and the saved message; r
 
   // chips removed: the page chip is gone, so only the selection travels; nothing at all sends the bare text
   await b.send({ text: "just text", conversationId: s.conversation.id });
-  expect(b.prompts()[1]).toBe("just text");
+  expect(b.prompts()[1]).toStartWith("just text\n\n");
+  expect(b.prompts()[1]).toContain("Group related pages by feature or screen type under design/pages/");
   // later navigation never touches the message already sent
   await b.tab("a", null);
   expect((await b.snap()).conversation.items.find((i: any) => i.kind === "user").context).toHaveLength(2);
@@ -117,7 +118,7 @@ test("comments reach the agent only when attached, once, and leave the undeliver
   const b = await boot();
   const made = await (await b.post("comments", { file: PAGE, cdId: "2:1", selector: "h1.t", text: "Make the heading bigger" })).json() as any;
   await b.send({ text: "plain message" });
-  expect(b.prompts()[0]).toBe("plain message"); // an unresolved comment is not included by itself
+  expect(b.prompts()[0]).not.toContain(made.id); // an unresolved comment is not included by itself
 
   const r = await b.send({ text: "apply this", conversationId: (await b.snap()).conversation.id, context: { comments: [made.id, made.id] } });
   expect(r.status).toBe(202);

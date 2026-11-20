@@ -17,7 +17,7 @@ export type RenderAdapter = {
   diagnostics(root: string): Promise<string[]>;
 };
 const html: RenderAdapter = {
-  pages: root => projectFiles(root).filter(f => f.endsWith(".html") && !f.split("/").pop()!.startsWith("_")),
+  pages: root => projectFiles(root, join(root, "design")).filter(f => f.endsWith(".html") && !f.split("/").pop()!.startsWith("_")),
   components: componentIndex,
   async render(root, file) {
     let content = renderPage(root, file);

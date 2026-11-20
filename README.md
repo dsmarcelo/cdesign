@@ -186,6 +186,8 @@ design/
   prototype/              work in progress; moved to components/ or pages/ once done
 ```
 
+Group pages by feature or screen type under `design/pages/`, give each prototype or flow a folder under `design/prototype/`, and group components by family under `design/components/` or by feature under `design/features/`. Use short, descriptive names and reuse existing groups. The Files tab lists preview entries inside `design/`, including nested folders.
+
 Every folder keeps its previews in its own `previews/` subfolder. Prototypes start in `prototype/`; when one is done, the agent asks whether to move it to `components/`, `features/` or `pages/`. Moved files stay editable.
 
 Update canonical guidance when shared rules or contracts change; local copy and composition edits need no overview update. Short component contracts live in leading HTML comments (or JSDoc for React TSX). Add longer family guidance only when needed. `cdesign check` accepts documentation across maintained design Markdown and component headers, and checks relative guidance file links (not heading anchors). It checks structure, not semantic agreement or rendered quality.

@@ -329,7 +329,7 @@ const saveOpened = () => { try { sessionStorage.setItem("cd-opened", JSON.string
 function tree(list) {
   const root = { dirs: {}, files: [] };
   for (const f of list) {
-    const parts = f.split("/"), name = parts.pop();
+    const parts = f.slice("design/".length).split("/"), name = parts.pop();
     let n = root;
     for (const p of parts) n = n.dirs[p] ??= { dirs: {}, files: [] };
     n.files.push({ name, path: f });
@@ -375,7 +375,7 @@ async function files() {
     report();
   }
   $("#files").innerHTML = "";
-  draw(tree(l), $("#files"), "");
+  draw(tree(l), $("#files"), "design/");
   if (!l.length) $("#files").textContent = "No preview entries. Add a page or component preview.";
 }
 const frames = () => [$("#fr"), $("#fr2")];

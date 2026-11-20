@@ -15,6 +15,10 @@ Prototypes are structured references for later implementation in the app's frame
 - Find tokens with `tokens search <words>` or `tokens show <section> [prefix]`. In Tailwind mode query the editable root stylesheet; in plain CSS mode change JSON tokens with `tokens set|rm`.
 - Building or maintaining the system: `cdesign skills get cdesign-system`. Reviewing a surface: `cdesign skills get cdesign-review`. Load only the applicable skill.
 
+## Folder organization
+
+Group related pages by feature or screen type under design/pages/ (for example, design/pages/settings/). Put each prototype or flow in a named folder under design/prototype/. Group reusable components by family under design/components/ and feature-specific components under design/features/. Use short, descriptive folder names and reuse existing groups.
+
 ## Mode and React components
 - Read `design/cdesign.json`: new projects default to `{ "version": 1, "mode": "react", "tailwind": true }`. Existing unconfigured HTML projects retain HTML behavior. `cdesign init|open --mode react|html --tailwind|--no-tailwind` persists an explicit choice; changing it does not convert files. CLI interactive setup offers the choices; noninteractive setup uses defaults.
 - In React mode author **TSX only**, using imports, typed props and hooks. Default-export page entries in `design/pages/` and `design/prototype/`. Reusable components live in `design/components/{ui,shared,layout}/` or `design/features/` and may use named or default exports; keep contracts in leading JSDoc and types named `NameProps`.
