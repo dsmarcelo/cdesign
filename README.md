@@ -6,7 +6,7 @@ A lightweight viewer for React TSX and HTML prototypes, built for coding agents.
 
 - **Viewer:** `cdesign open` serves React TSX pages/previews or HTML files with live reload, a folder tree, and a comment mode.
 - **Element ids:** the server stamps every element with `data-cd-id="line:col"` at serve time. Your files are never modified.
-- **Comments to the agent:** a comment carries the file, element id, selector, the element's source and your text. Adding a comment in the local desktop viewer sends it to the built-in chat. Use **Send to agent** to deliver drafts to an external agent running `cdesign wait`.
+- **Comments to the agent:** a comment carries the file, element id, selector, the element's source and your text. Comments you add in the local desktop viewer stack in the built-in chat composer; **Send** delivers all of them with a guide to apply each one and mark it done.
 - **Context on demand:** `cdesign open` returns short directions and the current target. Agents retrieve relevant guidance, component contracts and skills as needed; nothing is installed per project.
 
 ## Desktop app
@@ -39,7 +39,7 @@ Installers appear under `src-tauri/target/release/bundle/`. The desktop build st
 
 ## CLI installation
 
-Linux/macOS (bash) and Windows (PowerShell). One command installs Bun if missing, cdesign into `~/.local/share/cdesign`, a `cdesign` launcher in `~/.local/bin`, and registers the MCP server with every agent found (Claude Code, Codex, Antigravity `agy`). Update with `cdesign update` (re-runs the installer).
+Linux/macOS (bash) and Windows (PowerShell). One command installs Bun if missing, cdesign into `~/.local/share/cdesign`, a `cdesign` launcher in `~/.local/bin`, and registers the MCP server with every agent found (Claude Code, Codex, Antigravity `agy`). Update from the local viewer or run `cdesign update` in a terminal.
 
 On Linux, the CLI installation also adds a cdesign browser launcher to the applications list. Opening it launches the local project picker in your browser and starts a tunnel automatically. The viewer shows the current tunnel URL or an error; install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) for the default quick tunnel, or configure a fixed tunnel below. Anyone with the tunnel link can view all open projects and send comments while it is running.
 
@@ -55,7 +55,13 @@ irm https://raw.githubusercontent.com/dsmarcelo/cdesign/main/install.ps1 | iex
 
 This creates `%USERPROFILE%\.localin\cdesign.cmd` and adds that folder to your user PATH (open a new terminal afterwards). Dev mode: `$env:CDESIGN_SRC = $PWD; .\install.ps1`.
 
-Register or remove the MCP server later with `cdesign install-mcp [claude|codex|agy|all]` / `cdesign uninstall-mcp`. Dev mode: `CDESIGN_SRC=$PWD ./install.sh` from a checkout links the install to it, so edits apply at once (`cdesign update` switches back to the GitHub version).
+Register or remove the MCP server later with `cdesign install-mcp [claude|codex|agy|all]` / `cdesign uninstall-mcp`. Dev mode: `CDESIGN_SRC=$PWD ./install.sh` links the install to the checkout.
+
+### Update a Bash install
+
+When an update is available, select **Update cdesign** in the local viewer toolbar or project picker. The viewer restarts and reopens the current view. Downloaded installs follow the repository and branch selected at install time. Linked installs keep the checkout and use the button to reload local runtime edits or fast-forward a clean checkout from its configured upstream.
+
+For installs made before update tracking was added, rerun the Bash installer once. Use the original `CDESIGN_REPO` and `CDESIGN_REF` for a custom download, or rerun it with `CDESIGN_SRC=$PWD` from the linked checkout. PowerShell installs use `cdesign update` and native desktop packages use their package installer.
 
 ## Use
 
@@ -66,7 +72,7 @@ cdesign init     # once: scaffold design/ (React + Tailwind by default)
 cdesign open     # start the viewer with compact agent directions
 ```
 
-In the viewer, press `C`, click an element, and save your comment with **Add** or Ctrl+Enter. If the built-in chat has a ready agent, it reads the comment automatically. For an external agent, ask it to run `cdesign open` and use **Send to agent** to deliver drafts. The header shows whether that agent has `cdesign wait` running in the background. If none is listening, the batch is queued and a prompt is copied for you to paste so the agent can run `cdesign review`.
+In the viewer, press `C`, click an element, and save your comment with **Add** or Ctrl+Enter. Saved comments stack in the Chat composer (one per row, × removes one from the message); press **Send** and the built-in agent receives all of them with the instruction to apply each and run `cdesign resolve`. The viewer no longer has a separate Send to agent button, so external agents (`cdesign wait` / `review`) only receive comments that were queued some other way.
 
 | Command | What it does |
 |---|---|
@@ -78,9 +84,9 @@ In the viewer, press `C`, click an element, and save your comment with **Add** o
 | `shot [page] [--selected\|--selector css] [--responsive\|--width n] [--theme light\|dark] [--format webp\|jpeg\|png] [--full] [--y n]` | Screenshot a page or one element with headless Chrome; `--responsive` captures mobile (390px), tablet portrait (768px) and desktop (1280px) side by side in one image (needs Chrome/Chromium; `CDESIGN_CHROME` overrides the path). Small WebP, long side <= 1568px, so agents spend far fewer tokens than with browser screenshots |
 | `page` | Print the page open in the viewer (most recently active tab) and the element selected with the pointer button (`S`) |
 | `review` | Print the batch the user sent from the viewer (run when asked to apply comments) |
-| `wait [--timeout s]` | Run in the background: exits with the batch when you press Send, which wakes the agent |
+| `wait [--timeout s]` | Run in the background: exits with the next batch of queued comments, which wakes the agent (the viewer no longer queues comments; its Send delivers them through the chat) |
 | `install-mcp` / `uninstall-mcp` | Register / remove the MCP server in Claude Code, Codex and agy |
-| `update` | Install the latest version from GitHub |
+| `update` | Check for and apply a cdesign update |
 | `mcp` | MCP server (stdio) that teaches agents how to use cdesign |
 | `resolve <id...>` | Mark comments done |
 | `comments [--all]` | List pending comments |
@@ -143,7 +149,7 @@ Read `cdesign skills get cdesign-convert` to convert HTML → React TSX or React
 
 `open` scaffolds `design/` if it does not exist yet.
 
-Comment flow: `draft` (in the viewer) → `queued` (Send) → `sent` (agent ran `cdesign review`) → `done` (`cdesign resolve`). The agent is never interrupted: it reads the batch when you tell it to.
+Comment flow: `draft` (in the viewer) → `sent` (Send in the chat, or `queued` → `sent` through `wait`/`review`) → `done` (`cdesign resolve`). The agent is never interrupted: it reads the batch when you tell it to.
 
 ## MCP (agents know cdesign without per-project setup)
 
@@ -233,7 +239,7 @@ cdesign tokens export css -o src/styles/tokens.css                 # plain CSS v
 
 ## Light and dark
 
-The viewer header has a Light/Dark button, and a button at each end hides or shows the file list (left) and the comments panel (right); both choices are remembered. It sets `data-theme` on the previewed page (remembered across reloads, and it starts from your system theme), so the dark values from `tokens.json` can be reviewed in place.
+The viewer header has a Light/Dark button, and a button at the left end (or **Ctrl+B**) hides or shows the sidebar; the choice is remembered. It sets `data-theme` on the previewed page (remembered across reloads, and it starts from your system theme), so the dark values from `tokens.json` can be reviewed in place.
 
 ## Components (HTML mode)
 
@@ -267,7 +273,7 @@ These teach workflows, not an app-specific visual style. Nothing is installed pe
 
 ## Chat with a local agent
 
-On a desktop screen the left sidebar has **Chat** (selected first) and **Files** tabs; drag its right edge to resize it and use the header button to collapse it. Comments stay on the right. In Chat, pick an installed agent, type a message and press Enter: the reply streams in, and **Stop** ends the turn while keeping what the agent already said. The agent runs in the exact project folder, so its edits reach the preview through the usual live reload.
+On a desktop screen the left sidebar has **Chat** (selected first), **Files** and **Comments** tabs; drag its right edge to resize it, and use the header button or **Ctrl+B** to collapse it. In Chat, pick an installed agent, type a message and press Enter: the reply streams in, and **Stop** ends the turn while keeping what the agent already said. The agent runs in the exact project folder, so its edits reach the preview through the usual live reload.
 
 - **Codex and Claude.** The selector lists both with their real state (ready, not installed, not logged in, update needed); discovery runs only `--version` and the login-status command, never a model turn. A conversation keeps its agent for good; choose **New** to start one with the other agent. A provider's session is never reused by another provider.
   - **Codex** runs `codex app-server` over stdio JSON-RPC with your existing `codex login`. Tested with codex-cli 0.169.0, which is also the minimum (`thread/start`, `turn/start` with per-turn `approvalPolicy`/`sandboxPolicy`, `turn/interrupt`, command and file-change approval requests).
@@ -287,9 +293,9 @@ On a desktop screen the left sidebar has **Chat** (selected first) and **Files**
 - **Messages.** Your messages are plain text. Agent replies render paragraphs, bullet and numbered lists, `inline code`, **bold**, fenced code blocks (scrollable) and links. Rendering builds DOM text nodes (never HTML), so markup in a reply or prompt is shown literally and cannot run, including while a reply is still streaming; only `http(s)` and `mailto` links are clickable (they open in a new tab with `noopener`), and `javascript:`/`data:` links stay plain text. The transcript shows user messages and agent replies.
 - **Status.** A line under the selectors says where the chat stands: *New chat*, *Starting the agent*, *Working*, *Waiting for your approval*, *Done*, *Stopped* (you pressed Stop), *Interrupted* (the daemon restarted), *Failed* (the note below carries the error), or *Working in another chat* (the conversation menu marks the busy chat with ●, and clicking the note opens it). Send is disabled for blank prompts. The view follows new output only while you are at the bottom; if you scrolled up to read, it stays put and a **↓ Latest** button appears. Controls are labeled and keyboard-reachable.
 - **Design context.** Above the message box, **chips** show what the agent will receive with the next message: the **Page** open in this tab and the **Element** you selected with the pointer tool (file plus its stable `data-cd-id`, e.g. `design/pages/Page.html 2:1 <h1>`). Both follow the current viewer tab and project, so another tab's selection is never sent; having neither is fine. **×** removes a chip from the next message only; opening another page or selecting another element brings its chip back. A chip whose file was deleted or whose element no longer exists turns red ("file no longer exists" / "element no longer exists") and is not sent until you pick something current. Sending snapshots the chips: the agent gets your text plus a compact block with the file, element id and the element's source snippet (not whole files; `cdesign context for <file>` is named for guidance), the saved message records what was attached, and later navigation does not change it. The server re-validates every reference against the project (paths outside it, missing files and stale ids are refused with the reason and start no turn).
-- **Comments in chat.** Saving a comment in the local desktop viewer starts a turn in the selected chat with the comment text, file, element id and source snippet. If a turn is already running, the viewer holds new comments until it finishes. Keep the viewer open for comments waiting to send. Text in the chat composer stays in place. Shared-viewer comments and comments saved when no agent is ready are available in the composer as chips. Use **Send** to deliver those drafts, with or without a message, and × to remove a chip from that message. Delivered comments are marked `sent`, and `cdesign resolve` marks them done. The comments panel lists newest first, with a collapsed **Done** section.
+- **Comments in chat.** Saving a comment does not start a turn. Every undelivered comment (including ones from the shared viewer) is stacked in the composer, one per row, and × removes one from that message. **Send** delivers all of them, with or without a typed message, along with each comment's file, element id and source snippet and a guide: apply every comment, then run `cdesign resolve <ids>` to mark them done. Delivered comments are marked `sent`, and `cdesign resolve` marks them done. The comments panel lists newest first, with a collapsed **Done** section.
 - Checked live in a throwaway project with page and element context (codex-cli 0.169.0, Claude Code 2.1.326): each agent was asked to change the selected heading, edited only that element, and a follow-up in the same saved conversation answered from the earlier turn.
-- Chat is local-only: its history, streams and controls return 403 to shared-tunnel visitors, who keep the preview and comment experience. Send to agent / `cdesign wait` for external agents is unchanged.
+- Chat is local-only: its history, streams and controls return 403 to shared-tunnel visitors, who keep the preview and comment experience. `cdesign wait` / `review` for external agents are unchanged.
 
 ## Data
 

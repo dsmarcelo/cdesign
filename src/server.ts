@@ -11,6 +11,7 @@ import { colorTokens, sizeTokens } from "./tokens";
 import { applyEdit, editInfo } from "./edit";
 import { contextChips } from "./chat-context";
 import { ProjectChat, ChatError, MAX_BODY, capabilitiesOf } from "./chat";
+import { Updater } from "./updater";
 import { PROVIDERS } from "./chat-registry";
 const websitePreviews = new Map<string, ReturnType<typeof previewWebsite>>();
 const websiteJobs = new Set<string>();
@@ -49,6 +50,10 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
   const chats = new Map<string, ProjectChat>(); // private per-project chat: its own streams, never `push`ed to preview clients
   const chatOf = (p: Project) => chats.get(p.id) ?? (chats.set(p.id, new ProjectChat(p.root)), chats.get(p.id)!);
   const idleMs = +(process.env.CDESIGN_IDLE_SECONDS ?? 120) * 1000;
+  const updater = new Updater();
+  const instance = crypto.randomUUID();
+  let updating = false;
+  let pendingChatStarts = 0;
   let lastActive = Date.now();
   let server: ReturnType<typeof Bun.serve>;
 
@@ -210,7 +215,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
   setInterval(() => { for (const p of projects.values()) presence(p); }, 3000); // a killed `wait` stops beating: notice it going stale
   // nothing left to serve (no viewer tab, no listening agent) for a while: exit, so no process is left behind
   setInterval(() => {
-    if ([...projects.values()].some((p) => p.clients.size || listening(p.root) || chats.get(p.id)?.busy)) lastActive = Date.now();
+    if (updating || [...projects.values()].some((p) => p.clients.size || listening(p.root) || chats.get(p.id)?.busy)) lastActive = Date.now();
     else if (Date.now() - lastActive > idleMs) shutdown();
   }, Math.min(5000, Math.max(200, idleMs / 4)));
 
@@ -230,8 +235,11 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
 
     if (req.method !== "GET") {
       const origin = req.headers.get("origin");
-      if (origin && origin !== "null" && new URL(origin).host !== hostHeader) return new Response("forbidden", { status: 403 }); // cross-site write
-      if (origin === "null") return new Response("forbidden", { status: 403 });
+      if (origin) {
+        try {
+          if (new URL(origin).host !== hostHeader) return new Response("forbidden", { status: 403 });
+        } catch { return new Response("forbidden", { status: 403 }); }
+      }
     }
 
     if (p === "/__cd/overlay.js") return new Response(Bun.file(join(UI, "overlay.js")));
@@ -239,6 +247,35 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     if (p === "/") return new Response(Bun.file(join(UI, "index.html")));
 
     // ----- daemon-level API -----
+    if (p === "/__cd/update") {
+      if (remote) return json({ error: "Updates are available only in the local viewer." }, 403);
+      if (req.method === "GET") return json({ ...(updating ? { available: true } : updater.status()), instance, updating });
+      if (req.method === "POST") {
+        if (req.headers.get("origin") !== `http://${hostHeader}`) return json({ error: "Use the local viewer to update cdesign." }, 403);
+        if (!updater.supported) return json({ error: "This installation does not support viewer updates." }, 409);
+        if (updating) return json({ error: "An update is already running." }, 409);
+        if (pendingChatStarts || websiteJobs.size || [...chats.values()].some((chat) => chat.busy)) {
+          return json({ error: "Wait for the agent turn or website job to finish, then try updating again." }, 409);
+        }
+        updating = true;
+        try {
+          await updater.apply();
+          if (updater.linked) await updater.verifyRuntime();
+          Bun.spawn([process.execPath, join(import.meta.dir, "cli.ts"), "daemon", "--port", String(server.port)], {
+            env: { ...process.env, CDESIGN_RESTART_PID: String(process.pid) },
+            cwd: homeDir(), stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true,
+          }).unref();
+          setTimeout(async () => {
+            await server.stop(true);
+            shutdown();
+          }, 200);
+          return json({ instance });
+        } catch (error) {
+          updating = false;
+          return json({ error: error instanceof Error ? error.message : String(error) }, 500);
+        }
+      }
+    }
     if (p === "/__cd/projects" && req.method === "GET") return json(remote ? { current: via!.id, remote: true, projects: [...projects.values()].map((q) => ({ id: q.id, name: basename(q.root), url: `/?project=${q.id}`, tabs: q.clients.size })) } : list(project));
     if (!via && p === "/__cd/tunnel" && req.method === "GET") {
       lastActive = Date.now(); // The project picker has no event stream but is still an open viewer.
@@ -296,6 +333,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       }
     }
     if (p === "/__cd/shutdown" && req.method === "POST") {
+      if (updating) return json({ error: "cdesign is updating." }, 409);
       setTimeout(shutdown, 100);
       return json({ ok: true });
     }
@@ -332,7 +370,12 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
           if (raw.length > MAX_BODY) throw new ChatError(413, "Request too large");
           let body: unknown;
           try { body = JSON.parse(raw); } catch { throw new ChatError(400, "Invalid JSON"); }
-          if (p.endsWith("/send")) return json(await chat.send(body), 202);
+          if (p.endsWith("/send")) {
+            if (updating) return json({ error: "Wait for cdesign to finish updating." }, 409);
+            pendingChatStarts++;
+            try { return json(await chat.send(body), 202); }
+            finally { pendingChatStarts--; }
+          }
           if (p.endsWith("/settings")) return json(await chat.setSettings(body));
           if (p.endsWith("/rename")) return json(chat.rename(body));
           if (p.endsWith("/delete")) { chat.remove(body); return json({ ok: true }); }
@@ -351,6 +394,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       if (via || remote) return json({error:"Website publishing is available only in the local viewer"},403);
       if (p === "/__cd/website" && req.method === "GET") return json({...websiteDefaults(root), publishing:publishingStatus(root)});
       if (req.method !== "POST") return json({error:"Method not allowed"},405);
+      if (updating) return json({ error: "Wait for cdesign to finish updating." }, 409);
       if (websiteJobs.has(root)) return json({error:"An export or publication is already running for this project"},409);
       websiteJobs.add(root);
       try {
@@ -368,6 +412,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       if (via || remote) return json({error:"Sharing is available only in the local viewer"},403);
       if (p === "/__cd/shares" && req.method === "GET") { const status = publishingStatus(root); return json({configured:status.configured, origin:status.origin, setup:status.setup, shares:listShares(root)}); }
       if (req.method !== "POST") return json({error:"Method not allowed"},405);
+      if (updating) return json({ error: "Wait for cdesign to finish updating." }, 409);
       if (websiteJobs.has(root)) return json({error:"An export or publication is already running for this project"},409);
       websiteJobs.add(root);
       try {

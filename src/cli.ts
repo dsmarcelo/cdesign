@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import qrcode from "qrcode-terminal";
 import { exportWebsite, previewWebsite, websiteDefaults, saveWebsite } from "./export";
 import { configurePublisher, publishWebsite } from "./publish";
+import { Updater } from "./updater";
 import { serveDaemon, DEFAULT_PORT } from "./server";
 import { screenshot } from "./shot";
 import { previewOf, sourceOfPreview } from "./render";
@@ -112,6 +113,8 @@ async function liveDaemon() {
 /** The running viewer predates the installed code (e.g. after `cdesign update` or a git pull): it must restart to pick up new features. */
 const stale = (startedAt?: number) => {
   if (!startedAt) return false;
+  const provenance = statSync(join(import.meta.dir, "../.install.json"), { throwIfNoEntry: false });
+  if (provenance && provenance.mtimeMs > startedAt) return true;
   try { return readdirSync(import.meta.dir).some((f) => f.endsWith(".ts") && statSync(join(import.meta.dir, f)).mtimeMs > startedAt); } catch { return false; }
 };
 
@@ -219,6 +222,12 @@ switch (cmd) {
   case "daemon":
   case "serve": {
     const port = flag("--port");
+    const previous = Number(process.env.CDESIGN_RESTART_PID);
+    if (cmd === "daemon" && Number.isSafeInteger(previous) && previous > 0) {
+      delete process.env.CDESIGN_RESTART_PID;
+      for (let i = 0; i < 100 && readDaemon()?.pid === previous; i++) await Bun.sleep(100);
+      if (readDaemon()?.pid === previous) throw new Error("The previous cdesign daemon is still running.");
+    }
     const { server, addProject } = await serveDaemon(port ? +port : DEFAULT_PORT);
     if (cmd === "serve" && rest[0]) addProject(resolve(rest[0]));
     console.log(`cdesign viewer: http://localhost:${server.port}`);
@@ -570,10 +579,17 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
     break;
   }
   case "update": {
+    const updater = new Updater();
+    if (updater.supported) {
+      const candidate = await updater.check();
+      if (candidate) await updater.apply(candidate);
+      else console.log("No cdesign update is available.");
+      break;
+    }
     const base = `https://raw.githubusercontent.com/${process.env.CDESIGN_REPO ?? "dsmarcelo/cdesign"}/${process.env.CDESIGN_REF ?? "main"}`;
     const cmdline = process.platform === "win32"
       ? ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", `irm ${base}/install.ps1 | iex`]
-      : ["bash", "-c", `curl -fsSL ${base}/install.sh | bash`];
+      : ["bash", "-o", "pipefail", "-c", 'curl -fsSL "$1" | bash', "cdesign-update", base + "/install.sh"];
     const p = Bun.spawnSync(cmdline, { stdio: ["inherit", "inherit", "inherit"] });
     process.exitCode = p.exitCode;
     break;
@@ -611,7 +627,7 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
   mcp                                   MCP server (stdio): tells agents how to use cdesign
   install-mcp [claude|codex|agy|all]    register the MCP server with agents found on this machine
   uninstall-mcp [claude|codex|agy|all]  remove it again
-  update                                reinstall the latest version from GitHub
+  update                                check for and install a cdesign update
   skills [get <name>]                    list bundled skills, or read one
   context [list|find <words>|get <id>|for <path>] [--offset n]
                                         discover guidance/contracts; --full prints legacy inventories

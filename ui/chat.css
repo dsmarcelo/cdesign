@@ -4,7 +4,8 @@
 #ltabs button[aria-selected=true]{background:var(--line);color:#fafafa}
 #files{flex:1;min-height:0;overflow:auto;padding:8px}
 #chat{flex:1;min-height:0;display:flex;flex-direction:column;padding:8px;gap:8px}
-#lside[data-tab=chat] #files,#lside[data-tab=files] #chat{display:none}
+#cm{flex:1;min-height:0;overflow:auto;padding:8px}
+#lside:not([data-tab=files]) #files,#lside:not([data-tab=chat]) #chat,#lside:not([data-tab=comments]) #cm{display:none}
 #lrs{position:absolute;top:0;right:0;bottom:0;width:6px;cursor:ew-resize;z-index:4;touch-action:none}
 #lrs:hover,body.drag #lrs{background:var(--acc);opacity:.5}
 .cc-meta{flex:none;display:flex;align-items:center;gap:6px}
@@ -18,7 +19,7 @@
 @keyframes cc-pulse{50%{opacity:.3}}
 @media (prefers-reduced-motion:reduce){.cc-status::before{animation:none!important}}
 .cc-logwrap{position:relative;flex:1;min-height:0;display:flex}
-.cc-jump{position:absolute;left:50%;bottom:8px;transform:translateX(-50%);border-radius:999px;font-size:12px;padding:3px 10px;background:var(--acc);color:#fff;box-shadow:0 2px 8px #0008}
+.cc-jump{position:absolute;left:50%;bottom:8px;transform:translateX(-50%);border-radius:999px;font-size:12px;padding:3px 10px;background:var(--acc);color:var(--acc-fg);box-shadow:0 2px 8px #0008}
 .cc-jump[hidden]{display:none}
 #chat :focus-visible,#ltabs :focus-visible{outline:2px solid var(--acc);outline-offset:1px}
 .cc-msg p{margin:0 0 .6em}.cc-msg p:last-child,.cc-msg ul:last-child,.cc-msg ol:last-child{margin-bottom:0}
@@ -26,7 +27,7 @@
 .cc-msg code{font:12px ui-monospace,monospace;background:#0004;border-radius:4px;padding:0 3px;overflow-wrap:anywhere}
 .cc-msg pre.cc-code{margin:0 0 .6em;padding:8px;max-height:320px;overflow:auto;background:var(--bg);border-radius:6px;white-space:pre}
 .cc-msg pre.cc-code code{background:none;padding:0;overflow-wrap:normal}
-.cc-msg a{color:#7dd3fc;overflow-wrap:anywhere}
+.cc-msg a{color:#e5e5e5;text-decoration:underline;overflow-wrap:anywhere}
 .cc-badge{font-size:11px;background:none;cursor:pointer;padding:2px 7px;border-radius:999px;border:1px solid var(--line);color:var(--mut);white-space:nowrap}
 .cc-badge.full{color:#fbbf24;border-color:#fbbf2466}
 .cc-note{flex:none;max-height:30%;overflow:auto;font-size:12px;padding:8px;border-radius:8px;border:1px solid var(--line);color:var(--mut);overflow-wrap:anywhere}
@@ -34,7 +35,7 @@
 .cc-note[hidden]{display:none}
 .cc-log{flex:1;min-width:0;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:8px}
 .cc-msg{padding:8px 10px;border-radius:10px;white-space:pre-wrap;min-width:0;overflow-wrap:anywhere;line-height:1.45}
-.cc-msg.user{align-self:flex-end;background:var(--acc);max-width:92%}
+.cc-msg.user{align-self:flex-end;background:var(--acc);color:var(--acc-fg);max-width:92%}
 .cc-msg.message{background:var(--line);white-space:normal}
 .cc-msg.live::after{content:"▍";margin-left:1px;opacity:.7}
 .cc-empty{color:var(--mut);padding:12px 4px}
@@ -51,8 +52,10 @@
 .cc-send{flex:none;width:30px;height:30px;padding:0;border-radius:50%;display:inline-flex;align-items:center;justify-content:center}
 .cc-send[hidden]{display:none}
 @media (max-width:700px){
-  #ltabs,#chat,#lrs{display:none!important}
-  #files{display:block!important;padding-bottom:72px}
+  #tab-chat,#chat,#lrs{display:none!important}
+  #lside:not([data-tab=comments]) #files{display:block!important}
+  #files,#cm{padding-bottom:72px}
+  #lside[data-tab=chat] #tab-files{background:var(--line);color:#fafafa}
 }
 body.hl #lside{display:none}
 .cc-approval{border:1px solid #fbbf2466;border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;font-size:12px}
@@ -84,9 +87,10 @@ body.hl #lside{display:none}
 .cc-opt.on::after{content:" ✓";color:var(--mut)}
 .cc-efforts{display:flex;flex-wrap:wrap;gap:4px;padding:2px 4px 4px}
 .cc-efforts button{font-size:12px;padding:2px 8px;border-radius:999px;background:none}
-.cc-efforts button.on{background:var(--acc);border-color:var(--acc)}
+.cc-efforts button.on{background:var(--acc);border-color:var(--acc);color:var(--acc-fg)}
 .cc-note[data-go]{cursor:pointer}
-.cc-chips{flex:none;display:flex;flex-wrap:wrap;gap:4px;max-height:84px;overflow:auto}
+.cc-chips{flex:none;display:flex;flex-wrap:wrap;gap:4px;max-height:120px;overflow:auto}
+.cc-chip[data-type=comment]{flex:1 1 100%}
 .cc-chips[hidden]{display:none}
 .cc-chip{display:inline-flex;align-items:center;gap:4px;max-width:100%;font-size:11px;padding:2px 2px 2px 8px;border:1px solid var(--line);border-radius:999px;color:var(--mut)}
 .cc-chip em{font-style:normal;font-weight:600;color:inherit}

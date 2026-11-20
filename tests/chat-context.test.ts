@@ -124,6 +124,7 @@ test("comments reach the agent only when attached, once, and leave the undeliver
   const prompt = b.prompts()[1];
   expect(prompt).toContain(`Comment ${made.id} on ${PAGE} at 2:1: "Make the heading bigger"`);
   expect(prompt.split("Make the heading bigger").length).toBe(2); // not duplicated
+  expect(prompt).toContain(`cdesign resolve ${made.id}`); // the guide: apply, then mark done
   const user = (await b.snap()).conversation.items.filter((i: any) => i.kind === "user")[1];
   expect(user.context).toHaveLength(1);
 
