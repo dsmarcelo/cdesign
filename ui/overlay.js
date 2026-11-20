@@ -108,6 +108,17 @@
     else openPop(el, e.pageX, e.pageY);
   }, true);
 
+  async function saveComment(comment) {
+    const response = await fetch("/__cd/comments", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(comment),
+    });
+    if (!response.ok) throw new Error("Could not save the comment");
+    const { id } = await response.json();
+    parent.postMessage({ cd: "comment-saved", id }, location.origin);
+  }
+
   function openPop(el, x, y) {
     document.querySelector(".__cd-pop")?.remove();
     const pop = document.createElement("div");
@@ -116,23 +127,26 @@
     pop.style.left = Math.max(8, Math.min(x, innerWidth - 308)) + "px";
     pop.style.top = y + 12 + "px";
     const id = el.getAttribute("data-cd-id");
-    pop.innerHTML = `<small></small><textarea placeholder="Comment (sent to the agent with Send)…"></textarea><div><button class="x">Cancel</button><button class="go">Add</button></div>`;
+    pop.innerHTML = `<small></small><textarea placeholder="Comment…"></textarea><div><button class="x">Cancel</button><button class="go">Add</button></div>`;
     const uses = usesOf(el);
     pop.querySelector("small").textContent = `${fileOf(el)}:${id}${uses.length ? " · in " + uses[0] : ""} · ${selectorOf(el)}`;
     document.body.appendChild(pop);
     const ta = pop.querySelector("textarea");
+    const add = pop.querySelector(".go");
     ta.focus();
     const send = async () => {
-      if (!ta.value.trim()) return;
-      await fetch("/__cd/comments", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ file: fileOf(el), cdId: id, uses, selector: selectorOf(el), text: ta.value }),
-      });
-      pop.remove();
+      if (!ta.value.trim() || add.disabled) return;
+      add.disabled = true;
+      try {
+        await saveComment({ file: fileOf(el), cdId: id, uses, selector: selectorOf(el), text: ta.value });
+        pop.remove();
+      } catch {
+        add.disabled = false;
+        pop.querySelector("small").textContent = "Could not save the comment. Try again.";
+      }
     };
     pop.querySelector(".x").onclick = () => pop.remove();
-    pop.querySelector(".go").onclick = send;
+    add.onclick = send;
     ta.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
       if (e.key === "Escape") pop.remove();
@@ -376,10 +390,14 @@
       });
       const inst = s.info?.instance;
       const where = inst ? (s.scope === "instance" ? ` on this <${inst.component}> instance only (${inst.where})` : ` on every <${inst.component}>`) : "";
-      await fetch("/__cd/comments", { method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ file: fileOf(el), cdId: el.getAttribute("data-cd-id"), uses: usesOf(el), selector: selectorOf(el), text: `Set the ${parts.join(", and the ")}${where}.` }) });
-      s.failed = {};
-      s.status = { kind: "ok", text: "Added as a draft comment: send it to the agent from the viewer." };
+      box.querySelector(".go").disabled = true;
+      try {
+        await saveComment({ file: fileOf(el), cdId: el.getAttribute("data-cd-id"), uses: usesOf(el), selector: selectorOf(el), text: `Set the ${parts.join(", and the ")}${where}.` });
+        s.failed = {};
+        s.status = { kind: "ok", text: "Comment added." };
+      } catch {
+        s.status = { kind: "err", text: "Could not save the comment. Try again." };
+      }
       render();
     };
     // drag by the header

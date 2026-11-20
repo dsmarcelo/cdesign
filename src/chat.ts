@@ -10,6 +10,7 @@ export type { Conversation };
 /** Per-project chat state: saved conversations (./chat-store) plus the one running turn. Events never touch the preview broadcast (`push` in server.ts). */
 export const MAX_PROMPT = 20000;
 export const MAX_BODY = 100 * 1024;
+const COMMENT_PROMPT = "Apply the cdesign comments attached to this message, then run `cdesign resolve <ids>` for the comments you addressed.";
 const MAX_ITEMS = 500, MAX_TEXT = 200_000, MAX_OUTPUT = 50_000, MAX_LOG = 2000;
 const stopGrace = () => Number(process.env.CDESIGN_CHAT_STOP_GRACE_MS) || 5000;
 
@@ -194,9 +195,10 @@ export class ProjectChat {
     return c;
   }
 
-  async send(body: unknown): Promise<{ conversationId: string }> {
+  async send(body: unknown): Promise<{ conversationId: string | null }> {
     const b = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
-    const text = typeof b.text === "string" ? b.text.trim() : "";
+    const automatic = b.automatic === true;
+    const text = automatic ? COMMENT_PROMPT : typeof b.text === "string" ? b.text.trim() : "";
     if (!text) throw new ChatError(400, "Write a message first");
     if (text.length > MAX_PROMPT) throw new ChatError(400, `Message is too long (max ${MAX_PROMPT} characters)`);
     let conv = b.conversationId === undefined ? null : this.conversation(b.conversationId);
@@ -207,13 +209,21 @@ export class ProjectChat {
     // an omitted model/effort keeps the chat's saved one; a new chat starts on the provider default
     const model = settingOf(b.model, "model") ?? (b.model === undefined ? conv?.model ?? null : null);
     const effort = settingOf(b.effort, "effort") ?? (b.effort === undefined ? conv?.effort ?? null : null);
-    const context = resolveContext(this.root, b.context); // snapshot now: later navigation or selection changes never touch this message
+    const rawContext = automatic ? { comments: (b.context as { comments?: unknown } | undefined)?.comments } : b.context;
+    let context = resolveContext(this.root, rawContext, automatic);
+    if (automatic && !context.length) return { conversationId: null };
     if (this.active) {
       const at = this.activeId ? this.convs.get(this.activeId) : undefined;
       throw new ChatError(409, `The agent is already working in this project${at ? `, in the chat "${at.title}"` : ""}. Wait for it to finish or Stop it first.`, { activeConversationId: this.activeId });
     }
     if (conv && conv.items.some((i) => i.kind !== "user") && !conv.sessionId && this.session?.cid !== conv.id) throw new ChatError(409, "This chat has no saved agent session to continue. Start a new chat.");
-    if (model !== (conv?.model ?? null) || effort !== (conv?.effort ?? null)) await checkSettings(provider.id, model, effort);
+    if (model !== (conv?.model ?? null) || effort !== (conv?.effort ?? null)) {
+      await checkSettings(provider.id, model, effort);
+      if (automatic) {
+        context = resolveContext(this.root, rawContext, true);
+        if (!context.length) return { conversationId: null };
+      }
+    }
     // validation may have awaited: look everything up again, then admit with nothing awaiting before `active` is set
     conv = b.conversationId === undefined ? null : this.conversation(b.conversationId);
     if (this.active) throw new ChatError(409, "The agent is already working in this project. Wait for it to finish or Stop it first.", { activeConversationId: this.activeId });

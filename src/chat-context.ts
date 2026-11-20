@@ -29,7 +29,7 @@ export function contextChips(root: string, tab: TabState | null) {
 }
 
 /** Validates the context a message names against this project and returns the snapshot to record and send. Anything missing or stale is refused with the reason, so nothing foreign or outdated reaches the agent. */
-export function resolveContext(root: string, raw: unknown): ContextRef[] {
+export function resolveContext(root: string, raw: unknown, pendingOnly = false): ContextRef[] {
   if (raw === undefined || raw === null) return [];
   if (typeof raw !== "object" || Array.isArray(raw)) throw new ChatError(400, "context must be an object");
   const c = raw as Record<string, unknown>;
@@ -58,6 +58,7 @@ export function resolveContext(root: string, raw: unknown): ContextRef[] {
       if (typeof id !== "string" || seen.has(id)) continue; // a comment attached twice is attached once
       seen.add(id);
       const cm = known.find((k) => k.id === id);
+      if (pendingOnly && cm?.status !== "draft") continue;
       if (!cm) throw new ChatError(409, "A comment you attached no longer exists. Remove it from the message.");
       out.push({ kind: "comment", id: cm.id, file: cm.file, cdId: cm.cdId, text: cm.text, snippet: cm.snippet });
     }

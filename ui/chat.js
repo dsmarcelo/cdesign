@@ -176,7 +176,9 @@
   // `conv` is the chat on screen (null = a new chat that is not saved until its first message); `busy` is project-wide, `activeId` the chat that owns the running turn
   let providers = [], conv = null, convs = [], activeId = null, busy = false, seq = 0, epoch = "", es = null, posting = false, full = true, draft = false;
   // what a new (unsaved) chat will be created with; a saved chat uses its own fields
-  const fresh = { fullAccess: true, model: null, effort: null };
+  let fresh = { fullAccess: true, model: null, effort: null };
+  const pendingComments = [];
+  let discovered = false, postingComments = false;
   let renderedId = null;
   const ready = () => providers.find((p) => p.id === sel.value)?.state === "ready";
   const showNote = (text, err, go) => { note.hidden = !text; note.textContent = text || ""; note.classList.toggle("err", !!err); if (go) note.dataset.go = go; else delete note.dataset.go; };
@@ -191,6 +193,7 @@
     if (pick.disabled) closeMenus();
     pick.title = pick.disabled ? "Model and effort change between turns; wait for the agent or Stop it" : caps().note;
     showStatus();
+    if (pendingComments.length && discovered && !busy && !posting) queueMicrotask(sendComments);
   };
   const caps = () => providers.find((p) => p.id === (conv?.provider ?? sel.value))?.capabilities ?? { source: "fallback", note: "", models: [], efforts: [], defaultLabel: "Default" };
   const cur = () => conv ?? fresh;
@@ -335,12 +338,12 @@
       case "turn.begin":
         busy = true; activeId = ev.conversation.id;
         if (conv?.id !== ev.conversation.id) {
-          if (!(draft && posting)) { drawList(); break; } // another tab started a turn in a chat that is not on screen
+          if (!(draft && posting && !postingComments)) { drawList(); break; } // another tab started a turn in a chat that is not on screen
           draft = false; conv = { ...ev.conversation, items: [], approvals: [], error: null, last: null }; store("cd-conv", conv.id); render();
         }
         conv.turnId = null; conv.approvals = []; conv.fullAccess = ev.conversation.fullAccess; conv.model = ev.conversation.model; conv.effort = ev.conversation.effort; fillSettings(); showNote("");
         for (const id of [...cards.keys()]) dropApproval(id);
-        conv.items.push({ id: ev.itemId, kind: "user", text: ev.text });
+        conv.items.push({ id: ev.itemId, kind: "user", text: ev.text, context: ev.context });
         if (log.querySelector(".cc-empty")) log.replaceChildren();
         stick(() => draw(conv.items.at(-1)));
         break;
@@ -370,6 +373,12 @@
         showMode(cur().fullAccess); break;
       case "turn.completed":
         busy = false; activeId = null; if (conv && ev.cid === conv.id) { conv.turnId = null; conv.approvals = []; conv.last = ev.status; conv.error = ev.status === "failed" ? ev.error ?? "The turn failed" : null; }
+        if (ev.status !== "completed") {
+          // Leave unsent feedback as drafts when the user stops this conversation or its agent fails.
+          for (let i = pendingComments.length - 1; i >= 0; i--) {
+            if (pendingComments[i].target.id === ev.cid) pendingComments.splice(i, 1);
+          }
+        }
         refreshList();
         if (ev.cid !== conv?.id) { refreshNote(); break; }
         for (const id of [...cards.keys()]) dropApproval(id);
@@ -405,7 +414,7 @@
     };
   };
   const newChat = () => { // a new chat always starts on Full access and the agent's defaults, whatever the last chat used
-    draft = true; conv = null; Object.assign(fresh, { fullAccess: true, model: null, effort: null });
+    draft = true; conv = null; fresh = { fullAccess: true, model: null, effort: null };
     render(); drawList(); showMode(true); fillSettings(); refreshNote(); sync(); box.focus();
   };
   newBtn.onclick = () => { closeMenus(); newChat(); };
@@ -415,6 +424,7 @@
   const send = async () => {
     const text = box.value.trim() || (commentIds().length ? "Run `cdesign review` and apply the comments I sent in the cdesign viewer." : "");
     if (!text || busy || posting || !ready()) return;
+    const target = cur();
     posting = true; sync();
     try {
       await refreshContext(); // submit what the viewer shows right now
@@ -423,10 +433,55 @@
       if (r.ok) {
         box.value = ""; drawChips();
         const { conversationId } = await r.json().catch(() => ({}));
+        if (conversationId && !target.id) target.id = conversationId;
         if (draft && conversationId) { draft = false; await load(conversationId).catch(() => {}); } // the response can beat the first stream event
       } else { const j = await r.json().catch(() => ({})); showNote(j.error || "Could not send", true, j.activeConversationId); }
     } catch { showNote("Could not reach cdesign", true); }
     posting = false; sync();
+  };
+
+  // Only a save in this tab's preview requests a turn. The project-wide comment feed is also
+  // updated by other viewers, including tunnel visitors, and only refreshes the composer chips.
+  addEventListener("message", (e) => {
+    if (e.origin !== location.origin || !["#fr", "#fr2"].some((id) => $(id).contentWindow === e.source)) return;
+    if (e.data?.cd !== "comment-saved" || typeof e.data.id !== "string" || matchMedia("(max-width:700px)").matches) return;
+    pendingComments.push({ id: e.data.id, target: cur(), provider: provider() });
+    sync();
+  });
+  const sendComments = async () => {
+    if (!pendingComments.length || busy || posting) return;
+    const { target, provider: savedProvider } = pendingComments[0];
+    const pid = savedProvider || provider();
+    const batch = pendingComments.filter((c) => c.target === target).slice(0, 20);
+    const discard = () => {
+      for (const c of batch) {
+        const i = pendingComments.indexOf(c);
+        if (i !== -1) pendingComments.splice(i, 1);
+      }
+    };
+    if (!providers.some((p) => p.id === pid && p.state === "ready")) { discard(); sync(); return; }
+    posting = postingComments = true;
+    sync();
+    let retry = false;
+    try {
+      const context = { comments: batch.map((c) => c.id) };
+      const settings = target.id ? { conversationId: target.id } : { fullAccess: target.fullAccess, model: target.model, effort: target.effort };
+      const res = await post("/send", { ...settings, provider: pid, automatic: true, context });
+      const outcome = await res.json();
+      if (res.ok) {
+        const isNew = !target.id;
+        if (isNew && outcome.conversationId) {
+          target.id = outcome.conversationId;
+          if (target === fresh && !conv) { draft = false; await load(target.id); }
+        }
+      } else if (res.status === 409 && outcome.activeConversationId) {
+        await load(); // a different tab can start a turn before its event arrives
+        retry = true;
+      } else showNote(outcome.error || "Could not send the saved comments", true);
+    } catch { showNote("Could not send the saved comments to the agent", true); }
+    if (!retry) discard();
+    posting = postingComments = false;
+    sync();
   };
   const stop = () => post("/stop", { conversationId: conv?.id, turnId: conv?.turnId }).then(async (r) => { if (!r.ok) showNote((await r.json().catch(() => ({}))).error || "Could not stop", true); });
   sendBtn.onclick = send; stopBtn.onclick = stop;
@@ -470,9 +525,11 @@
   const discover = async () => {
     try {
       providers = (await (await api("/providers")).json()).providers;
+      if (!Array.isArray(providers)) throw new Error("Agent discovery unavailable");
     } catch { providers = []; showNote("Could not look for installed agents", true); }
     sel.replaceChildren(...providers.map((p) => { const o = el("option", "", p.label); o.value = p.id; return o; }));
     sel.value = conv ? conv.provider : providers.find((p) => p.state === "ready")?.id ?? providers[0]?.id ?? "";
+    discovered = true;
     fillSettings(); refreshNote(); sync();
   };
   (async () => { await load().catch(() => showNote("Could not load the chat", true)); await discover(); connect(); })();
