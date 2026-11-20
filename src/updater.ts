@@ -11,7 +11,7 @@ async function run(cmd: string[], cwd: string, env?: NodeJS.ProcessEnv, timeout 
     cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", signal: AbortSignal.timeout(timeout),
   });
   const [output, error, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-  if (code !== 0) throw new Error(error.trim().split("\n").at(-1) || `${cmd[0]} exited with status ${code}`);
+  if (code !== 0) throw new Error(error.trim().slice(-2000) || `${cmd[0]} exited with status ${code}`);
   return output.trim();
 }
 
@@ -74,6 +74,8 @@ export class Updater {
     if (this.linked) {
       if (this.fingerprint() !== this.baseline) return { kind: "reload" };
       try {
+        const top = await this.git("rev-parse", "--show-toplevel");
+        if (realpathSync(top) !== realpathSync(this.root)) return null;
         await this.git("rev-parse", "--verify", "@{upstream}");
         if (await this.git("status", "--porcelain")) return null;
         await this.git("fetch", "--quiet");

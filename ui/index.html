@@ -86,9 +86,9 @@
   #toast.on{opacity:1}
   .update-app[hidden]{display:none}
   .update-app{flex:none;white-space:nowrap}
-  #update-dialog{max-width:min(420px,calc(100vw - 32px));border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--fg,#fafafa);padding:20px}
+  #update-dialog{max-width:min(420px,calc(100vw - 32px));max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--fg,#fafafa);padding:20px}
   #update-dialog::backdrop{background:#0008}
-  #update-message{overflow-wrap:anywhere}
+  #update-message{overflow-wrap:anywhere;white-space:pre-wrap}
   #bar{display:contents} .viewer-bar #more,.viewer-bar #bb,#pill{display:none}
   @media (max-width:700px){
     body{grid-template-columns:1fr;grid-template-rows:1fr}

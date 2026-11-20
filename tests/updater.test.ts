@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Updater } from "../src/updater";
@@ -11,15 +11,20 @@ test("downloaded updates require a newer commit on the installed branch", async 
   let head = sha;
   let status = "ahead";
   let unavailable = false;
+  let unblock!: () => void;
+  const gate = new Promise<void>((resolve) => { unblock = resolve; });
   try {
     writeFileSync(join(root, ".install.json"), JSON.stringify({ kind: "archive", repo: "example/fork", ref: "team/main", sha }));
     const updater = new Updater(root, "", async (url) => {
+      await gate;
       if (unavailable) throw new Error("offline");
       expect(url).toContain("/repos/example/fork/");
       if (url.endsWith("/commits/team%2Fmain")) return Response.json({ sha: head });
       expect(url).toEndWith(`/compare/${sha}...${next}`);
       return Response.json({ status });
     });
+    expect(updater.status()).toEqual({ available: false, checking: true });
+    unblock();
     expect(await updater.check()).toBeNull();
     head = next;
     expect(await updater.check()).toEqual({ kind: "archive", sha: next });
@@ -52,6 +57,10 @@ test("linked updates distinguish upstream changes, dirty edits, and divergence",
     expect(await updater.check()).toBeNull();
     writeFileSync(join(upstream, "src/cli.ts"), "upstream");
     git(upstream, "commit", "-am", "upstream");
+    const nested = join(root, "nested");
+    mkdirSync(nested);
+    symlinkSync(nested, join(home, "nested-link"), "dir");
+    expect(await new Updater(nested, join(home, "nested-link")).check()).toBeNull();
     expect(await updater.check()).toMatchObject({ kind: "checkout" });
     await updater.apply();
     expect(git(root, "rev-parse", "HEAD")).toBe(git(upstream, "rev-parse", "HEAD"));
