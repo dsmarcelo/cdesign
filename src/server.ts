@@ -11,6 +11,7 @@ import { colorTokens, sizeTokens } from "./tokens";
 import { applyEdit, editInfo } from "./edit";
 import { contextChips } from "./chat-context";
 import { ProjectChat, ChatError, MAX_BODY, capabilitiesOf } from "./chat";
+import { Updater } from "./updater";
 import { PROVIDERS } from "./chat-registry";
 const websitePreviews = new Map<string, ReturnType<typeof previewWebsite>>();
 const websiteJobs = new Set<string>();
@@ -49,6 +50,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
   const chats = new Map<string, ProjectChat>(); // private per-project chat: its own streams, never `push`ed to preview clients
   const chatOf = (p: Project) => chats.get(p.id) ?? (chats.set(p.id, new ProjectChat(p.root)), chats.get(p.id)!);
   const idleMs = +(process.env.CDESIGN_IDLE_SECONDS ?? 120) * 1000;
+  const updater = new Updater();
   let lastActive = Date.now();
   let server: ReturnType<typeof Bun.serve>;
 
@@ -239,6 +241,10 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     if (p === "/") return new Response(Bun.file(join(UI, "index.html")));
 
     // ----- daemon-level API -----
+    if (p === "/__cd/update" && req.method === "GET") {
+      if (remote) return json({ available: false }, 403);
+      return json(updater.status());
+    }
     if (p === "/__cd/projects" && req.method === "GET") return json(remote ? { current: via!.id, remote: true, projects: [...projects.values()].map((q) => ({ id: q.id, name: basename(q.root), url: `/?project=${q.id}`, tabs: q.clients.size })) } : list(project));
     if (!via && p === "/__cd/tunnel" && req.method === "GET") {
       lastActive = Date.now(); // The project picker has no event stream but is still an open viewer.
