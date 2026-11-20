@@ -12,7 +12,8 @@ build() {
   # This recipe builds the checkout containing it.
   cd "$startdir/../.."
   bun install --frozen-lockfile
-  CARGO_TARGET_DIR="$srcdir/target" bun run desktop:build --ci --bundles deb
+  CDESIGN_DESKTOP_SYSTEM_BUN=1 CARGO_TARGET_DIR="$srcdir/target" \
+    bun run desktop:build --ci --bundles deb --config '{"bundle":{"externalBin":[]}}'
 }
 
 package() {
@@ -22,7 +23,7 @@ package() {
     return 1
   fi
   # Reuse Tauri's file layout and desktop entry, then use Arch's Bun at runtime.
-  ar p "${bundles[0]}" data.tar.gz > "$srcdir/data.tar.gz"
-  tar -xzf "$srcdir/data.tar.gz" -C "$pkgdir"
+  set -o pipefail
+  ar p "${bundles[0]}" data.tar.gz | tar -xzf - -C "$pkgdir"
   ln -sfn bun "$pkgdir/usr/bin/cdesign-bun"
 }

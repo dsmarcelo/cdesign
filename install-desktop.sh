@@ -5,6 +5,7 @@ shopt -s nullglob
 
 usage() {
   echo "Usage: ./install-desktop.sh [path-to-package]"
+  echo "       ./install-desktop.sh --build   # Build this checkout on Arch"
   echo "Supports Arch, Debian/Ubuntu, Fedora, and Windows (from Git Bash)."
 }
 
@@ -14,7 +15,10 @@ if [[ ${1:-} == -h || ${1:-} == --help ]]; then usage; exit 0; fi
 if (( $# > 1 )); then usage >&2; exit 1; fi
 
 package=""
-if (( $# )); then
+build_from_source=false
+if [[ ${1:-} == --build ]]; then
+  build_from_source=true
+elif (( $# )); then
   [[ -f $1 ]] || die "Package file not found: $1"
   package="$(cd -- "$(dirname -- "$1")" && pwd -P)/$(basename -- "$1")"
 fi
@@ -47,11 +51,14 @@ esac
 if [[ $platform == arch && $machine != x86_64 ]]; then
   die "The Arch desktop package currently supports x86-64."
 fi
+if $build_from_source && [[ $platform != arch ]]; then
+  die "--build is only available on Arch."
+fi
 
 find_package() {
   local candidate
   for candidate in "$@"; do
-    if [[ -z $package || $candidate -nt $package ]]; then
+    if [[ -f $candidate && ( -z $package || $candidate -nt $package ) ]]; then
       package=$candidate
     fi
   done
@@ -61,7 +68,8 @@ find_local_package() {
   local target="$PWD/src-tauri/target"
   local profile
   if [[ $platform == arch ]]; then
-    find_package "$PWD"/packaging/arch/cdesign-desktop-*-"$machine".pkg.tar.zst
+    find_package "$PWD"/packaging/arch/cdesign-desktop-*-"$machine".pkg.tar.zst \
+      "$PWD"/packaging/arch/cdesign-desktop-"$machine".pkg.tar.zst
     return
   fi
   for profile in release debug; do
@@ -77,7 +85,11 @@ find_local_package() {
 install_package() {
   printf 'Installing %s\n' "$(basename -- "$package")"
   case "$platform:$package" in
-    arch:*.pkg.tar.zst) sudo pacman -U -- "$package" ;;
+    arch:*.pkg.tar.zst)
+      [[ $(pacman -Qpq -- "$package") == cdesign-desktop ]] ||
+        die "Expected a cdesign-desktop package: $package"
+      sudo pacman -U -- "$package"
+      ;;
     deb:*.deb) sudo apt install "$package" ;;
     rpm:*.rpm) sudo dnf install "$package" ;;
     windows:*.exe) "$package" ;;
@@ -85,13 +97,52 @@ install_package() {
   esac
 }
 
-if [[ -z $package ]]; then find_local_package; fi
+install_arch() (
+  local workdir status
+  workdir=$(mktemp -d "${TMPDIR:-/var/tmp}/cdesign-desktop.XXXXXXXX")
+  trap 'rm -rf -- "$workdir"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  if ! $build_from_source && command -v curl >/dev/null; then
+    package="$workdir/cdesign-desktop-x86_64.pkg.tar.zst"
+    echo "Checking GitHub Releases for a prebuilt Arch package."
+    status=$(curl --silent --show-error --location --proto '=https' \
+      --connect-timeout 10 --max-time 120 --output "$package" --write-out '%{http_code}' \
+      "https://github.com/dsmarcelo/cdesign/releases/latest/download/${package##*/}") ||
+      die "Could not download the Arch package. Retry, pass a local package, or use --build."
+    case "$status" in
+      200) install_package; return ;;
+      404) echo "No prebuilt Arch release is available." ;;
+      *) die "GitHub returned HTTP $status. Retry, pass a local package, or use --build." ;;
+    esac
+  fi
+
+  echo "Building cdesign Desktop for Arch Linux. The first build can take several minutes."
+  if ! pacman -Qq base-devel >/dev/null 2>&1; then
+    sudo pacman -S --needed base-devel
+  fi
+  command -v makepkg >/dev/null || die "makepkg is required to build the Arch package."
+
+  # Stage the checkout so Tauri, Cargo and makepkg write only inside the temporary directory.
+  tar --exclude=src-tauri/target --exclude=src-tauri/runtime \
+    --exclude=src-tauri/binaries --exclude=src-tauri/gen -cf - \
+    package.json bun.lock desktop src-tauri src ui skills packaging/arch/PKGBUILD |
+    tar -xf - -C "$workdir"
+  cd "$workdir/packaging/arch"
+  export BUILDDIR="$PWD" PKGDEST="$workdir" LOGDEST="$workdir" PKGEXT=.pkg.tar.zst
+  export CARGO_HOME="$workdir/cargo" BUN_INSTALL_CACHE_DIR="$workdir/bun-cache"
+  makepkg --syncdeps --nosign
+  package=$(makepkg --packagelist)
+  [[ -f $package ]] || die "Build finished but no Arch package was found."
+  install_package
+)
+
+if [[ -z $package ]] && ! $build_from_source; then find_local_package; fi
 if [[ -n $package ]]; then
   install_package
 elif [[ $platform == arch ]]; then
-  echo "Building cdesign Desktop for Arch Linux."
-  sudo pacman -Syu --needed base-devel
-  (cd packaging/arch && makepkg -si)
+  install_arch
 elif [[ $platform == windows ]]; then
   die "Pass the Windows setup .exe from the Desktop installers workflow, or build it with bun run desktop:build."
 else

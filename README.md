@@ -19,9 +19,11 @@ From the checkout, run this as your regular user on Arch Linux (x86-64), Debian/
 ./install-desktop.sh
 ```
 
-The script detects the package manager and uses normal `sudo` prompts. It installs a local package if one is available, or installs the build dependencies and builds from source. On Windows, run the NSIS setup executable directly or pass it to the script from Git Bash.
+On Arch and Arch-based distributions such as CachyOS, the script uses a local package if available, then checks GitHub Releases for a prebuilt package. If there is no release package yet, it builds from source in a temporary directory and removes the build files when it exits. Use `./install-desktop.sh --build` to build the current checkout. Pacman may ask for your sudo password to install dependencies or the finished package.
 
-You can pass a downloaded package explicitly with `./install-desktop.sh /path/to/package`. The [Desktop installers workflow](https://github.com/dsmarcelo/cdesign/actions/workflows/desktop.yml) produces unsigned Arch, Debian, RPM, and Windows NSIS packages. Debian, RPM, and Windows packages bundle Bun. The Arch package pulls in system Bun through pacman. Use the CLI installation below to put `cdesign` on PATH and register its MCP server with your coding agents.
+On Debian/Ubuntu and Fedora, the script uses a local package if available or builds from source. On Windows, run the NSIS setup executable directly or pass it to the script from Git Bash.
+
+You can pass a downloaded package explicitly with `./install-desktop.sh /path/to/package`. The [Desktop installers workflow](https://github.com/dsmarcelo/cdesign/actions/workflows/desktop.yml) produces unsigned Arch, Debian, RPM, and Windows NSIS packages. It also attaches the Arch package to published GitHub releases. Debian, RPM, and Windows packages bundle Bun. The Arch package pulls in system Bun through pacman. Use the CLI installation below to put `cdesign` on PATH and register its MCP server with your coding agents.
 
 ### Build from source
 

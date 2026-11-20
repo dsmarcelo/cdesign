@@ -26,4 +26,6 @@ if (install.exitCode !== 0) throw new Error("Could not install cdesign's desktop
 rmSync(join(runtime, "node_modules", ".bin"), { recursive: true, force: true });
 
 const suffix = process.platform === "win32" ? ".exe" : "";
-cpSync(process.execPath, join(binaries, `cdesign-bun-${triple}${suffix}`));
+if (process.env.CDESIGN_DESKTOP_SYSTEM_BUN !== "1") {
+  cpSync(process.execPath, join(binaries, `cdesign-bun-${triple}${suffix}`));
+}
