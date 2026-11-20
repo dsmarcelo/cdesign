@@ -13,7 +13,7 @@ async function until<T>(fn: () => T | Promise<T>, timeout = 15000): Promise<NonN
   throw new Error("Timed out waiting for browser state");
 }
 
-test.skipIf(!chrome)("browser: saving a comment starts the chat and reloads the preview after the agent edits it", async () => {
+test.skipIf(!chrome)("browser: comments stack in the composer, Send delivers them with the guide, and the preview reloads after the agent edits it", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cdesign-ctx-browser-"));
   const root = join(dir, "project"), home = join(dir, "home"), bin = join(dir, "bin"), profile = join(dir, "chrome"), log = join(dir, "codex.log");
   mkdirSync(root); mkdirSync(home); mkdirSync(bin); mkdirSync(join(root, "design/pages"), { recursive: true });
@@ -64,38 +64,43 @@ test.skipIf(!chrome)("browser: saving a comment starts the chat and reloads the 
     expect((await chips()).filter((c: string) => c.startsWith("comment:")).length).toBe(1);
     expect((await (await fetch(`${base}/__cd/comments`)).json() as any[]).find((c) => c.id === made.id).status).toBe("draft");
 
-    // Add feedback in the preview with a separate, unsent message in the composer.
-    await ev("{const t=document.querySelector('#chat textarea');t.value='My unsent message';t.dispatchEvent(new Event('input'));document.querySelector('#mode').click()}");
+    // Saving a comment in the preview only stacks it in the composer: nothing is sent until Send is pressed.
+    await ev("{const t=document.querySelector('#chat textarea');t.value='Please do these';t.dispatchEvent(new Event('input'));document.querySelector('#mode').click()}");
     const addComment = async (text: string) => {
       await ev("{const d=document.querySelector('#fr').contentDocument;d.querySelector('h1').click();d.querySelector('.__cd-pop textarea').value=" + JSON.stringify(text) + ";d.querySelector('.__cd-pop .go').click()}");
     };
     await addComment("design-edit now");
-    await until(() => ev("document.querySelector('#fr').contentDocument?.querySelector('h1')?.textContent==='Edited'"));
-    const prompts = () => readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((m) => m.method === "turn/start");
     const comments = () => fetch(`${base}/__cd/comments`).then((r) => r.json()) as Promise<any[]>;
-    expect(prompts()).toHaveLength(1);
-    const delivered = (await comments()).find((c) => c.text === "design-edit now");
-    expect(delivered.status).toBe("sent");
-    const prompt = prompts()[0].params.input[0].text as string;
-    expect(prompt).toContain(`Comment ${delivered.id} on design/pages/Page.html at 2:1`);
-    expect(prompt).not.toContain(made.id);
-    expect(await ev("document.querySelector('#chat textarea').value")).toBe("My unsent message");
-    await until(() => ev("document.querySelector('.cc-msg.user')?.textContent.includes('Apply the cdesign comments')"));
+    await until(() => chips().then((c: string[]) => c.filter((x) => x.startsWith("comment:")).length === 2));
+    const tops = await ev("[...document.querySelectorAll('.cc-chip[data-type=comment]')].map((c) => c.offsetTop)") as number[];
+    expect(new Set(tops).size).toBe(2); // one comment per row
+    await Bun.sleep(300);
+    const prompts = () => existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((m) => m.method === "turn/start") : [];
+    expect(prompts()).toHaveLength(0);
+    expect((await comments()).every((c) => c.status === "draft")).toBe(true);
+    expect(await ev("document.querySelector('#chat textarea').value")).toBe("Please do these");
 
-    // While the agent is waiting for approval, save another comment. It starts in the same chat after denial.
+    // Send delivers every stacked comment with the guide to apply them and mark them done.
+    await ev("document.querySelector('.cc-form .go').click()");
+    await until(() => prompts().length === 1);
+    const delivered = (await comments()).find((c) => c.text === "design-edit now");
+    const prompt = prompts()[0].params.input[0].text as string;
+    expect(prompt).toStartWith("Please do these");
+    expect(prompt).toContain(`Comment ${delivered.id} on design/pages/Page.html at 2:1`);
+    expect(prompt).toContain(`Comment ${made.id} on design/pages/Page.html at 2:1`);
+    expect(prompt).toContain(`cdesign resolve ${made.id} ${delivered.id}`);
+    expect((await comments()).map((c) => c.status)).toEqual(["sent", "sent"]);
+    await until(() => ev("document.querySelector('#fr').contentDocument?.querySelector('h1')?.textContent==='Edited'"));
     await until(async () => !(await (await fetch(`${base}/__cd/chat`)).json() as any).busy);
-    const { conversation } = await (await fetch(`${base}/__cd/chat`)).json() as any;
-    await fetch(`${base}/__cd/chat/send`, { method: "POST", body: JSON.stringify({ conversationId: conversation.id, fullAccess: false, text: "ask" }) });
-    const approval = await until(async () => (await (await fetch(`${base}/__cd/chat`)).json() as any).conversation.approvals[0]);
+    expect(await chips().then((c: string[]) => c.filter((x) => x.startsWith("comment:")))).toEqual([]);
+
+    // With no message typed, the comments alone are enough.
     await addComment("Use the brand color");
-    await until(async () => (await comments()).some((c) => c.text === "Use the brand color" && c.status === "draft"));
-    expect(prompts()).toHaveLength(2);
-    const { conversation: running } = await (await fetch(`${base}/__cd/chat`)).json() as any;
-    await fetch(`${base}/__cd/chat/approve`, { method: "POST", body: JSON.stringify({ conversationId: running.id, turnId: running.turnId, approvalId: approval.id, decision: "deny" }) });
-    await until(() => prompts().length === 3);
-    expect(prompts()[2].params.threadId).toBe(prompts()[0].params.threadId);
-    expect(prompts()[2].params.input[0].text).toContain("Use the brand color");
-    expect((await comments()).find((c) => c.id === made.id).status).toBe("draft");
+    await until(() => chips().then((c: string[]) => c.some((x) => x.includes("Use the brand color"))));
+    await ev("document.querySelector('.cc-form .go').click()");
+    await until(() => prompts().length === 2);
+    expect(prompts()[1].params.input[0].text).toStartWith("Apply the attached comments.");
+    expect(prompts()[1].params.input[0].text).toContain("Use the brand color");
   } finally {
     socket?.close(); browser?.kill(); daemon.kill();
     await Promise.allSettled([daemon.exited, browser?.exited]);

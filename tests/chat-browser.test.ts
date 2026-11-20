@@ -47,10 +47,10 @@ test.skipIf(!chrome)("browser: Chat/Files tabs, resize/collapse, Codex send with
     await until(() => ev("document.readyState==='complete' && !!document.querySelector('#chat textarea') && !!document.querySelector('#fr').contentDocument?.querySelector('main')"));
 
     await cmd("Emulation.setDeviceMetricsOverride", { width: 760, height: 800, deviceScaleFactor: 1, mobile: false });
-    expect(await ev("document.querySelector('#tr').getBoundingClientRect().right <= innerWidth")).toBe(true);
+    expect(await ev("document.querySelector('#mode').getBoundingClientRect().right <= innerWidth")).toBe(true);
     await cmd("Emulation.setDeviceMetricsOverride", { width: 390, height: 700, deviceScaleFactor: 1, mobile: true });
     await ev("document.querySelector('#pl').click()");
-    expect(await ev("document.querySelector('#bar').scrollWidth > document.querySelector('#bar').clientWidth && document.querySelector('#project-tools-toggle').offsetHeight >= 44 && document.querySelector('#theme').offsetTop === document.querySelector('#tr').offsetTop")).toBe(true);
+    expect(await ev("document.querySelector('#bar').scrollWidth > document.querySelector('#bar').clientWidth && document.querySelector('#project-tools-toggle').offsetHeight >= 44 && document.querySelector('#theme').offsetTop === document.querySelector('#mode').offsetTop")).toBe(true);
     await ev("document.querySelector('#project-tools-toggle').click()");
     expect(await ev("document.querySelector('#project-tools').matches(':popover-open')")).toBe(true);
     await ev("document.querySelector('#tunnel').click()");
@@ -89,6 +89,21 @@ test.skipIf(!chrome)("browser: Chat/Files tabs, resize/collapse, Codex send with
     await ev("document.querySelector('#tl').click()");
     expect(await shown("#lside")).toBe(true);
     expect(await ev("document.querySelector('#chat textarea').value")).toBe("draft stays");
+
+    // Comments live in the left sidebar (no right sidebar); Ctrl+B toggles the sidebar, even while typing in the chat box
+    expect(await ev("!document.querySelector('aside.r')")).toBe(true);
+    await ev("document.querySelector('#tab-comments').click()");
+    expect(await shown("#cm")).toBe(true);
+    expect(await shown("#chat")).toBe(false);
+    expect(await ev("document.querySelector('#tab-comments').getAttribute('aria-selected')")).toBe("true");
+    await ev("document.querySelector('#tab-chat').click()");
+    const ctrlB = (target: string) => ev(`document.querySelector(${JSON.stringify(target)}).dispatchEvent(new KeyboardEvent('keydown',{key:'b',ctrlKey:true,bubbles:true,cancelable:true}))`);
+    await ev("document.querySelector('#chat textarea').focus()");
+    expect(await ctrlB("#chat textarea")).toBe(false); // preventDefault was called
+    expect(await shown("#lside")).toBe(false);
+    expect(await ev("document.querySelector('#stage').getBoundingClientRect().left")).toBe(0);
+    await ctrlB("body");
+    expect(await shown("#lside")).toBe(true);
 
     // send through fake Codex: streamed reply with tool activity hidden
     await ev("{const t=document.querySelector('#chat textarea');t.value='hello';t.dispatchEvent(new Event('input'));document.querySelector('.cc-form .go').click()}");
