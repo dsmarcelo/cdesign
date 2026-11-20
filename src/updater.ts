@@ -21,7 +21,7 @@ export class Updater {
   private readonly baseline: string;
   private cached: Candidate | null = null;
   private checkedAt = 0;
-  private checking: Promise<Candidate | null> | undefined;
+  private checking: Promise<void> | undefined;
 
   constructor(
     readonly root = resolve(import.meta.dir, ".."),
@@ -94,14 +94,38 @@ export class Updater {
     return null;
   }
 
+  get supported() { return Boolean(this.archive || this.linked); }
+
+  async verifyRuntime() {
+    await run([process.execPath, join(this.root, "src/cli.ts"), "help"], this.root);
+  }
+
+  async apply(candidate?: Candidate) {
+    await this.checking;
+    candidate ??= await this.check();
+    if (!candidate) throw new Error("No update could be verified. Check your connection or checkout and try again.");
+    if (candidate.kind === "reload") return;
+    if (candidate.kind === "checkout") {
+      if (await this.git("status", "--porcelain")) throw new Error("The checkout changed. Save your work and try again.");
+      await this.git("merge", "--ff-only", candidate.sha);
+      return;
+    }
+    const { repo, ref } = this.archive!;
+    await run(["bash", join(this.root, "install.sh")], this.root, {
+      ...process.env, CDESIGN_HOME: this.root, CDESIGN_REPO: repo, CDESIGN_REF: ref,
+      CDESIGN_SRC: "", CDESIGN_INSTALL_SHA: candidate.sha, CDESIGN_INSTALL_UPDATE: "1",
+    }, 600_000);
+  }
+
   status() {
-    const interval = this.linked ? 15_000 : 300_000;
+    if (!this.supported) return { available: false, checking: false };
+    const interval = this.linked ? 60_000 : 300_000;
     if (!this.checking && (!this.checkedAt || Date.now() - this.checkedAt >= interval)) {
-      this.checking = this.check().then((candidate) => { this.cached = candidate; }).finally(() => {
+      this.checking = this.check().then((candidate) => { this.cached = candidate?.kind === "reload" ? null : candidate; }).finally(() => {
         this.checkedAt = Date.now();
         this.checking = undefined;
-      }).then(() => this.cached);
+      });
     }
-    return { available: Boolean(this.cached), checking: Boolean(this.checking) };
+    return { available: Boolean(this.cached) || (this.linked && this.fingerprint() !== this.baseline), checking: Boolean(this.checking) };
   }
 }

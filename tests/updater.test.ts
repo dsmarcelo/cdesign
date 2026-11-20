@@ -53,8 +53,16 @@ test("linked updates distinguish upstream changes, dirty edits, and divergence",
     writeFileSync(join(upstream, "src/cli.ts"), "upstream");
     git(upstream, "commit", "-am", "upstream");
     expect(await updater.check()).toMatchObject({ kind: "checkout" });
+    await updater.apply();
+    expect(git(root, "rev-parse", "HEAD")).toBe(git(upstream, "rev-parse", "HEAD"));
+    const reloaded = new Updater(root, join(home, "linked"));
+    writeFileSync(join(upstream, "src/cli.ts"), "second upstream change");
+    git(upstream, "commit", "-am", "second upstream");
     writeFileSync(join(root, "src/cli.ts"), "local");
-    expect(await updater.check()).toEqual({ kind: "reload" });
+    expect(await reloaded.check()).toEqual({ kind: "reload" });
+    await reloaded.apply();
+    expect(git(root, "status", "--porcelain")).toContain("src/cli.ts");
+    expect(git(root, "rev-parse", "HEAD")).not.toBe(git(upstream, "rev-parse", "HEAD"));
     git(root, "commit", "-am", "local");
     expect(await new Updater(root, join(home, "linked")).check()).toBeNull();
     git(root, "reset", "--hard", "@{upstream}");

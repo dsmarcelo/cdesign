@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, cpSync, symlinkSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { projectId } from "../src/store";
@@ -25,7 +25,13 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
   const button = '/** Purpose: Stateful button. */\nimport {useState} from "react";\nexport default function Button(){ const [n,setN]=useState(0); return <button className="p-4 bg-red-500" onClick={()=>setN(n+1)}>Count {n}</button>}\nexport function Preview(){const [wide,setWide]=useState(false);return <section style={{padding:wide?32:8}}><input type="checkbox" onChange={()=>setWide(!wide)}/><Button/><Button/></section>}';
   put("design/components/ui/Button.tsx", button);
   put("design/pages/Home.tsx", 'import Button from "../components/ui/Button"; export default function Home(){return <main><Button/><Button/></main>}');
-  const daemon = Bun.spawn([process.execPath, cli, "serve", root, "--port", "0"], {env: {...process.env, CDESIGN_HOME: home, CDESIGN_IDLE_SECONDS: "300"}, stdout: "ignore", stderr: "pipe"});
+  const runtime = join(home, "runtime"), link = join(home, "linked");
+  mkdirSync(runtime);
+  for (const dir of ["src", "ui"]) cpSync(join(import.meta.dir, "..", dir), join(runtime, dir), { recursive: true });
+  symlinkSync(join(import.meta.dir, "../node_modules"), join(runtime, "node_modules"), "dir");
+  symlinkSync(runtime, link, "dir");
+  const runtimeCli = join(link, "src/cli.ts");
+  const daemon = Bun.spawn([process.execPath, runtimeCli, "serve", root, "--port", "0"], {env: {...process.env, CDESIGN_HOME: home, CDESIGN_INSTALL_LINK: link, CDESIGN_IDLE_SECONDS: "300"}, stdout: "ignore", stderr: "pipe"});
   let browser: ReturnType<typeof Bun.spawn> | undefined, socket: WebSocket | undefined;
   try {
     const statePath = join(home, "daemon.json");
@@ -189,7 +195,41 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
       }
       expect(captures[1]).toBe(captures[0]); expect(captures[2]).toBe(captures[0]);
     }
+    await navigate("/", "#fr");
+    expect(await ev("document.querySelector('.viewer-bar .update-app').hidden")).toBe(true);
+    const runtimeSource = readFileSync(runtimeCli, "utf8");
+    appendFileSync(runtimeCli, "\nconst = broken;\n");
+    await cmd("Page.navigate", { url: `http://localhost:${port}/` });
+    await until(() => ev("document.querySelector('#pick .update-app:not([hidden])')?.offsetWidth > 0"));
+    await navigate("/#design/pages/Roundtrip.html", "#fr");
+    const click = async (selector: string) => {
+      const { x, y } = await ev(`(() => {
+        const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+        return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+      })()`);
+      await cmd("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+      await cmd("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+    };
+    await until(() => ev("document.querySelector('.viewer-bar .update-app:not([hidden])')?.offsetWidth > 0"));
+    await click(".viewer-bar .update-app");
+    await until(() => ev("document.querySelector('#update-dialog').open && !document.querySelector('.viewer-bar .update-app').disabled"));
+    expect(await ev("document.querySelector('#update-message').textContent")).not.toBe("Updating cdesign…");
+    await ev("document.querySelector('#update-dialog').close(); window.beforeUpdate = true;");
+    await until(() => ev("!document.querySelector('#update-dialog').open && document.querySelector('.viewer-bar .update-app:not([hidden])')?.offsetWidth > 0"));
+    writeFileSync(runtimeCli, runtimeSource + "\n// reload browser fixture\n");
+    await click(".viewer-bar .update-app");
+    await until(() => ev("window.beforeUpdate === undefined && location.hash === '#design/pages/Roundtrip.html' && !!document.querySelector('#fr').contentDocument?.querySelector('button')")).catch(async (error) => {
+      const state = await ev("({ beforeUpdate: window.beforeUpdate, url: location.href, message: document.querySelector('#update-message')?.textContent, frame: document.querySelector('#fr')?.src })");
+      const daemonState = readFileSync(join(home, "daemon.json"), "utf8");
+      const status = await fetch(base + "/__cd/update").then((r) => r.text()).catch(String);
+      throw new Error(JSON.stringify({ state, daemonState, status }), { cause: error });
+    });
+    expect(await ev("document.querySelector('.viewer-bar .update-app').hidden")).toBe(true);
   } finally {
+    try {
+      const { pid } = JSON.parse(readFileSync(join(home, "daemon.json"), "utf8"));
+      if (pid !== daemon.pid) process.kill(pid);
+    } catch { /* The daemon may have exited already. */ }
     socket?.close(); browser?.kill(); daemon.kill();
     await Promise.all([browser?.exited, daemon.exited]); rmSync(root,{recursive:true,force:true});
   }

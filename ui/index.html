@@ -79,13 +79,16 @@
   button.go{background:var(--acc);border-color:var(--acc)} button:disabled{opacity:.4;cursor:default}
   select{background:var(--panel);color:inherit;border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:inherit;max-width:220px}
   #pick{position:fixed;inset:0;background:var(--bg);display:none;place-content:center;gap:8px;padding:24px;z-index:9;width:min(480px,100%);margin:auto;align-content:center}
-  body.nop #pick{display:grid} body.nop>:not(#pick):not(#toast){display:none}
+  body.nop #pick{display:grid} body.nop>:not(#pick):not(#toast):not(#update-dialog){display:none}
   #pick h2{margin:0 0 8px;font-size:16px} #pick .f{border:1px solid var(--line);color:#fafafa} #pick small{color:var(--mut)}
   .tunnel-status{min-width:0;color:var(--mut);font-size:12px;overflow-wrap:anywhere} .tunnel-status a{color:inherit}
   #toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#fafafa;color:#111;padding:8px 14px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;max-width:80vw}
   #toast.on{opacity:1}
   .update-app[hidden]{display:none}
   .update-app{flex:none;white-space:nowrap}
+  #update-dialog{max-width:min(420px,calc(100vw - 32px));border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--fg,#fafafa);padding:20px}
+  #update-dialog::backdrop{background:#0008}
+  #update-message{overflow-wrap:anywhere}
   #bar{display:contents} .viewer-bar #more,.viewer-bar #bb,#pill{display:none}
   @media (max-width:700px){
     body{grid-template-columns:1fr;grid-template-rows:1fr}
@@ -136,6 +139,10 @@
   #share-list .info{flex:1 1 180px;min-width:0;display:grid;gap:2px;font-size:13px} #share-list .info b,#share-list .info small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap} #share-list .info small{color:var(--mut)}
   #share-list .del.sure{background:#dc2626;border-color:#dc2626;color:#fff} #share-box footer{display:flex;justify-content:flex-end} #share-instructions{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
 </style>
+<dialog id="update-dialog" aria-label="Update cdesign">
+  <p id="update-message" role="status"></p>
+  <form method="dialog"><button type="submit">Close</button></form>
+</dialog>
 <header class="viewer-bar">
   <button id="tl" class="ic on" title="Hide/show sidebar"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M6 3v10"/></svg></button>
   <b>cdesign</b>
@@ -673,16 +680,46 @@ async function tunnelStatus() {
     }
   } catch { /* daemon is reconnecting */ }
 }
+let viewerInstance;
 async function updateStatus() {
   if (document.body.classList.contains("remote")) return;
   try {
     const response = await fetch("/__cd/update", { cache: "no-store" });
     if (!response.ok) return;
-    const { available } = await response.json();
+    const { available, instance } = await response.json();
+    if (viewerInstance && instance && viewerInstance !== instance) return location.reload();
+    viewerInstance = instance;
     document.querySelectorAll(".update-app").forEach((button) => { button.hidden = !available; });
   } catch { /* The viewer can be used while a check is unavailable. */ }
 }
+async function applyUpdate() {
+  const dialog = $("#update-dialog"), message = $("#update-message");
+  const buttons = document.querySelectorAll(".update-app");
+  buttons.forEach((button) => { button.disabled = true; });
+  message.textContent = "Updating cdesign…";
+  dialog.showModal();
+  try {
+    const response = await fetch("/__cd/update", { method: "POST" });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error);
+    message.textContent = "Reconnecting to cdesign…";
+    for (let i = 0; i < 60; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const status = await fetch("/__cd/update", { cache: "no-store", signal: AbortSignal.timeout(1000) })
+        .then((r) => r.ok ? r.json() : null).catch(() => null);
+      if (status?.instance && status.instance !== result.instance) return location.reload();
+    }
+    throw new Error("The update finished, but cdesign did not reconnect. Open cdesign again to restart the viewer.");
+  } catch (error) {
+    message.textContent = error.message;
+  } finally {
+    buttons.forEach((button) => { button.disabled = false; });
+  }
+}
 projects().then((cur) => {
+  document.querySelectorAll(".update-app").forEach((button) => {
+    button.addEventListener("click", (event) => { if (event.isTrusted) applyUpdate(); });
+  });
   tunnelStatus();
   if (cur) start();
   updateStatus();

@@ -50,6 +50,9 @@ else
   curl -fsSL --max-time 120 "https://github.com/$REPO/archive/$sha.tar.gz" | tar -xz --strip-components=1 -C "$tmp/next"
   (cd "$tmp/next" && bun install --production --silent)
   test -f "$tmp/next/src/cli.ts"
+  if [ "${CDESIGN_INSTALL_UPDATE:-}" = 1 ]; then
+    (cd "$tmp/next" && "$BUN_PATH" src/cli.ts help >/dev/null)
+  fi
   bun -e 'const [path, repo, ref, sha] = process.argv.slice(1); await Bun.write(path, JSON.stringify({kind:"archive", repo, ref, sha}))' -- "$tmp/next/.install.json" "$REPO" "$REF" "$sha"
   if [ ! -L "$SHARE" ]; then
     for state in daemon.json projects.json tunnel.json; do
@@ -60,6 +63,8 @@ fi
 
 if [ -e "$SHARE" ] || [ -L "$SHARE" ]; then mv "$SHARE" "$tmp/previous"; fi
 mv "$tmp/next" "$SHARE"
+
+if [ "${CDESIGN_INSTALL_UPDATE:-}" = 1 ]; then exit 0; fi
 
 mkdir -p "$BIN"
 {

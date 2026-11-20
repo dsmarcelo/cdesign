@@ -51,6 +51,8 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
   const chatOf = (p: Project) => chats.get(p.id) ?? (chats.set(p.id, new ProjectChat(p.root)), chats.get(p.id)!);
   const idleMs = +(process.env.CDESIGN_IDLE_SECONDS ?? 120) * 1000;
   const updater = new Updater();
+  const instance = crypto.randomUUID();
+  let updating = false;
   let lastActive = Date.now();
   let server: ReturnType<typeof Bun.serve>;
 
@@ -212,7 +214,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
   setInterval(() => { for (const p of projects.values()) presence(p); }, 3000); // a killed `wait` stops beating: notice it going stale
   // nothing left to serve (no viewer tab, no listening agent) for a while: exit, so no process is left behind
   setInterval(() => {
-    if ([...projects.values()].some((p) => p.clients.size || listening(p.root) || chats.get(p.id)?.busy)) lastActive = Date.now();
+    if (updating || [...projects.values()].some((p) => p.clients.size || listening(p.root) || chats.get(p.id)?.busy)) lastActive = Date.now();
     else if (Date.now() - lastActive > idleMs) shutdown();
   }, Math.min(5000, Math.max(200, idleMs / 4)));
 
@@ -241,9 +243,30 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     if (p === "/") return new Response(Bun.file(join(UI, "index.html")));
 
     // ----- daemon-level API -----
-    if (p === "/__cd/update" && req.method === "GET") {
-      if (remote) return json({ available: false }, 403);
-      return json(updater.status());
+    if (p === "/__cd/update") {
+      if (remote) return json({ error: "Updates are available only in the local viewer." }, 403);
+      if (req.method === "GET") return json({ ...updater.status(), instance });
+      if (req.method === "POST") {
+        if (!updater.supported) return json({ error: "This installation does not support viewer updates." }, 409);
+        if (updating) return json({ error: "An update is already running." }, 409);
+        updating = true;
+        try {
+          await updater.apply();
+          if (updater.linked) await updater.verifyRuntime();
+          Bun.spawn([process.execPath, join(import.meta.dir, "cli.ts"), "daemon", "--port", String(server.port)], {
+            env: { ...process.env, CDESIGN_RESTART_PID: String(process.pid) },
+            cwd: homeDir(), stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true,
+          }).unref();
+          setTimeout(async () => {
+            await server.stop(true);
+            shutdown();
+          }, 200);
+          return json({ instance });
+        } catch (error) {
+          updating = false;
+          return json({ error: error instanceof Error ? error.message : String(error) }, 500);
+        }
+      }
     }
     if (p === "/__cd/projects" && req.method === "GET") return json(remote ? { current: via!.id, remote: true, projects: [...projects.values()].map((q) => ({ id: q.id, name: basename(q.root), url: `/?project=${q.id}`, tabs: q.clients.size })) } : list(project));
     if (!via && p === "/__cd/tunnel" && req.method === "GET") {

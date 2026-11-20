@@ -39,7 +39,7 @@ Installers appear under `src-tauri/target/release/bundle/`. The desktop build st
 
 ## CLI installation
 
-Linux/macOS (bash) and Windows (PowerShell). One command installs Bun if missing, cdesign into `~/.local/share/cdesign`, a `cdesign` launcher in `~/.local/bin`, and registers the MCP server with every agent found (Claude Code, Codex, Antigravity `agy`). Update with `cdesign update` (re-runs the installer).
+Linux/macOS (bash) and Windows (PowerShell). One command installs Bun if missing, cdesign into `~/.local/share/cdesign`, a `cdesign` launcher in `~/.local/bin`, and registers the MCP server with every agent found (Claude Code, Codex, Antigravity `agy`). Update from the local viewer or run `cdesign update` in a terminal.
 
 On Linux, the CLI installation also adds a cdesign browser launcher to the applications list. Opening it launches the local project picker in your browser and starts a tunnel automatically. The viewer shows the current tunnel URL or an error; install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) for the default quick tunnel, or configure a fixed tunnel below. Anyone with the tunnel link can view all open projects and send comments while it is running.
 
@@ -55,7 +55,13 @@ irm https://raw.githubusercontent.com/dsmarcelo/cdesign/main/install.ps1 | iex
 
 This creates `%USERPROFILE%\.localin\cdesign.cmd` and adds that folder to your user PATH (open a new terminal afterwards). Dev mode: `$env:CDESIGN_SRC = $PWD; .\install.ps1`.
 
-Register or remove the MCP server later with `cdesign install-mcp [claude|codex|agy|all]` / `cdesign uninstall-mcp`. Dev mode: `CDESIGN_SRC=$PWD ./install.sh` from a checkout links the install to it, so edits apply at once (`cdesign update` switches back to the GitHub version).
+Register or remove the MCP server later with `cdesign install-mcp [claude|codex|agy|all]` / `cdesign uninstall-mcp`. Dev mode: `CDESIGN_SRC=$PWD ./install.sh` links the install to the checkout.
+
+### Update a Bash install
+
+When an update is available, select **Update cdesign** in the local viewer toolbar or project picker. The viewer restarts and reopens the current view. Downloaded installs follow the repository and branch selected at install time. Linked installs keep the checkout and use the button to reload local runtime edits or fast-forward a clean checkout from its configured upstream.
+
+For installs made before update tracking was added, rerun the Bash installer once. Use the original `CDESIGN_REPO` and `CDESIGN_REF` for a custom download, or rerun it with `CDESIGN_SRC=$PWD` from the linked checkout. PowerShell installs use `cdesign update` and native desktop packages use their package installer.
 
 ## Use
 
@@ -80,7 +86,7 @@ In the viewer, press `C`, click an element, and save your comment with **Add** o
 | `review` | Print the batch the user sent from the viewer (run when asked to apply comments) |
 | `wait [--timeout s]` | Run in the background: exits with the batch when you press Send, which wakes the agent |
 | `install-mcp` / `uninstall-mcp` | Register / remove the MCP server in Claude Code, Codex and agy |
-| `update` | Install the latest version from GitHub |
+| `update` | Check for and apply a cdesign update |
 | `mcp` | MCP server (stdio) that teaches agents how to use cdesign |
 | `resolve <id...>` | Mark comments done |
 | `comments [--all]` | List pending comments |

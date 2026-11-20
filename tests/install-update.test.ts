@@ -10,6 +10,7 @@ test("Bash installer records an exact downloaded revision for script and stdin i
     const sha = "a".repeat(40);
     mkdirSync(bin);
     writeFileSync(join(bin, "curl"), `#!/bin/bash
+if [ "${"$"}FAIL_DOWNLOAD" = 1 ]; then exit 1; fi
 case "${"$"}*" in
   *api.github.com/repos/example/fork/commits/topic*) echo '{"sha":"${sha}"}';;
   *github.com/example/fork/archive/${sha}.tar.gz*) cat "${"$"}HOME/archive";;
@@ -29,6 +30,11 @@ esac
       expect(result.exitCode).toBe(0);
       expect(JSON.parse(readFileSync(join(env.CDESIGN_HOME, ".install.json"), "utf8"))).toEqual({ kind: "archive", repo: "example/fork", ref: "topic", sha });
     }
+    const failed = Bun.spawnSync(["bash", "install.sh"], {
+      env: { ...env, CDESIGN_INSTALL_SHA: "b".repeat(40), FAIL_DOWNLOAD: "1" },
+    });
+    expect(failed.exitCode).not.toBe(0);
+    expect(JSON.parse(readFileSync(join(env.CDESIGN_HOME, ".install.json"), "utf8")).sha).toBe(sha);
     const linked = Bun.spawnSync(["bash", "install.sh"], { env: { ...env, CDESIGN_SRC: fixture } });
     expect(linked.exitCode).toBe(0);
     expect(realpathSync(env.CDESIGN_HOME)).toBe(fixture);
