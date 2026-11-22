@@ -30,8 +30,8 @@ test("app tunnel starts without a project and reports its status", async () => {
   }
 });
 
-test("desktop opens the shared daemon without a tunnel and keeps the picker after closing a project", async () => {
-  const home = mkdtempSync(join(tmpdir(), "cdesign-desktop-"));
+test("web app serves manifest, service worker, icons, and keeps the picker after closing a project", async () => {
+  const home = mkdtempSync(join(tmpdir(), "cdesign-webapp-"));
   const root = join(home, "project");
   mkdirSync(root);
   const cli = join(import.meta.dir, "../src/cli.ts");
@@ -42,21 +42,38 @@ test("desktop opens the shared daemon without a tunnel and keeps the picker afte
     const first = await reader.read();
     reader.releaseLock();
     const base = new TextDecoder().decode(first.value).trim().replace("cdesign viewer: ", "");
-    const launch = (...args: string[]) => {
-      const result = Bun.spawnSync([process.execPath, cli, "desktop-url", ...args], { env, stderr: "inherit" });
-      expect(result.exitCode).toBe(0);
-      return new URL(result.stdout.toString().trim());
-    };
-    expect(launch().origin).toBe(base);
-    const project = launch(root);
+    const api = base.replace("localhost", "127.0.0.1");
+
+    const html = await (await fetch(api + "/")).text();
+    expect(html).toContain('rel="manifest" href="/manifest.webmanifest"');
+    const manifestRes = await fetch(api + "/manifest.webmanifest");
+    expect(manifestRes.ok).toBe(true);
+    expect(manifestRes.headers.get("content-type")).toContain("application/manifest+json");
+    const manifest = await manifestRes.json() as { name: string; display: string; icons: { src: string }[] };
+    expect(manifest.name).toBe("cdesign");
+    expect(manifest.display).toBe("standalone");
+    expect(manifest.icons.length).toBeGreaterThanOrEqual(2);
+    for (const icon of manifest.icons) {
+      expect((await fetch(api + icon.src)).ok).toBe(true);
+    }
+    const swRes = await fetch(api + "/sw.js");
+    expect(swRes.ok).toBe(true);
+    expect(swRes.headers.get("content-type")).toContain("javascript");
+    expect((await fetch(api + "/__cd/apple-touch-icon.png")).ok).toBe(true);
+
+    const add = await fetch(api + "/__cd/projects", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ root }),
+    });
+    expect(add.ok).toBe(true);
+    const project = new URL((await add.json() as { url: string }).url);
     const id = project.hostname.split(".")[0];
     expect(project.port).toBe(new URL(base).port);
-    const api = base.replace("localhost", "127.0.0.1");
     expect((await (await fetch(api + "/__cd/projects")).json()).projects).toHaveLength(1);
     expect((await (await fetch(api + "/__cd/tunnel")).json()).url).toBeNull();
     expect((await fetch(api + `/__cd/projects/${id}/remove`, { method: "POST" })).ok).toBe(true);
     await Bun.sleep(350);
-    expect(launch().origin).toBe(base);
     expect((await (await fetch(api + "/__cd/projects")).json()).projects).toHaveLength(0);
   } finally {
     daemon.kill();

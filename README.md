@@ -9,39 +9,11 @@ A lightweight viewer for React TSX and HTML prototypes, built for coding agents.
 - **Comments to the agent:** a comment carries the file, element id, selector, the element's source and your text. Comments you add in the local desktop viewer stack in the built-in chat composer; **Send** delivers all of them with a guide to apply each one and mark it done.
 - **Context on demand:** `cdesign open` returns short directions and the current target. Agents retrieve relevant guidance, component contracts and skills as needed; nothing is installed per project.
 
-## Desktop app
-
-cdesign Desktop runs the viewer in a Tauri 2 window on Linux and Windows. Open a project from the project picker, choose **File → Open Folder…**, or pass the project directory as the first argument to the desktop executable. New projects opened from the native menu or executable use the React and Tailwind defaults. Desktop and CLI sessions use the same local daemon and project registry. Tunnel sharing starts only when requested through the viewer or CLI.
-
-From the checkout, run this as your regular user on Arch Linux (x86-64), Debian/Ubuntu, or Fedora:
-
-```bash
-./install-desktop.sh
-```
-
-On Arch and Arch-based distributions such as CachyOS, the script uses a local package if available, then checks GitHub Releases for a prebuilt package. If there is no release package yet, it builds from source in a temporary directory and removes the build files when it exits. Use `./install-desktop.sh --build` to build the current checkout. Pacman may ask for your sudo password to install dependencies or the finished package.
-
-On Debian/Ubuntu and Fedora, the script uses a local package if available or builds from source. On Windows, run the NSIS setup executable directly or pass it to the script from Git Bash.
-
-You can pass a downloaded package explicitly with `./install-desktop.sh /path/to/package`. The [Desktop installers workflow](https://github.com/dsmarcelo/cdesign/actions/workflows/desktop.yml) produces unsigned Arch, Debian, RPM, and Windows NSIS packages. It also attaches the Arch package to published GitHub releases. Debian, RPM, and Windows packages bundle Bun. The Arch package pulls in system Bun through pacman. Use the CLI installation below to put `cdesign` on PATH and register its MCP server with your coding agents.
-
-### Build from source
-
-Install Bun, stable Rust, and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your platform. Use a native Linux GNU or Windows MSVC toolchain.
-
-```bash
-bun install --frozen-lockfile
-bun run desktop:dev
-bun run desktop:build
-```
-
-Installers appear under `src-tauri/target/release/bundle/`. The desktop build stages a copy of the runtime. Restart `desktop:dev` to pick up changes to the viewer runtime source.
-
-## CLI installation
+## Installation
 
 Linux/macOS (bash) and Windows (PowerShell). One command installs Bun if missing, cdesign into `~/.local/share/cdesign`, a `cdesign` launcher in `~/.local/bin`, and registers the MCP server with every agent found (Claude Code, Codex, Antigravity `agy`). Update from the local viewer or run `cdesign update` in a terminal.
 
-On Linux, the CLI installation also adds a cdesign browser launcher to the applications list. Opening it launches the local project picker in your browser and starts a tunnel automatically. The viewer shows the current tunnel URL or an error; install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) for the default quick tunnel, or configure a fixed tunnel below. Anyone with the tunnel link can view all open projects and send comments while it is running.
+cdesign is a web app (PWA): open it in any browser on `localhost` or over a tunnel, and install it from your browser's address bar or menu (or the **Install app** button in the viewer) to run it in a standalone window on desktop or mobile. On Linux, the installer also adds a cdesign launcher to your applications list with **Restart cdesign** and **Stop cdesign** actions. Opening it launches the local project picker in your browser and starts a tunnel automatically. The viewer shows the current tunnel URL or an error; install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) for the default quick tunnel, or configure a fixed tunnel below. Anyone with the tunnel link can view all open projects and send comments while it is running.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dsmarcelo/cdesign/main/install.sh | bash
@@ -61,7 +33,7 @@ Register or remove the MCP server later with `cdesign install-mcp [claude|codex|
 
 When an update is available, select **Update cdesign** in the local viewer toolbar or project picker. The viewer restarts and reopens the current view. Downloaded installs follow the repository and branch selected at install time. Linked installs keep the checkout and use the button to reload local runtime edits or fast-forward a clean checkout from its configured upstream.
 
-For installs made before update tracking was added, rerun the Bash installer once. Use the original `CDESIGN_REPO` and `CDESIGN_REF` for a custom download, or rerun it with `CDESIGN_SRC=$PWD` from the linked checkout. PowerShell installs use `cdesign update` and native desktop packages use their package installer.
+For installs made before update tracking was added, rerun the Bash installer once. Use the original `CDESIGN_REPO` and `CDESIGN_REF` for a custom download, or rerun it with `CDESIGN_SRC=$PWD` from the linked checkout. PowerShell installs use `cdesign update`.
 
 ## Use
 

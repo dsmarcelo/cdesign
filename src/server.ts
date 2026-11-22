@@ -303,6 +303,10 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
 
     if (p === "/__cd/overlay.js") return new Response(Bun.file(join(UI, "overlay.js")), { headers: { "cache-control": "no-store" } });
     if (p === "/__cd/chat.js" || p === "/__cd/chat.css") return new Response(Bun.file(join(UI, p.slice(6))), { headers: { "cache-control": "no-store" } });
+    if (p === "/manifest.webmanifest") return new Response(Bun.file(join(UI, "manifest.webmanifest")), { headers: { "content-type": "application/manifest+json; charset=utf-8", "cache-control": "no-store" } });
+    if (p === "/sw.js") return new Response(Bun.file(join(UI, "sw.js")), { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "service-worker-allowed": "/" } });
+    if (p === "/__cd/icon.svg" || p === "/favicon.ico") return new Response(Bun.file(join(UI, "icon.svg")), { headers: { "content-type": "image/svg+xml", "cache-control": "no-cache" } });
+    if (p === "/__cd/icon-192.png" || p === "/__cd/icon-512.png" || p === "/__cd/apple-touch-icon.png") return new Response(Bun.file(join(UI, p.slice(6))), { headers: { "content-type": "image/png", "cache-control": "no-cache" } });
     if (p === "/") return new Response(Bun.file(join(UI, "index.html")), { headers: { "cache-control": "no-store" } });
 
     // ----- daemon-level API -----
