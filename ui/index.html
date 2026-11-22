@@ -185,6 +185,12 @@
 <dialog id="tunnel-dialog" aria-labelledby="tunnel-title">
   <h2 id="tunnel-title">Tunnel</h2>
   <div id="tunnel-status" class="tunnel-status" role="status" aria-live="polite"></div>
+  <div id="tunnel-actions" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:14px">
+    <button id="tunnel-copy" type="button" hidden>Copy link</button>
+    <button id="tunnel-start" type="button" class="go">Start tunnel</button>
+    <button id="tunnel-restart" type="button" hidden>Restart tunnel</button>
+    <button id="tunnel-stop" type="button" hidden>Stop tunnel</button>
+  </div>
   <form method="dialog"><button>Close</button></form>
 </dialog>
 <dialog id="website-dialog" aria-labelledby="website-title">
@@ -615,8 +621,11 @@ async function addFolder() {
   location.href = j.url;
 }
 async function projects() {
-  const { current, projects: l, remote } = await (await fetch("/__cd/projects")).json();
+  const { current, projects: l, remote, instance } = await (await fetch("/__cd/projects")).json();
+  if (viewerInstance && instance && viewerInstance !== instance) return location.reload();
+  if (instance) viewerInstance = instance;
   document.body.classList.toggle("remote", !!remote);
+  if (remote) $("#tunnel-actions").hidden = true;
   const sel = $("#proj");
   sel.innerHTML = "";
   for (const p of l) sel.add(new Option(p.name, p.url, false, p.id === current));
@@ -647,13 +656,40 @@ projectTools.addEventListener("beforetoggle", (event) => {
 projectTools.addEventListener("click", (event) => {
   if (event.target.closest("button")) projectTools.hidePopover();
 }, { capture: true });
-$("#tunnel").onclick = () => $("#tunnel-dialog").showModal();
+let tunnelUrl = null, tunnelBusy = false;
+$("#tunnel").onclick = () => { tunnelStatus(); $("#tunnel-dialog").showModal(); };
+async function tunnelAction(path, label) {
+  if (tunnelBusy) return;
+  tunnelBusy = true;
+  for (const b of [$("#tunnel-start"), $("#tunnel-restart"), $("#tunnel-stop")]) b.disabled = true;
+  $("#tunnel-status").textContent = label;
+  try {
+    const r = await fetch(path, { method: "POST" });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || "Tunnel request failed");
+  } catch (e) { toast(e.message || String(e)); }
+  finally {
+    tunnelBusy = false;
+    for (const b of [$("#tunnel-start"), $("#tunnel-restart"), $("#tunnel-stop")]) b.disabled = false;
+    await tunnelStatus();
+  }
+}
+$("#tunnel-copy").onclick = () => tunnelUrl && navigator.clipboard.writeText(tunnelUrl).then(() => toast("Tunnel link copied"), () => toast(tunnelUrl));
+$("#tunnel-start").onclick = () => tunnelAction("/__cd/tunnel", "Starting tunnel…");
+$("#tunnel-restart").onclick = () => tunnelAction("/__cd/tunnel/restart", "Restarting tunnel…");
+$("#tunnel-stop").onclick = () => tunnelAction("/__cd/tunnel/stop", "Stopping tunnel…");
 async function tunnelStatus() {
+  if (document.body.classList.contains("remote")) return;
   try {
     const r = await fetch("/__cd/tunnel");
     if (!r.ok) return;
     const t = await r.json();
+    tunnelUrl = t.url || null;
     $("#tunnel").classList.toggle("on", Boolean(t.url));
+    $("#tunnel-copy").hidden = !t.url;
+    $("#tunnel-start").hidden = Boolean(t.url) || Boolean(t.starting);
+    $("#tunnel-restart").hidden = !t.url;
+    $("#tunnel-stop").hidden = !t.url;
     for (const el of [$("#tunnel-status"), $("#pick-tunnel")]) {
       if (!el) continue;
       const message = t.starting ? "Starting tunnel…" : t.error ? "Tunnel unavailable: " + t.error : t.url ? "Tunnel: " : "Tunnel offline";
@@ -715,6 +751,12 @@ function start() {
 const es = new EventSource("/__cd/events?tab=" + tabId);
 es.onopen = report; // also after a reconnect: the server forgets a tab when its stream closes
 es.onmessage = (e) => {
+  if (e.data.startsWith("instance:")) {
+    const next = e.data.slice("instance:".length);
+    if (viewerInstance && next && viewerInstance !== next) return location.reload();
+    if (next) viewerInstance = next;
+    return;
+  }
   if (e.data === "reload") $("#fr").contentWindow.location.reload(), view === "split" && $("#fr2").contentWindow.location.reload(), files();
   if (e.data === "comments") { comments(); send({ cd: "pins" }); agent(); }
   if (e.data === "agent") agent();

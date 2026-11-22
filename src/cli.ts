@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import qrcode from "qrcode-terminal";
 import { exportWebsite, previewWebsite, websiteDefaults, saveWebsite } from "./export";
 import { configurePublisher, publishWebsite } from "./publish";
-import { Updater } from "./updater";
+import { Updater, runtimeFingerprint } from "./updater";
 import { serveDaemon, DEFAULT_PORT } from "./server";
 import { screenshot } from "./shot";
 import { previewOf, sourceOfPreview } from "./render";
@@ -14,9 +14,9 @@ import { componentPreview } from "./previews";
 import { setup, readConfig, type SetupOptions } from "./project";
 import * as tk from "./tokens";
 import { context, folderGuidance, guidanceFiles, startup } from "./context";
-import { beat, dataDir, ensureDataDir, daemonPath, projectId, readComments, readTunnelConfig, writeTunnelConfig, update, commentsPath, type Comment } from "./store";
+import { beat, dataDir, ensureDataDir, daemonLogPath, daemonPath, homeDir, projectId, readComments, readTunnelConfig, writeTunnelConfig, update, commentsPath, type Comment } from "./store";
 
-const [cmd = "help", ...rest] = process.argv.slice(2);
+const [cmd = "restart-app", ...rest] = process.argv.slice(2);
 const flag = (n: string) => {
   const i = rest.indexOf(n);
   return i < 0 ? undefined : rest.splice(i, 2)[1];
@@ -91,46 +91,132 @@ function printContext(root: string) {
 }
 
 // ---------- daemon lifecycle (one viewer process for every project) ----------
+type DaemonInfo = { port: number; pid: number; startedAt?: number; instance?: string; fingerprint?: string; tunnel?: string | null };
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
-const readDaemon = () => {
+const readDaemon = (): DaemonInfo | null => {
   try {
-    const s = JSON.parse(readFileSync(daemonPath(), "utf8"));
-    return alive(s.pid) ? (s as { port: number; pid: number }) : null;
+    const s = JSON.parse(readFileSync(daemonPath(), "utf8")) as DaemonInfo;
+    return Number.isSafeInteger(s.pid) && s.pid > 0 && alive(s.pid) ? s : null;
   } catch { return null; }
 };
 
-/** readDaemon plus a real request: a recycled pid or a hung process must not look like the daemon. Stale files are removed. */
-async function liveDaemon() {
-  const s = readDaemon();
-  if (!s) return null;
+function openBrowser(url: string) {
+  const opener = process.platform === "win32" ? ["cmd", "/c", "start", "", url] : process.platform === "darwin" ? ["open", url] : ["xdg-open", url];
+  try { Bun.spawn(opener, { stdio: ["ignore", "ignore", "ignore"] }).unref(); } catch { console.error(`Open ${url} in your browser`); }
+}
+
+function notifyError(title: string, body: string) {
+  if (process.platform !== "linux" || process.stdout.isTTY) return;
+  try { Bun.spawnSync(["notify-send", "-u", "critical", title, body], { stdio: ["ignore", "ignore", "ignore"] }); } catch { /* notify-send unavailable */ }
+}
+
+async function probeDaemon(port: number): Promise<DaemonInfo | null> {
   try {
-    if ((await fetch(`http://127.0.0.1:${s.port}/__cd/projects`, { signal: AbortSignal.timeout(1000) })).ok) return s;
+    const r = await fetch(`http://127.0.0.1:${port}/__cd/health`, { signal: AbortSignal.timeout(1500) });
+    if (r.ok) {
+      const h = (await r.json()) as DaemonInfo;
+      if (Number.isSafeInteger(h.pid) && h.pid > 0) return h;
+    }
+  } catch { /* not answering or older daemon */ }
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/__cd/projects`, { signal: AbortSignal.timeout(1000) });
+    if (r.ok) return { port, pid: 0 };
   } catch { /* not answering */ }
-  try { rmSync(daemonPath()); } catch { /* ignore */ }
+  return null;
+}
+
+/** readDaemon plus a real request, plus port fallback so orphaned daemons without daemon.json are still found. */
+async function liveDaemon(preferredPort = DEFAULT_PORT): Promise<DaemonInfo | null> {
+  const s = readDaemon();
+  if (s) {
+    const h = await probeDaemon(s.port);
+    if (h) return { ...s, ...h, pid: h.pid || s.pid };
+    if (!alive(s.pid)) try { rmSync(daemonPath(), { force: true }); } catch { /* ignore */ }
+    return null;
+  }
+  try {
+    const raw = JSON.parse(readFileSync(daemonPath(), "utf8")) as { pid?: number };
+    if (raw.pid && !alive(raw.pid)) rmSync(daemonPath(), { force: true });
+  } catch { /* no daemon.json */ }
+  if (preferredPort > 0) {
+    const orphan = await probeDaemon(preferredPort);
+    if (orphan) return orphan;
+  }
   return null;
 }
 
 /** The running viewer predates the installed code (e.g. after `cdesign update` or a git pull): it must restart to pick up new features. */
-const stale = (startedAt?: number) => {
-  if (!startedAt) return false;
+const stale = (info: DaemonInfo) => {
+  if (info.fingerprint) return info.fingerprint !== runtimeFingerprint();
+  if (!info.startedAt) return true;
   const provenance = statSync(join(import.meta.dir, "../.install.json"), { throwIfNoEntry: false });
-  if (provenance && provenance.mtimeMs > startedAt) return true;
-  try { return readdirSync(import.meta.dir).some((f) => f.endsWith(".ts") && statSync(join(import.meta.dir, f)).mtimeMs > startedAt); } catch { return false; }
+  if (provenance && provenance.mtimeMs > info.startedAt) return true;
+  try { return readdirSync(import.meta.dir).some((f) => f.endsWith(".ts") && statSync(join(import.meta.dir, f)).mtimeMs > info.startedAt!); } catch { return false; }
 };
 
-async function ensureDaemon(port?: string) {
-  let s = await liveDaemon();
-  if (s) {
-    const info = (() => { try { return JSON.parse(readFileSync(daemonPath(), "utf8")); } catch { return {}; } })();
-    if (!stale(info.startedAt)) return s;
-    await fetch(`http://127.0.0.1:${s.port}/__cd/shutdown`, { method: "POST" }).catch(() => {});
-    for (let i = 0; i < 30 && alive(s.pid); i++) await Bun.sleep(100);
-    s = null;
+async function stopDaemon(target: DaemonInfo, options?: { preserveTunnel?: boolean }) {
+  const query = `?force=1${options?.preserveTunnel ? "&preserveTunnel=1" : ""}`;
+  await fetch(`http://127.0.0.1:${target.port}/__cd/shutdown${query}`, { method: "POST", signal: AbortSignal.timeout(2000) }).catch(() => {});
+  if (target.pid > 0) {
+    for (let i = 0; i < 30 && alive(target.pid); i++) await Bun.sleep(100);
+    if (alive(target.pid)) {
+      try { process.kill(target.pid, "SIGTERM"); } catch { /* already gone */ }
+      for (let i = 0; i < 20 && alive(target.pid); i++) await Bun.sleep(100);
+    }
+    if (alive(target.pid)) {
+      try { process.kill(target.pid, "SIGKILL"); } catch { /* already gone */ }
+      for (let i = 0; i < 10 && alive(target.pid); i++) await Bun.sleep(100);
+    }
   }
-  Bun.spawn([process.execPath, join(import.meta.dir, "cli.ts"), "daemon", ...(port ? ["--port", port] : [])], { stdio: ["ignore", "ignore", "ignore"], detached: true }).unref();
-  for (let i = 0; i < 50 && !(s = await liveDaemon()); i++) await Bun.sleep(100);
-  if (!s) throw new Error("cdesign daemon failed to start");
-  return s;
+  for (let i = 0; i < 15 && (await probeDaemon(target.port)); i++) await Bun.sleep(100);
+  try {
+    const raw = JSON.parse(readFileSync(daemonPath(), "utf8")) as { pid?: number };
+    if (!raw.pid || !alive(raw.pid)) rmSync(daemonPath(), { force: true });
+  } catch { /* ignore */ }
+}
+
+async function spawnDaemon(port?: string, previousPid?: number): Promise<DaemonInfo> {
+  mkdirSync(homeDir(), { recursive: true });
+  const logPath = daemonLogPath();
+  const logFd = openSync(logPath, "w");
+  try {
+    Bun.spawn([process.execPath, join(import.meta.dir, "cli.ts"), "daemon", ...(port ? ["--port", port] : [])], {
+      stdio: ["ignore", logFd, logFd],
+      detached: true,
+    }).unref();
+  } finally {
+    closeSync(logFd);
+  }
+  const checkPort = port ? +port : DEFAULT_PORT;
+  for (let i = 0; i < 60; i++) {
+    const s = await liveDaemon(checkPort);
+    if (s && (!previousPid || s.pid !== previousPid)) return s;
+    await Bun.sleep(100);
+  }
+  let detail = "";
+  try {
+    const log = readFileSync(logPath, "utf8").trim().split("\n").slice(-15).join("\n");
+    if (log) detail = `\n${log}`;
+  } catch { /* ignore */ }
+  throw new Error(`cdesign daemon failed to start (see ${logPath})${detail}`);
+}
+
+async function ensureDaemon(port?: string) {
+  const checkPort = port ? +port : DEFAULT_PORT;
+  const s = await liveDaemon(checkPort);
+  if (s) {
+    if (!stale(s)) return s;
+    await stopDaemon(s, { preserveTunnel: true });
+    return spawnDaemon(port ?? String(s.port), s.pid);
+  }
+  return spawnDaemon(port);
+}
+
+async function restartDaemon(port?: string) {
+  const checkPort = port ? +port : DEFAULT_PORT;
+  const s = await liveDaemon(checkPort);
+  if (s) await stopDaemon(s, { preserveTunnel: true });
+  return spawnDaemon(port ?? (s ? String(s.port) : undefined), s?.pid);
 }
 
 type Reg = { id: string; root: string; url: string; tabs: number };
@@ -246,14 +332,61 @@ switch (cmd) {
     }
     break;
   }
+  case "restart-app":
+  case "restart": {
+    const port = flag("--port");
+    const noTunnel = rest.includes("--no-tunnel");
+    const shouldOpen = cmd === "restart-app" || rest.includes("--open");
+    try {
+      const s = await restartDaemon(port);
+      const url = `http://localhost:${s.port}/`;
+      console.log(`cdesign restarted: ${url}`);
+      if (shouldOpen) openBrowser(url);
+      if (!noTunnel) {
+        const r = await fetch(`http://127.0.0.1:${s.port}/__cd/tunnel`, { method: "POST" });
+        const result = (await r.json()) as { url?: string; error?: string };
+        console.log(r.ok ? `Tunnel: ${result.url}` : `Tunnel not started: ${result.error}`);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      notifyError("cdesign failed to restart", msg);
+      console.error(msg);
+      process.exit(1);
+    }
+    break;
+  }
   case "app": {
-    const s = await ensureDaemon();
-    const url = `http://localhost:${s.port}/`;
-    const opener = process.platform === "win32" ? ["cmd", "/c", "start", "", url] : process.platform === "darwin" ? ["open", url] : ["xdg-open", url];
-    try { Bun.spawn(opener, { stdio: ["ignore", "ignore", "ignore"] }).unref(); } catch { console.error(`Open ${url} in your browser`); }
-    const r = await fetch(`http://127.0.0.1:${s.port}/__cd/tunnel`, { method: "POST" });
-    const result = await r.json() as { url?: string; error?: string };
-    console.log(r.ok ? `Tunnel: ${result.url}` : `Tunnel not started: ${result.error}`);
+    try {
+      const s = await ensureDaemon();
+      const url = `http://localhost:${s.port}/`;
+      openBrowser(url);
+      const r = await fetch(`http://127.0.0.1:${s.port}/__cd/tunnel`, { method: "POST" });
+      const result = (await r.json()) as { url?: string; error?: string };
+      console.log(r.ok ? `Tunnel: ${result.url}` : `Tunnel not started: ${result.error}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      notifyError("cdesign failed to start", msg);
+      console.error(msg);
+      process.exit(1);
+    }
+    break;
+  }
+  case "status": {
+    const s = await liveDaemon();
+    if (!s) { console.log("cdesign daemon is not running"); break; }
+    const projRes = await fetch(`http://127.0.0.1:${s.port}/__cd/projects`).then((r) => r.json()).catch(() => ({ projects: [] })) as { projects: { name: string; root: string; url: string }[] };
+    console.log(`status: running (pid ${s.pid}, port ${s.port})`);
+    console.log(`local:  http://localhost:${s.port}/`);
+    console.log(`tunnel: ${s.tunnel ?? "offline"}`);
+    if (projRes.projects.length) {
+      console.log("projects:");
+      for (const p of projRes.projects) console.log(`  - ${p.name} (${p.url}) -> ${p.root}`);
+    } else console.log("projects: none");
+    break;
+  }
+  case "logs": {
+    const logPath = daemonLogPath();
+    console.log(existsSync(logPath) ? readFileSync(logPath, "utf8").trimEnd() || "(daemon log is empty)" : `No daemon log at ${logPath}`);
     break;
   }
   case "open": {
@@ -312,7 +445,7 @@ Needs ngrok installed and authenticated (\`ngrok config add-authtoken <token>\`)
     const s = await liveDaemon();
     if (rest.includes("--all")) {
       if (!s) { console.log("cdesign viewer is not running"); break; }
-      await fetch(`http://127.0.0.1:${s.port}/__cd/shutdown`, { method: "POST" }).catch(() => {});
+      await stopDaemon(s, { preserveTunnel: false });
       console.log("cdesign viewer stopped");
       break;
     }
@@ -324,7 +457,7 @@ Needs ngrok installed and authenticated (\`ngrok config add-authtoken <token>\`)
     } catch { /* none */ }
     if (!s) { console.log("cdesign viewer is not running"); break; }
     const r = (await (await fetch(`http://127.0.0.1:${s.port}/__cd/projects/${projectId(root)}/remove`, { method: "POST" })).json()) as { remaining: number };
-    console.log(`project closed${r.remaining ? ` (${r.remaining} other project(s) still open)` : "; no projects left, viewer stopped"}`);
+    console.log(`project closed${r.remaining ? ` (${r.remaining} other project(s) still open)` : " (no projects open; run `cdesign close --all` to stop the daemon)"}`);
     break;
   }
   case "page": {
@@ -585,8 +718,15 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
     const updater = new Updater();
     if (updater.supported) {
       const candidate = await updater.check();
-      if (candidate) await updater.apply(candidate);
-      else console.log("No cdesign update is available.");
+      if (candidate) {
+        await updater.apply(candidate);
+        if (await liveDaemon()) {
+          const s = await restartDaemon();
+          console.log(`cdesign updated and restarted: http://localhost:${s.port}/`);
+        } else {
+          console.log("cdesign updated.");
+        }
+      } else console.log("No cdesign update is available.");
       break;
     }
     const base = `https://raw.githubusercontent.com/${process.env.CDESIGN_REPO ?? "dsmarcelo/cdesign"}/${process.env.CDESIGN_REF ?? "main"}`;
@@ -595,6 +735,10 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
       : ["bash", "-o", "pipefail", "-c", 'curl -fsSL "$1" | bash', "cdesign-update", base + "/install.sh"];
     const p = Bun.spawnSync(cmdline, { stdio: ["inherit", "inherit", "inherit"] });
     process.exitCode = p.exitCode;
+    if (p.exitCode === 0 && (await liveDaemon())) {
+      const s = await restartDaemon();
+      console.log(`cdesign restarted: http://localhost:${s.port}/`);
+    }
     break;
   }
   case "skills":
@@ -607,10 +751,17 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
     catch (error) { console.error(error instanceof Error ? error.message : String(error)); process.exitCode = 1; }
     break;
   }
+  case "help":
+  case "--help":
+  case "-h":
   default:
     console.log("cdesign export [dir] [--name slug] [--start design/pages/Home.tsx] [--pages file,file] [--out dir] [--preview]\ncdesign publish [dir] [--name slug] [--start file]\ncdesign publish setup --project-dir <linked-folder> --origin https://cdesign-ds.vercel.app");
-    console.log(`cdesign <command>
-  app                                   open the project picker and start the tunnel
+    console.log(`cdesign [command]
+  (no args)                             fully restart cdesign (preserving tunnel), open a browser tab, and print URLs
+  restart [--port n] [--no-tunnel] [--open]  restart the daemon (preserving tunnel)
+  status                                show daemon PID, port, tunnel URL, and open projects
+  logs                                  print the daemon log (~/.cdesign/daemon.log)
+  app                                   open the project picker and start the tunnel (used by the desktop launcher)
   open [dir] [--mode react|html] [--tailwind|--no-tailwind] [--port n] [--no-browser] [--tunnel] [--full]  open the viewer with compact agent directions; --full opts into the old guide/inventories
   tunnel [dir] | tunnel stop [dir]      share the project (random link, no auth): fixed domain if set, else a random cloudflared quick tunnel
   tunnel set --provider ngrok --domain <name.ngrok-free.dev> | --provider cloudflare --hostname <h> --token <t> [--port n]

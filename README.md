@@ -76,6 +76,10 @@ In the viewer, press `C`, click an element, and save your comment with **Add** o
 
 | Command | What it does |
 |---|---|
+| `cdesign` (no args) | Fully restart the daemon (preserving any active tunnel), open a browser tab, and print localhost and tunnel URLs |
+| `restart [--port n] [--no-tunnel] [--open]` | Restart the daemon on the same port while keeping the tunnel alive |
+| `status` | Show daemon PID, port, localhost URL, tunnel URL, and open projects |
+| `logs` | Print the daemon log (`~/.cdesign/daemon.log`) |
 | `app` | Open the project picker in a browser and start the tunnel (used by the Linux app launcher) |
 | `open [dir] [--port n] [--no-browser] [--tunnel] [--full]` | Open the viewer with compact directions and current page/selection. `--full` opts into the usage skill and legacy inventories. `--tunnel` also shares it over the internet |
 | `tunnel [dir]` / `tunnel stop [dir]` | Share the whole viewer (every open project, switchable in the header; `dir` picks the one visitors land on) through a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) quick tunnel. Prints a random link; there is no other authentication, so anyone with the link can view and comment while the tunnel runs |

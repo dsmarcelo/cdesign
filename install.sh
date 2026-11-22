@@ -64,11 +64,10 @@ fi
 if [ -e "$SHARE" ] || [ -L "$SHARE" ]; then mv "$SHARE" "$tmp/previous"; fi
 mv "$tmp/next" "$SHARE"
 
-if [ "${CDESIGN_INSTALL_UPDATE:-}" = 1 ]; then exit 0; fi
-
 mkdir -p "$BIN"
 {
   printf '#!/usr/bin/env bash\n'
+  printf 'export PATH="$HOME/.bun/bin:$HOME/.local/bin:$PATH"\n'
   if [ -n "${CDESIGN_SRC:-}" ]; then printf 'export CDESIGN_INSTALL_LINK=%q\n' "$SHARE"; fi
   printf 'exec %q %q "$@"\n' "$BUN_PATH" "$SHARE/src/cli.ts"
 } > "$BIN/cdesign"
@@ -91,9 +90,20 @@ Exec="$DESKTOP_BIN/cdesign" app
 Icon=$SHARE/ui/icon.svg
 Terminal=false
 Categories=Development;
+Actions=Restart;Stop;
+
+[Desktop Action Restart]
+Name=Restart cdesign
+Exec="$DESKTOP_BIN/cdesign" restart --open
+
+[Desktop Action Stop]
+Name=Stop cdesign
+Exec="$DESKTOP_BIN/cdesign" close --all
 DESKTOP
   command -v update-desktop-database >/dev/null && update-desktop-database "$APPS" || true
 fi
+
+if [ "${CDESIGN_INSTALL_UPDATE:-}" = 1 ]; then exit 0; fi
 
 "$BIN/cdesign" install-mcp || true
 

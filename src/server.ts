@@ -1,9 +1,10 @@
-import { watch, readdirSync, statSync, writeFileSync, mkdirSync, existsSync, rmSync, type FSWatcher } from "node:fs";
+import { watch, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync, existsSync, rmSync, type FSWatcher } from "node:fs";
+import { createHash } from "node:crypto";
 import { basename, isAbsolute, join, resolve, relative, sep } from "node:path";
 import { adapter, listPages, sourceSnippet, tailwindCss, errorDocument, insideProject } from "./modes";
 import { readConfig, configure, type SetupOptions } from "./project";
 import { invalidateReact, reactAsset } from "./react";
-import { daemonPath, dataDir, ensureDataDir, homeDir, listening, projectId, readComments, readProjects, readTunnelConfig, update, writeProjects, type Comment } from "./store";
+import { daemonPath, dataDir, ensureDataDir, homeDir, listening, projectId, readComments, readProjects, readTunnelConfig, readTunnelRuntime, update, writeProjects, writeTunnelRuntime, type Comment } from "./store";
 
 import { exportWebsite, previewWebsite, websiteDefaults, saveWebsite, type WebsiteOptions } from "./export";
 import { publishWebsite, publishingStatus, shareScreen, listShares, deleteShare } from "./publish";
@@ -11,7 +12,7 @@ import { colorTokens, sizeTokens } from "./tokens";
 import { applyEdit, editInfo } from "./edit";
 import { contextChips } from "./chat-context";
 import { ProjectChat, ChatError, MAX_BODY, capabilitiesOf, commandsOf } from "./chat";
-import { Updater } from "./updater";
+import { Updater, runtimeFingerprint } from "./updater";
 import { PROVIDERS } from "./chat-registry";
 const websitePreviews = new Map<string, ReturnType<typeof previewWebsite>>();
 const websiteJobs = new Set<string>();
@@ -41,8 +42,11 @@ type Project = {
 };
 
 export const DEFAULT_PORT = 4747;
+export const DEFAULT_TUNNEL_PORT = 4748;
 const enc = new TextEncoder();
 const json = (v: unknown, status = 200) => Response.json(v, { status });
+const alivePid = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const tunnelConfigHash = (cfg: ReturnType<typeof readTunnelConfig>) => createHash("sha1").update(JSON.stringify(cfg ?? null)).digest("hex");
 
 /** One process serves every registered project. A request's project comes from its Host (`<id>.localhost`), or `?project=<id>` on the bare host (used by the CLI). */
 export async function serveDaemon(preferred = DEFAULT_PORT) {
@@ -50,12 +54,16 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
   const chats = new Map<string, ProjectChat>(); // private per-project chat: its own streams, never `push`ed to preview clients
   const chatOf = (p: Project) => chats.get(p.id) ?? (chats.set(p.id, new ProjectChat(p.root)), chats.get(p.id)!);
   const idleMs = +(process.env.CDESIGN_IDLE_SECONDS ?? 120) * 1000;
+  const tunnelIdleMs = +(process.env.CDESIGN_TUNNEL_IDLE_SECONDS ?? 43200) * 1000; // 12h while a tunnel is active
   const updater = new Updater();
   const instance = crypto.randomUUID();
+  const startedAt = Date.now();
+  const fingerprint = runtimeFingerprint();
   let updating = false;
+  let shuttingDown = false;
   let pendingChatStarts = 0;
   let lastActive = Date.now();
-  let server: ReturnType<typeof Bun.serve>;
+  let server!: ReturnType<typeof Bun.serve>;
 
   const push = (p: Project, ev: string) => {
     for (const c of p.clients) {
@@ -112,46 +120,85 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
   const persist = () => writeProjects([...projects.values()].map((p) => p.root));
   const list = (current: Project | null) => ({
     current: current?.id ?? null,
+    instance,
     projects: [...projects.values()].map((p) => ({ id: p.id, root: p.root, name: basename(p.root), url: `http://${p.id}.localhost:${server.port}/`, tabs: p.clients.size })),
   });
 
   // ----- tunnel: a second listener for the whole viewer (every project, switchable in the UI), exposed by `cloudflared` quick tunnel (random URL) or the fixed domain from `tunnel set`; no auth: whoever has the link can open it -----
-  type Tunnel = { url: string; proc: ReturnType<typeof Bun.spawn>; srv: ReturnType<typeof Bun.serve> };
+  type Tunnel = { url: string; pid: number; port: number; srv: ReturnType<typeof Bun.serve>; proc?: ReturnType<typeof Bun.spawn> };
   let tunnel: Tunnel | null = null;
   let tunnelStarting: Promise<Tunnel> | null = null;
   let tunnelError = "";
   let tunnelHome = ""; // project a visitor lands on until they pick another (cookie)
-  const stopTunnel = () => {
+
+  const createTunnelServer = (port: number) => Bun.serve({
+    port,
+    hostname: "127.0.0.1",
+    idleTimeout: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      const cookies = (req.headers.get("cookie") ?? "").split(/;\s*/);
+      const cookie = (n: string) => cookies.find((c) => c.startsWith(n + "="))?.slice(n.length + 1);
+      const set: string[] = [];
+      const pick = url.searchParams.get("project"); // the project switcher: remember the choice in a cookie
+      if (pick && projects.has(pick)) { url.searchParams.delete("project"); set.push(`cd_p=${pick}; Path=/; HttpOnly; SameSite=Lax`); }
+      if (set.length) {
+        const h = new Headers({ location: url.pathname + url.search });
+        for (const c of set) h.append("set-cookie", c);
+        return new Response(null, { status: 302, headers: h });
+      }
+      const project = projects.get(cookie("cd_p") ?? "") ?? projects.get(tunnelHome) ?? [...projects.values()][0];
+      if (!project) return new Response("no project is open in cdesign", { status: 404 });
+      return fetchHandler(req, project, true);
+    },
+  });
+
+  async function bindTunnelPort(port: number, allowRandomFallback: boolean) {
+    if (port === 0) return createTunnelServer(0);
+    for (let i = 0; i < 20; i++) {
+      try { return createTunnelServer(port); }
+      catch (e) { if (i === 19) { if (allowRandomFallback) return createTunnelServer(0); throw e; } await Bun.sleep(50); }
+    }
+    return createTunnelServer(0);
+  }
+
+  const stopTunnel = (preserveProcess = false) => {
     const t = tunnel;
     if (!t) return;
     tunnel = null;
-    try { t.proc.kill(); } catch { /* already gone */ }
     t.srv.stop(true);
+    if (preserveProcess) {
+      const cfg = readTunnelConfig();
+      writeTunnelRuntime({ pid: t.pid, url: t.url, port: t.port, home: tunnelHome, configHash: tunnelConfigHash(cfg) });
+      return;
+    }
+    try { process.kill(t.pid); } catch { /* already gone */ }
+    writeTunnelRuntime(null);
   };
+
+  async function adoptTunnel() {
+    const saved = readTunnelRuntime();
+    if (!saved) return;
+    const cfg = readTunnelConfig();
+    if (!alivePid(saved.pid) || saved.configHash !== tunnelConfigHash(cfg)) {
+      if (alivePid(saved.pid)) try { process.kill(saved.pid); } catch { /* ignore */ }
+      writeTunnelRuntime(null);
+      return;
+    }
+    try {
+      const srv = await bindTunnelPort(saved.port, false);
+      tunnelHome = saved.home ?? "";
+      tunnel = { url: saved.url, pid: saved.pid, port: srv.port!, srv };
+    } catch {
+      try { process.kill(saved.pid); } catch { /* ignore */ }
+      writeTunnelRuntime(null);
+    }
+  }
+
   async function startTunnel(): Promise<Tunnel> {
     if (tunnel) return tunnel;
     const cfg = readTunnelConfig(); // fixed domain, else a random quick tunnel
-    const srv = Bun.serve({
-      port: cfg?.port ?? 0,
-      hostname: "127.0.0.1",
-      idleTimeout: 0,
-      fetch(req) {
-        const url = new URL(req.url);
-        const cookies = (req.headers.get("cookie") ?? "").split(/;\s*/);
-        const cookie = (n: string) => cookies.find((c) => c.startsWith(n + "="))?.slice(n.length + 1);
-        const set: string[] = [];
-        const pick = url.searchParams.get("project"); // the project switcher: remember the choice in a cookie
-        if (pick && projects.has(pick)) { url.searchParams.delete("project"); set.push(`cd_p=${pick}; Path=/; HttpOnly; SameSite=Lax`); }
-        if (set.length) {
-          const h = new Headers({ location: url.pathname + url.search });
-          for (const c of set) h.append("set-cookie", c);
-          return new Response(null, { status: 302, headers: h });
-        }
-        const project = projects.get(cookie("cd_p") ?? "") ?? projects.get(tunnelHome) ?? [...projects.values()][0];
-        if (!project) return new Response("no project is open in cdesign", { status: 404 });
-        return fetchHandler(req, project, true);
-      },
-    });
+    const srv = await bindTunnelPort(cfg?.port ?? DEFAULT_TUNNEL_PORT, !cfg);
     const bin = cfg?.provider === "ngrok" ? "ngrok" : "cloudflared";
     const args =
       cfg?.provider === "ngrok" ? ["http", `--url=https://${cfg.domain}`, "--log=stdout", "--log-format=json", String(srv.port)]
@@ -161,7 +208,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     const ready = cfg?.provider === "ngrok" ? /started tunnel|obj=tunnels/ : cfg?.provider === "cloudflare" ? /Registered tunnel connection/ : /https:\/\/[a-z0-9-]+\.trycloudflare\.com/;
     let proc: ReturnType<typeof Bun.spawn>;
     try {
-      proc = Bun.spawn([bin, ...args], { stdout: bin === "ngrok" ? "pipe" : "ignore", stderr: "pipe" });
+      proc = Bun.spawn([bin, ...args], { stdin: "ignore", stdout: bin === "ngrok" ? "pipe" : "ignore", stderr: "pipe", detached: true });
     } catch {
       srv.stop(true);
       throw new Error(bin === "ngrok" ? "ngrok not found. Install it: https://ngrok.com/download (then `ngrok config add-authtoken <token>`)" : "cloudflared not found. Install it: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/");
@@ -187,13 +234,16 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       srv.stop(true);
       throw e;
     });
-    const t = { url, proc, srv };
+    proc.unref();
+    const t: Tunnel = { url, pid: proc.pid, port: srv.port!, srv, proc };
     tunnel = t;
+    writeTunnelRuntime({ pid: t.pid, url: t.url, port: t.port, home: tunnelHome, configHash: tunnelConfigHash(cfg) });
     proc.exited.then(() => tunnel === t && stopTunnel());
     return t;
   }
 
   function ensureTunnel(): Promise<Tunnel> {
+    if (tunnel && !alivePid(tunnel.pid)) stopTunnel();
     if (tunnel) return Promise.resolve(tunnel);
     if (!tunnelStarting) {
       tunnelError = "";
@@ -202,21 +252,30 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     return tunnelStarting;
   }
 
-  const shutdown = () => {
-    stopTunnel();
+  const shutdown = (options?: { preserveTunnel?: boolean }) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try { server?.stop(true); } catch { /* already stopped */ }
+    stopTunnel(Boolean(options?.preserveTunnel));
     for (const c of chats.values()) c.close(); // no agent keeps running after the daemon
-    try { rmSync(daemonPath()); } catch { /* ignore */ }
+    try {
+      const current = JSON.parse(readFileSync(daemonPath(), "utf8")) as { pid?: number };
+      if (current.pid === process.pid) rmSync(daemonPath(), { force: true });
+    } catch { /* ignore */ }
     process.exit(0);
   };
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", () => shutdown());
+  process.on("SIGINT", () => shutdown());
 
   setInterval(() => { for (const p of projects.values()) push(p, "ping"); }, 5000); // keep SSE connections alive
-  setInterval(() => { for (const p of projects.values()) presence(p); }, 3000); // a killed `wait` stops beating: notice it going stale
+  setInterval(() => {
+    for (const p of projects.values()) presence(p);
+    if (tunnel && !alivePid(tunnel.pid)) stopTunnel();
+  }, 3000); // a killed `wait` stops beating: notice it going stale
   // nothing left to serve (no viewer tab, no listening agent) for a while: exit, so no process is left behind
   setInterval(() => {
     if (updating || [...projects.values()].some((p) => p.clients.size || listening(p.root) || chats.get(p.id)?.busy)) lastActive = Date.now();
-    else if (Date.now() - lastActive > idleMs) shutdown();
+    else if (Date.now() - lastActive > (tunnel ? tunnelIdleMs : idleMs)) shutdown();
   }, Math.min(5000, Math.max(200, idleMs / 4)));
 
   /** `via` is set for requests that came through a tunnel: pinned to that project (the visitor switches with the project cookie); only the project list is readable, no other daemon-level routes. */
@@ -242,11 +301,14 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       }
     }
 
-    if (p === "/__cd/overlay.js") return new Response(Bun.file(join(UI, "overlay.js")));
+    if (p === "/__cd/overlay.js") return new Response(Bun.file(join(UI, "overlay.js")), { headers: { "cache-control": "no-store" } });
     if (p === "/__cd/chat.js" || p === "/__cd/chat.css") return new Response(Bun.file(join(UI, p.slice(6))), { headers: { "cache-control": "no-store" } });
-    if (p === "/") return new Response(Bun.file(join(UI, "index.html")));
+    if (p === "/") return new Response(Bun.file(join(UI, "index.html")), { headers: { "cache-control": "no-store" } });
 
     // ----- daemon-level API -----
+    if (!via && p === "/__cd/health" && req.method === "GET") {
+      return json({ ok: true, pid: process.pid, port: server.port, startedAt, instance, fingerprint, tunnel: tunnel?.url ?? null, projects: projects.size });
+    }
     if (p === "/__cd/update") {
       if (remote) return json({ error: "Updates are available only in the local viewer." }, 403);
       if (req.method === "GET") return json({ ...(updating ? { available: true } : updater.status()), instance, updating });
@@ -265,10 +327,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
             env: { ...process.env, CDESIGN_RESTART_PID: String(process.pid) },
             cwd: homeDir(), stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true,
           }).unref();
-          setTimeout(async () => {
-            await server.stop(true);
-            shutdown();
-          }, 200);
+          setTimeout(() => shutdown({ preserveTunnel: true }), 150);
           return json({ instance });
         } catch (error) {
           updating = false;
@@ -276,12 +335,21 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
         }
       }
     }
-    if (p === "/__cd/projects" && req.method === "GET") return json(remote ? { current: via!.id, remote: true, projects: [...projects.values()].map((q) => ({ id: q.id, name: basename(q.root), url: `/?project=${q.id}`, tabs: q.clients.size })) } : list(project));
+    if (p === "/__cd/projects" && req.method === "GET") return json(remote ? { current: via!.id, instance, remote: true, projects: [...projects.values()].map((q) => ({ id: q.id, name: basename(q.root), url: `/?project=${q.id}`, tabs: q.clients.size })) } : list(project));
     if (!via && p === "/__cd/tunnel" && req.method === "GET") {
       lastActive = Date.now(); // The project picker has no event stream but is still an open viewer.
       return json({ url: tunnel?.url ?? null, starting: !!tunnelStarting, error: tunnelError });
     }
     if (!via && p === "/__cd/tunnel" && req.method === "POST") {
+      try { return json({ url: (await ensureTunnel()).url }); }
+      catch (e) { return json({ error: (e as Error).message }, 500); }
+    }
+    if (!via && p === "/__cd/tunnel/stop" && req.method === "POST") {
+      stopTunnel();
+      return json({ ok: true });
+    }
+    if (!via && p === "/__cd/tunnel/restart" && req.method === "POST") {
+      stopTunnel();
       try { return json({ url: (await ensureTunnel()).url }); }
       catch (e) { return json({ error: (e as Error).message }, 500); }
     }
@@ -333,8 +401,10 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       }
     }
     if (p === "/__cd/shutdown" && req.method === "POST") {
-      if (updating) return json({ error: "cdesign is updating." }, 409);
-      setTimeout(shutdown, 100);
+      const force = url.searchParams.get("force") === "1";
+      const preserveTunnel = url.searchParams.get("preserveTunnel") === "1";
+      if (updating && !force) return json({ error: "cdesign is updating." }, 409);
+      setTimeout(() => shutdown({ preserveTunnel }), 20);
       return json({ ok: true });
     }
 
@@ -471,7 +541,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
           ctrl = c;
           pr.clients.add(c);
           if (tabId) pr.tabOf.set(c, tabId);
-          c.enqueue(enc.encode(": hi\n\n"));
+          c.enqueue(enc.encode(`: hi\n\ndata: instance:${instance}\n\n`));
         },
         cancel() {
           drop(pr, ctrl);
@@ -577,17 +647,23 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
   };
 
   const bind = (port: number) => Bun.serve({ port, hostname: "127.0.0.1", idleTimeout: 0, fetch: (req) => fetchHandler(req) });
-  try {
-    server = bind(preferred);
-  } catch (e) {
-    // the default port is busy: another daemon already runs (then we are redundant) or something else holds it
-    try {
-      if ((await fetch(`http://127.0.0.1:${preferred}/__cd/projects`, { signal: AbortSignal.timeout(1000) })).ok) process.exit(0);
-    } catch { /* not a cdesign daemon */ }
-    server = bind(0);
+  let bound = false;
+  if (preferred !== 0) {
+    for (let i = 0; i < 15; i++) {
+      try { server = bind(preferred); bound = true; break; }
+      catch {
+        // the default port is busy: another daemon already runs (then we are redundant) or the previous daemon is still releasing it
+        try {
+          if ((await fetch(`http://127.0.0.1:${preferred}/__cd/projects`, { signal: AbortSignal.timeout(500) })).ok) process.exit(0);
+        } catch { /* not answering: likely releasing the port */ }
+        await Bun.sleep(50);
+      }
+    }
   }
+  if (!bound) server = bind(0);
   for (const root of readProjects()) addProject(root);
+  await adoptTunnel();
   mkdirSync(homeDir(), { recursive: true });
-  writeFileSync(daemonPath(), JSON.stringify({ port: server.port, pid: process.pid, startedAt: Date.now() }));
+  writeFileSync(daemonPath(), JSON.stringify({ port: server.port, pid: process.pid, startedAt, instance, fingerprint }));
   return { server, addProject };
 }

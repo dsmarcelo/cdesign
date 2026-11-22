@@ -6,6 +6,25 @@ type Candidate = { kind: "archive" | "checkout"; sha: string } | { kind: "reload
 const isSha = (value: unknown): value is string => typeof value === "string" && /^[a-f0-9]{40}$/.test(value);
 const runtimeDirs = ["src", "ui", "skills"];
 
+export function runtimeFingerprint(root = resolve(import.meta.dir, "..")): string {
+  const hash = new Bun.CryptoHasher("sha256");
+  const add = (path: string) => {
+    hash.update(path + "\0");
+    try {
+      const full = join(root, path);
+      const stat = lstatSync(full);
+      if (stat.isDirectory()) {
+        for (const entry of readdirSync(full).sort()) add(join(path, entry));
+      } else if (stat.isFile()) {
+        hash.update(String(stat.size) + "\0");
+        hash.update(readFileSync(full));
+      }
+    } catch { /* Absent files are part of the snapshot. */ }
+  };
+  for (const path of [...runtimeDirs, "package.json", "bun.lock", "install.sh", ".install.json"]) add(path);
+  return hash.digest("hex");
+}
+
 async function run(cmd: string[], cwd: string, env?: NodeJS.ProcessEnv, timeout = 30_000) {
   const proc = Bun.spawn(cmd, {
     cwd, env, stdin: "ignore", stdout: "pipe", stderr: "pipe", signal: AbortSignal.timeout(timeout),
@@ -39,22 +58,7 @@ export class Updater {
   }
 
   private fingerprint() {
-    const hash = new Bun.CryptoHasher("sha256");
-    const add = (path: string) => {
-      hash.update(path + "\0");
-      try {
-        const full = join(this.root, path);
-        const stat = lstatSync(full);
-        if (stat.isDirectory()) {
-          for (const entry of readdirSync(full).sort()) add(join(path, entry));
-        } else if (stat.isFile()) {
-          hash.update(String(stat.size) + "\0");
-          hash.update(readFileSync(full));
-        }
-      } catch { /* Absent files are part of the snapshot. */ }
-    };
-    for (const path of [...runtimeDirs, "package.json", "bun.lock", "install.sh"]) add(path);
-    return hash.digest("hex");
+    return runtimeFingerprint(this.root);
   }
 
   private git(...args: string[]) {

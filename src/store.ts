@@ -68,6 +68,7 @@ export function listening(root: string): boolean {
 // ---------- daemon registry (one viewer process for every project) ----------
 export const homeDir = () => process.env.CDESIGN_HOME ?? join(homedir(), ".cdesign");
 export const daemonPath = () => join(homeDir(), "daemon.json");
+export const daemonLogPath = () => join(homeDir(), "daemon.log");
 const projectsPath = () => join(homeDir(), "projects.json");
 
 /** DNS-label-safe, stable id of a project folder: "my-app-1a2b3c". It is the subdomain of the project's viewer URL. */
@@ -95,4 +96,24 @@ export function writeTunnelConfig(c: TunnelConfig | null) {
   if (!c) return rmSync(tunnelPath(), { force: true });
   mkdirSync(homeDir(), { recursive: true });
   writeFileSync(tunnelPath(), JSON.stringify(c, null, 2), { mode: 0o600 }); // holds the tunnel token
+}
+
+export type TunnelRuntime = {
+  pid: number;
+  url: string;
+  port: number;
+  home: string;
+  configHash: string;
+};
+const tunnelRuntimePath = () => join(homeDir(), "tunnel-runtime.json");
+export function readTunnelRuntime(): TunnelRuntime | null {
+  try {
+    const t = JSON.parse(readFileSync(tunnelRuntimePath(), "utf8")) as TunnelRuntime;
+    return t && Number.isSafeInteger(t.pid) && t.pid > 0 && typeof t.url === "string" && typeof t.port === "number" ? t : null;
+  } catch { return null; }
+}
+export function writeTunnelRuntime(t: TunnelRuntime | null) {
+  if (!t) return rmSync(tunnelRuntimePath(), { force: true });
+  mkdirSync(homeDir(), { recursive: true });
+  writeFileSync(tunnelRuntimePath(), JSON.stringify(t, null, 2));
 }
