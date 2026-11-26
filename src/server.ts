@@ -4,6 +4,7 @@ import { basename, isAbsolute, join, resolve, relative, sep } from "node:path";
 import { adapter, listPages, sourceSnippet, tailwindCss, errorDocument, insideProject } from "./modes";
 import { readConfig, configure, type SetupOptions } from "./project";
 import { invalidateReact, reactAsset } from "./react";
+import { uiAsset } from "./ui";
 import { daemonPath, dataDir, ensureDataDir, homeDir, listening, projectId, readComments, readProjects, readTunnelConfig, readTunnelRuntime, update, writeProjects, writeTunnelRuntime, type Comment } from "./store";
 
 import { exportWebsite, previewWebsite, websiteDefaults, saveWebsite, type WebsiteOptions } from "./export";
@@ -303,7 +304,11 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     }
 
     if (p === "/__cd/overlay.js") return new Response(Bun.file(join(UI, "overlay.js")), { headers: { "cache-control": "no-store" } });
-    if (p === "/__cd/chat.js" || p === "/__cd/chat.css" || p === "/__cd/map.js" || p === "/__cd/map.css") return new Response(Bun.file(join(UI, p.slice(6))), { headers: { "cache-control": "no-store" } });
+    if (p.startsWith("/__cd/app/")) {
+      const asset = await uiAsset(UI, p.slice("/__cd/app/".length));
+      if (!asset) return new Response("not found", { status: 404 });
+      return new Response(asset, { headers: { "cache-control": "no-store" } });
+    }
     if (p === "/manifest.webmanifest") return new Response(Bun.file(join(UI, "manifest.webmanifest")), { headers: { "content-type": "application/manifest+json; charset=utf-8", "cache-control": "no-store" } });
     if (p === "/sw.js") return new Response(Bun.file(join(UI, "sw.js")), { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "service-worker-allowed": "/" } });
     if (p === "/__cd/icon.svg" || p === "/favicon.ico") return new Response(Bun.file(join(UI, "icon.svg")), { headers: { "content-type": "image/svg+xml", "cache-control": "no-cache" } });
@@ -552,6 +557,10 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       catch (e) { return new Response(String(e), { status: 500 }); }
     }
 
+    if (p === "/__cd/preview-heartbeat" && req.method === "GET") {
+      return new Response(null, { status: 204, headers: { "cache-control": "no-store" } });
+    }
+
     if (p === "/__cd/events") {
       let ctrl!: ReadableStreamDefaultController;
       const tabId = url.searchParams.get("tab");
@@ -674,10 +683,11 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
             #__cd-return:focus-visible{outline:2px solid #fff;outline-offset:2px;box-shadow:0 0 0 5px #171717}
           </style><a id="__cd-return" href="${href}" aria-label="Return to cdesign" title="Return to cdesign"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M6 3v10"/></svg></a>
           <script>
-            // Keep the daemon available while this standalone preview is open.
-            new EventSource("/__cd/events").onmessage = (event) => {
-              if (event.data === "reload") location.reload();
-            };
+            (async function heartbeat() {
+              // Keep the daemon available without a persistent connection or automatic navigation.
+              try { await fetch("/__cd/preview-heartbeat"); } catch {}
+              setTimeout(heartbeat, ${Math.max(100, Math.min(30000, Math.floor(idleMs / 3) || 30000))});
+            })();
             try {
               document.documentElement.dataset.theme = localStorage.getItem("cd-theme") ||
                 (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");

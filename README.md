@@ -150,7 +150,7 @@ Register the MCP server once, user-wide, and any agent that starts in any projec
 
 ## One viewer for all projects
 
-Choose **Full page** in the viewer toolbar to open the current preview at its `/p/design/…` URL. Use the small bottom-left button to return to the same preview in cdesign.
+Choose **Full page** in the viewer toolbar to open the current preview at its `/p/design/…` URL. Refresh the browser to pick up edits. Use the small bottom-left button to return to the same preview in cdesign.
 
 A single background process serves every project (default port 4747, localhost only; its address is kept in `~/.cdesign/daemon.json`). Each project has its own address, `http://<project>.localhost:4747/`, and the header has a project switcher (add a folder, close a project). Agents address their own project from the folder they run in, so several agents on several projects do not mix. The process stops by itself after 2 minutes with no viewer tab open and no agent running `cdesign wait` (`CDESIGN_IDLE_SECONDS` changes this), so nothing is left behind; the next `cdesign open` starts it again.
 

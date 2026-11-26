@@ -25,6 +25,6 @@
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit --target es2022 --module preserve --moduleResolution bundler --types bun --skipLibCheck src/*.ts tests/*.ts"
+    "typecheck": "tsc --noEmit --target es2022 --module preserve --moduleResolution bundler --jsx react-jsx --types bun --skipLibCheck src/*.ts tests/*.ts ui/*.ts ui/*.tsx"
   }
 }

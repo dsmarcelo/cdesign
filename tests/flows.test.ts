@@ -129,6 +129,7 @@ test("CLI and daemon expose flows and sync", async () => {
     expect(r.status).toBe(200);
     expect(((await r.json()) as any).sync.find((i: any) => i.wireframe === "design/wireframe/vendas/itens.tsx").outdated[0].note).toBe("x");
     expect((await fetch(url("sync"), { method: "POST", body: JSON.stringify({ action: "nope", file: "a" }) })).status).toBe(400);
-    expect((await fetch(url("map.js").replace(/\?.*/, ""))).status).toBe(200);
+    expect((await fetch(url("app/main.js").replace(/\?.*/, ""))).status).toBe(200);
+    expect((await fetch(url("app/main.css").replace(/\?.*/, ""))).status).toBe(200);
   } finally { daemon.kill(); await daemon.exited; }
 });

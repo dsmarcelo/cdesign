@@ -174,12 +174,18 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
       return [rect.width, rect.height, rect.left, innerHeight - rect.bottom];
     })()`)).toEqual([24, 24, 8, 8]);
     expect(await ev("!!document.querySelector('#fr, script[src=\"/__cd/overlay.js\"]')")).toBe(false);
-    await until(() => ev(`fetch('/__cd/projects').then(r => r.json()).then(data =>
-      data.projects.some(p => p.id === data.current && p.tabs > 0))`));
+    await until(() => ev("performance.getEntriesByType('resource').some(r => new URL(r.name).pathname === '/__cd/preview-heartbeat')"));
     put("design/components/ui/Button.tsx", button.replace("Count ", "Full page "));
+    await until(async () => {
+      const html = await (await fetch(`${base}/p/${initial}`)).text();
+      const bundle = html.match(/<script type="module" src="([^"]+)"/)?.[1];
+      return bundle && (await (await fetch(base + bundle)).text()).includes("Full page ");
+    });
+    await Bun.sleep(250); // Allow the viewer's normal file-watcher reload to fire.
+    expect(await ev("document.querySelector('button')?.textContent")).toBe("Count 0");
+    await cmd("Page.reload");
     await until(() => ev("document.querySelector('button')?.textContent === 'Full page 0'"));
     put("design/components/ui/Button.tsx", button);
-    await until(() => ev("document.querySelector('button')?.textContent === 'Count 0'"));
     await ev("document.querySelector('#__cd-return').click()");
     await viewerState(initial);
     // Viewer reloads an inline preview after a component edit, preserving the active entry.
