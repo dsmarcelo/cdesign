@@ -32,13 +32,14 @@ src/
   tsx.ts        React mode: TypeScript-compiler instrumentation that stamps the same ids on JSX
   react.ts      React mode: Bun.build bundling, Tailwind v4 compile (`@tailwindcss/node`)
   previews.ts   inline `Preview` export vs `*.preview.tsx` sidecar resolution
+  flows.ts      flows (design/flows/<id>.json) and wireframe/page sync state (design/sync.json): `cdesign flows`, `cdesign sync`, MCP flows/sync
   edit.ts       direct style editing of elements, addressed by file + data-cd-id
   tokens.ts     tokens.json / Tailwind `@theme` tokens: search, show, set, rm, build, export
   context.ts    compact `open` directions and `context` list/find/get/for retrieval
   shot.ts       headless-Chrome screenshots (talks to Chrome over DevTools; `--responsive` = 390/768/1280px)
   export.ts     standalone website export;  publish.ts: deploys an export to a Vercel project (needs `vercel link` and an HTTPS publisher origin)
   store.ts      per-project `.cdesign/` state (comments.json, agent.json heartbeat) and `~/.cdesign` daemon/tunnel files
-ui/             viewer front end: index.html (shell) and overlay.js (injected into previews; selection + comments)
+ui/             viewer front end: index.html (shell), map.js/map.css (Flows/Pages maps, flow bar), chat.js, overlay.js (injected into previews; selection + comments)
 skills/         bundled agent skills (cdesign, cdesign-system, cdesign-review, cdesign-convert), printed by `cdesign skills get <name>`
 tests/          bun:test suites, one per area
 design/         a sample design project (html mode) used by this repo itself; not application code
@@ -69,4 +70,5 @@ install.sh / install.ps1   curl-pipe installers (Bun + launcher in ~/.local/bin 
 - **Chrome:** `shot` and the browser tests locate Chrome via `CDESIGN_CHROME`, then `google-chrome`/`chromium`; `shot` throws a clear error if none exists.
 - **Export/publish:** `forbidden()` in `export.ts` excludes dot-paths, `prototype/`, `previews/` and `node_modules/` from website exports, and the React build also throws if a dependency pulls one of them in. Website names must match `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`.
 - **Installer:** `install.sh` / `install.ps1` replace `~/.local/share/cdesign`; with `CDESIGN_SRC` it symlinks to a checkout instead, and tracked Bash installs retain their install type on update. Keep both scripts in sync when changing install behaviour.
+- **Flows and sync:** arrows exist only in `design/flows/*.json` (never inferred). `design/sync.json` stores per-page content hashes at the last confirmed sync plus explicit `outdated` marks; only marks mean "needs update", hash drift is informational. React pages include `design/wireframe/` (`modes.ts`); exports exclude it (`export.ts`). Wireframe device variants are `name.phone.tsx` / `name.desktop.tsx` siblings (`variantsOf` in `flows.ts`; the sync hash of a wireframe combines its variants); unsuffixed = responsive. Map screens are live iframes at device size scaled with CSS `zoom`, so map captions counter-scale with `--z`. Viewer map routes share the hash with page paths (`#map:pages`, `#map:flows`, `#flow:<id>`; `isMapHash` in `ui/map.js`).
 - **Skills and README:** the agent-facing guidance in `skills/*/SKILL.md` and the CLI table in `README.md` describe real commands; update them in the same change as the command or flag they document.

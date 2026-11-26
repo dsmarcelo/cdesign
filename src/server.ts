@@ -11,6 +11,7 @@ import { publishWebsite, publishingStatus, shareScreen, listShares, deleteShare 
 import { colorTokens, sizeTokens } from "./tokens";
 import { applyEdit, editInfo } from "./edit";
 import { contextChips } from "./chat-context";
+import { listFlows, syncItems, markOutdated, markSynced, clearOutdated } from "./flows";
 import { ProjectChat, ChatError, MAX_BODY, capabilitiesOf, commandsOf } from "./chat";
 import { Updater, runtimeFingerprint } from "./updater";
 import { PROVIDERS } from "./chat-registry";
@@ -302,7 +303,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     }
 
     if (p === "/__cd/overlay.js") return new Response(Bun.file(join(UI, "overlay.js")), { headers: { "cache-control": "no-store" } });
-    if (p === "/__cd/chat.js" || p === "/__cd/chat.css") return new Response(Bun.file(join(UI, p.slice(6))), { headers: { "cache-control": "no-store" } });
+    if (p === "/__cd/chat.js" || p === "/__cd/chat.css" || p === "/__cd/map.js" || p === "/__cd/map.css") return new Response(Bun.file(join(UI, p.slice(6))), { headers: { "cache-control": "no-store" } });
     if (p === "/manifest.webmanifest") return new Response(Bun.file(join(UI, "manifest.webmanifest")), { headers: { "content-type": "application/manifest+json; charset=utf-8", "cache-control": "no-store" } });
     if (p === "/sw.js") return new Response(Bun.file(join(UI, "sw.js")), { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store", "service-worker-allowed": "/" } });
     if (p === "/__cd/icon.svg" || p === "/favicon.ico") return new Response(Bun.file(join(UI, "icon.svg")), { headers: { "content-type": "image/svg+xml", "cache-control": "no-cache" } });
@@ -503,6 +504,21 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     }
     if (p === "/__cd/files") return json(listPages(root));
     if (p === "/__cd/config") return json(readConfig(root));
+    if (p === "/__cd/flows" && req.method === "GET") {
+      const flows = listFlows(root);
+      return json({ flows, sync: syncItems(root, flows) });
+    }
+    if (p === "/__cd/sync" && req.method === "POST") {
+      const b = (await req.json()) as { action?: string; file?: unknown; note?: unknown };
+      if (typeof b.file !== "string") return json({ error: "file required" }, 400);
+      try {
+        if (b.action === "outdated") markOutdated(root, b.file, typeof b.note === "string" ? b.note : undefined);
+        else if (b.action === "done") markSynced(root, b.file);
+        else if (b.action === "clear") clearOutdated(root, b.file);
+        else return json({ error: "action must be outdated, done or clear" }, 400);
+        return json({ ok: true, sync: syncItems(root) });
+      } catch (e) { return json({ error: (e as Error).message }, 400); }
+    }
     if (p === "/__cd/style-options") {
       const safe = <T,>(f: () => T[]) => { try { return f(); } catch { return []; } };
       return json({ tailwind: readConfig(root).tailwind, colors: safe(() => colorTokens(root)), sizes: safe(() => sizeTokens(root)) });
@@ -582,6 +598,9 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       try {
         snippet = sourceSnippet(root, b.selection.file, b.selection.cdId);
       } catch {}
+      /** a pick on the map's previews belongs to that preview's page, not the page open in the viewer */
+      const page = (b.selection as { page?: unknown }).page;
+      if (typeof page === "string" && page && page !== t.file && insideProject(root, page)) t.file = page;
       t.selection = { ...b.selection, uses: b.selection.uses ?? [], snippet };
       return json({ ok: true });
     }

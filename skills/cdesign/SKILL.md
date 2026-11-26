@@ -17,7 +17,48 @@ Prototypes are structured references for later implementation in the app's frame
 
 ## Folder organization
 
-Group related pages by feature or screen type under design/pages/ (for example, design/pages/settings/). Put each prototype or flow in a named folder under design/prototype/. Group reusable components by family under design/components/ and feature-specific components under design/features/. Use short, descriptive folder names and reuse existing groups.
+Group related pages by feature or screen type under design/pages/ (for example, design/pages/settings/). Put lo-fi wireframes under design/wireframe/ (grouped like the pages) and describe each user flow in design/flows/<id>.json; put other experiments in a named folder under design/prototype/. Group reusable components by family under design/components/ and feature-specific components under design/features/. Use short, descriptive folder names and reuse existing groups.
+
+## Flows, wireframes and sync
+
+The project is planned as **flows** of **wireframes** first; real **pages** come later. The viewer shows this as a map (Flows | Pages | Files in the toolbar; `M` toggles the map, `Esc` returns from an opened page).
+
+**Files**
+- `design/wireframe/**.tsx|html`: lo-fi screens (grayscale boxes, real control shapes, skeleton text). They are prototypes: render, select and comment on them like any page. Group them like the pages (`design/wireframe/vendas/…`).
+  - **Devices.** A wireframe can exist for phone, desktop or both. One unsuffixed file (`cliente.tsx`) is responsive and is shown on both. For separate layouts add siblings `cliente.phone.tsx` and `cliente.desktop.tsx` (point the flow step at either one; the other is found automatically). There are no tablet wireframes. The map draws each screen at real device size (phone 402×874, iPhone 18; desktop 1280×800) and has a Phone/Desktop toggle; a screen missing on the chosen device falls back to the other one, labeled "Phone only"/"Desktop only".
+  - **Fill the viewport.** The map already draws the device frame. A wireframe must render the screen itself edge to edge (`min-h-screen w-full`), never its own phone bezel, fixed `w-[390px]` box, rounded device border or gray page padding around it.
+- `design/pages/**`: the real screens. The Pages map groups them by first-level folder; the hub is the file named like the folder (or `index`).
+- `design/flows/<id>.json`: one file per user flow. `id` = lowercase letters, digits, dashes. Arrows exist **only** here (never inferred from page links):
+```json
+{ "title": "Nova venda", "description": "Do cliente ao pagamento.",
+  "steps": [
+    { "id": "cliente", "title": "Buscar cliente", "wireframe": "design/wireframe/vendas/cliente.tsx", "page": "design/pages/vendas/nova-venda.tsx" },
+    { "id": "encontrado", "decision": "Cliente encontrado?" },
+    { "id": "cadastro", "title": "Cadastrar cliente", "wireframe": "design/wireframe/vendas/cadastro.tsx", "note": "optional context" } ],
+  "links": [
+    { "from": "cliente", "to": "encontrado" },
+    { "from": "encontrado", "to": "cadastro", "label": "Não" },
+    { "from": "cadastro", "to": "cliente", "label": "Voltar", "dashed": true } ] }
+```
+  A screen step has a `wireframe`, a `page`, or both (paths project-relative, the files must exist). A decision step has only `decision` (the question); label its outgoing links (`Sim`/`Não`…). The map shows every screen live, so the user can zoom out to see the whole flow and use the Select tool (`S`) on elements inside any screen without opening it; `cdesign page` then reports that file and element. Layout is automatic (left to right; the first link out of a step stays on the main row, later ones branch below; loops are drawn dashed). Run `cdesign flows check` after editing a flow.
+- `design/sync.json`: written by `cdesign sync`; never edit it by hand. It stores, per page, the content hashes of the pair when it was last confirmed in sync, and explicit `outdated` marks with notes. Commit it with the design.
+
+**Sync rules**
+- A wireframe change does **not** require a page change: wireframes are a prototype until the user decides to build or update the page. Do not touch the page unless asked.
+- "Changed since last sync" (hash drift) is informational. Only explicit **outdated** marks mean "this file must be updated".
+- After you change one side of a pair, decide whether the other side must follow. If yes (or the user says so), mark the side that is now behind: `cdesign sync outdated <that file> --note "what must change"`. If it is a pure prototype exploration, leave it.
+- After you bring a pair in line (page updated from its wireframe, or the wireframe updated to match a shipped page), run `cdesign sync done <either file>`: it records both hashes and clears the marks on both sides. `cdesign sync clear <file>` drops a mark without confirming sync (the user decided not to apply it).
+- When the user asks what needs syncing / updating / is outdated, run `cdesign sync` (MCP `sync`) and answer from it: marked outdated first (with notes), then pairs changed since last sync, never-synced pairs, and wireframes without a page yet. `cdesign sync --json` gives the raw pairs. `cdesign flows show <id>` gives one flow with each step's state; `cdesign page` also prints the open file's flow, counterpart and sync state.
+
+**What to update when**
+| You changed | Also update |
+|---|---|
+| Added a screen to a flow | create its wireframe, add the step and its links in `design/flows/<id>.json`, `flows check` |
+| A wireframe | nothing required; if the page must follow, `sync outdated <page> --note …` |
+| A page built from a wireframe | set the step's `page`, then `sync done <page>` once it matches |
+| A page (shipped behavior changed) | if the wireframe should reflect it, `sync outdated <wireframe> --note …` |
+| Renamed or moved a wireframe/page | update every flow step that points to it, `flows check`, then `sync done` if the pair is still aligned |
+| Removed a screen | remove its step and links from the flow |
 
 ## Mode and React components
 - Read `design/cdesign.json`: new projects default to `{ "version": 1, "mode": "react", "tailwind": true }`. Existing unconfigured HTML projects retain HTML behavior. `cdesign init|open --mode react|html --tailwind|--no-tailwind` persists an explicit choice; changing it does not convert files. CLI interactive setup offers the choices; noninteractive setup uses defaults.

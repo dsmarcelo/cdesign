@@ -14,6 +14,7 @@ import { componentPreview } from "./previews";
 import { setup, readConfig, type SetupOptions } from "./project";
 import * as tk from "./tokens";
 import { context, folderGuidance, guidanceFiles, startup } from "./context";
+import { listFlows, readFlow, newFlow, flowText, syncReport, syncItems, markOutdated, markSynced, clearOutdated, pageFlowNote, FLOWS_DIR } from "./flows";
 import { beat, dataDir, ensureDataDir, daemonLogPath, daemonPath, homeDir, projectId, readComments, readTunnelConfig, writeTunnelConfig, update, commentsPath, type Comment } from "./store";
 
 const [cmd = "restart-app", ...rest] = process.argv.slice(2);
@@ -260,6 +261,8 @@ async function pageText(root: string, compact = false) {
     };
     if (!r.file) return `cdesign viewer is running (${base}/) but no page is open in it yet.`;
     let t = `Open in cdesign: ${r.file} (${base}/#${r.file})`;
+    const flowNote = pageFlowNote(root, r.file);
+    if (flowNote) t += `\n${flowNote}`;
     const e = r.selection;
     if (e) {
       if (compact) return `${t}\nSelected: <${e.tag}> data-cd-id="${e.cdId}" in ${e.file}\nUse cdesign page for its selector, source and instance chain.`;
@@ -281,6 +284,8 @@ const fmt = (c: Comment) =>
 
 const batchText = (batch: Comment[], again = false) =>
   `${batch.length} comment(s) from the user. Apply all of them, then run: cdesign resolve ${batch.map((c) => c.id).join(" ")}${again ? "\nThen start `cdesign wait` again in the background so the next batch reaches you." : ""}\n\n${batch.map(fmt).join("\n")}`;
+
+const fail = (m: string): never => { console.error(m); process.exit(1); };
 
 // ---------- commands ----------
 switch (cmd) {
@@ -532,6 +537,44 @@ ${now}`);
     console.log(asJson ? JSON.stringify(info) : `${path}\n${info.width}x${info.height} ${info.mime}, ${(info.bytes / 1024).toFixed(1)} KB${info.note ? `\n${info.note}` : ""}`);
     break;
   }
+  case "flows": {
+    const root = findRoot();
+    const [sub = "list", id] = rest;
+    if (sub === "list") {
+      const flows = listFlows(root);
+      if (!flows.length) console.log(`No flows yet. Create one: cdesign flows new <id> --title "Nova venda" (writes ${FLOWS_DIR}/<id>.json).`);
+      for (const f of flows) console.log(`${f.id}  ${f.title}  (${f.steps.filter((s) => !s.decision).length} screens, ${f.steps.filter((s) => s.decision).length} decisions, ${f.links.length} links)${f.errors.length ? `  ${f.errors.length} problem(s): run cdesign flows check` : ""}`);
+    } else if (sub === "show" && id) {
+      if (!existsSync(join(root, FLOWS_DIR, `${id}.json`))) fail(`No flow ${FLOWS_DIR}/${id}.json`);
+      console.log(flowText(root, readFlow(root, id)));
+    } else if (sub === "check") {
+      const errors = listFlows(root).flatMap((f) => f.errors.map((e) => `ERROR  ${f.file}: ${e}`));
+      console.log(errors.length ? errors.join("\n") : "flows ok");
+      process.exitCode = errors.length ? 1 : 0;
+    } else if (sub === "new" && id) {
+      try { console.log(`wrote ${newFlow(root, id, flag("--title"))}`); } catch (e) { fail((e as Error).message); }
+    } else console.log(`cdesign flows [list] | show <id> | check | new <id> [--title text]
+flows live in ${FLOWS_DIR}/<id>.json; see \`cdesign skills get cdesign\` > Flows, wireframes and sync`);
+    break;
+  }
+  case "sync": {
+    const root = findRoot();
+    const asJson = rest.includes("--json");
+    if (asJson) rest.splice(rest.indexOf("--json"), 1);
+    const note = flag("--note");
+    const [sub = "status", file] = rest;
+    try {
+      if (sub === "status") console.log(asJson ? JSON.stringify(syncItems(root), null, 2) : syncReport(root));
+      else if (sub === "outdated" && file) { markOutdated(root, file, note); console.log(`marked outdated: ${file}${note ? ` (${note})` : ""}`); }
+      else if (sub === "done" && file) { const i = markSynced(root, file); console.log(`in sync: ${i.wireframe} <-> ${i.page}`); }
+      else if (sub === "clear" && file) console.log(clearOutdated(root, file) ? `cleared outdated mark: ${file}` : `${file} was not marked outdated`);
+      else console.log(`cdesign sync [status] [--json]          what needs syncing between wireframes and pages
+cdesign sync outdated <file> [--note text]  mark a wireframe or page as needing an update to match its counterpart
+cdesign sync done <file>                     confirm the pair is in sync now (records both hashes, clears marks)
+cdesign sync clear <file>                    drop an outdated mark without confirming sync`);
+    } catch (e) { fail((e as Error).message); }
+    break;
+  }
   case "comments": {
     const root = findRoot();
     const l = readComments(root).filter((c) => rest.includes("--all") || c.status !== "done");
@@ -762,6 +805,9 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
   wait [--timeout s]                    run in the background: exits with the batch when the user presses Send
   resolve <id...>                       mark comments done
   comments [--all]                      list pending comments
+  flows [list|show <id>|check|new <id> [--title t]]  user flows in design/flows/*.json (screens, decisions, links)
+  sync [status|outdated <file> [--note t]|done <file>|clear <file>] [--json]
+                                        what needs syncing between wireframes and pages; mark outdated / in sync
   init [dir] [--mode react|html] [--tailwind|--no-tailwind]  scaffold design/ (design-system.md, tokens, _head, pages, components, features, prototype)
   check                                 verify tokens/components are defined and documented
   tokens <sub>                          query/change design/tokens.json, export css or tailwind (run: cdesign tokens)

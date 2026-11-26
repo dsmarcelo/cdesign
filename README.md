@@ -66,12 +66,27 @@ In the viewer, press `C`, click an element, and save your comment with **Add** o
 | `mcp` | MCP server (stdio) that teaches agents how to use cdesign |
 | `resolve <id...>` | Mark comments done |
 | `comments [--all]` | List pending comments |
+| `flows [list\|show <id>\|check\|new <id> [--title t]]` | User flows in `design/flows/<id>.json`: screens (wireframe + page pairs) and decisions joined by labeled links, drawn as the viewer's flow map |
+| `sync [status\|outdated <file> [--note t]\|done <file>\|clear <file>] [--json]` | What needs syncing between wireframes and pages: marked outdated, changed since last sync, never synced, wireframes without a page. Marks live in `design/sync.json` |
 | `init [dir]` | Scaffold the `design/` structure |
 | `tokens <sub>` | Search, show, set, remove, build and export tokens |
 | `check` | Verify tokens and components are defined and documented |
 | `skills [get <name>]` | List available skills, or read one |
 | `context [list\|find <words>\|get <id>\|for <path>] [--offset n]` | Discover guidance, read a topic/contract, or map direct dependencies. `--full` opts into legacy inventories |
 | `serve [dir] [--port n]` | Run the viewer in the foreground (it normally starts by itself) |
+
+## Map, flows and wireframes
+
+The viewer toolbar switches between **Flows**, **Pages** and **Files** (`M` toggles the map; `Esc` or the back arrow returns from an opened page).
+
+- **Pages** groups `design/pages/` by first-level folder, with the file named like the folder (or `index`) as the hub, and live thumbnails.
+- **Flows** draws each `design/flows/<id>.json` left to right: screens, decision diamonds and labeled arrows (`Sim`/`Não`), with loops dashed. A **Wireframes | Screens** toggle shows each step's wireframe (`design/wireframe/…`) or its real page.
+- Every screen is a live preview at real device size (phone 402×874, desktop 1280×800); zoom with Ctrl/⌘ + wheel or the −/+/Fit buttons and drag the background to pan. A **Phone | Desktop** toggle picks the device. Wireframes are responsive by default; `name.phone.tsx` / `name.desktop.tsx` siblings give separate layouts per device. Wireframes should fill the viewport and not draw their own device frame.
+- The Select tool (`S`) works inside map screens: the picked element is what `cdesign page` reports to the agent.
+- Clicking a card opens it in the normal viewer (all sizes, select, comment, chat). A bar above it shows the flow, the next screens, a Wireframe/Screen switch for paired steps and the sync state.
+- Wireframes are prototypes: changing one does not require changing its page. Agents or the user mark the side that must follow as **outdated** (`cdesign sync outdated <file> --note …`, or the button in the bar) and confirm alignment with `cdesign sync done <file>`. `cdesign sync` (MCP `sync`) answers "what needs syncing?". State lives in `design/sync.json` (content hashes + marks), committed with the design.
+
+Website exports exclude `design/wireframe/` like `design/prototype/`.
 
 ## React or HTML mode
 
@@ -164,7 +179,7 @@ design/
   prototype/              work in progress; moved to components/ or pages/ once done
 ```
 
-Group pages by feature or screen type under `design/pages/`, give each prototype or flow a folder under `design/prototype/`, and group components by family under `design/components/` or by feature under `design/features/`. Use short, descriptive names and reuse existing groups. The Files tab lists preview entries inside `design/`, including nested folders.
+Group pages by feature or screen type under `design/pages/`, put lo-fi wireframes under `design/wireframe/`, describe user flows in `design/flows/<id>.json`, give other experiments a folder under `design/prototype/`, and group components by family under `design/components/` or by feature under `design/features/`. Use short, descriptive names and reuse existing groups. The Files tab lists preview entries inside `design/`, including nested folders.
 
 Every folder keeps its previews in its own `previews/` subfolder. Prototypes start in `prototype/`; when one is done, the agent asks whether to move it to `components/`, `features/` or `pages/`. Moved files stay editable.
 

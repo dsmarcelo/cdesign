@@ -10,7 +10,8 @@ const INSTRUCTIONS = `cdesign is a local viewer for React (TSX) and HTML prototy
 Use it whenever the user mentions cdesign, asks to design, prototype or mock up UI, or asks you to apply design comments.
 Start with \`open\`: it scaffolds design/ if missing and returns compact directions and the current target. Use \`context\` to find relevant guidance and component contracts; do not load all documents. Use \`run\` with "skills get cdesign" for the usage guide, "skills get cdesign-system" to build/maintain a system, or "skills get cdesign-review" for a review. For HTML/React conversion, read "skills get cdesign-convert". New projects default to React with Tailwind CSS; existing projects keep their mode.
 When the user is vague about location ("this page", "change this", "here", "this button"), call \`page\` before asking anything: it returns the page open in the viewer and the element the user selected with the pointer tool. \`open\` reuses the shared viewer process (one for all projects, chosen by the folder you run in), so never ask the user for a localhost link.
-Never read design/tokens.json directly (it is huge); query it with \`run\` ("tokens search <words>").`;
+Never read design/tokens.json directly (it is huge); query it with \`run\` ("tokens search <words>").
+Flows: user flows live in design/flows/<id>.json (screens and decisions joined by labeled links). Each screen step pairs a lo-fi wireframe (design/wireframe/…) with the real page (design/pages/…). Call \`flows\` to list or show them. Wireframes are prototypes: changing one does NOT require changing its page. When the user asks what needs syncing or updating, what is outdated, or how wireframes and pages compare, call \`sync\` and answer from its report. After you change one side of a pair, ask yourself whether the other side must follow: if yes, \`sync\` with action "outdated" on the side that is now behind (with a short note); after you bring a pair in line, \`sync\` with action "done". Wireframes may have phone/desktop variants (name.phone.tsx, name.desktop.tsx; unsuffixed = responsive) and must fill the viewport without drawing their own device frame. Read "skills get cdesign" > Flows for the file format.`;
 
 /** Every tool is a thin wrapper over the CLI, run in the project the agent was started in. */
 async function cli(args: string[]) {
@@ -75,6 +76,31 @@ const tools = [
     inputSchema: { type: "object", properties: { ids: { type: "array", items: { type: "string" } } }, required: ["ids"] },
   },
   {
+    name: "flows",
+    description: "List the user flows (design/flows/*.json), show one with each screen's wireframe, page and sync state, check them for errors, or create an empty one.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "show", "check", "new"], default: "list" },
+        id: { type: "string", description: "Flow id (file name without .json) for show/new, e.g. nova-venda." },
+        title: { type: "string", description: "Title for new." },
+      },
+    },
+  },
+  {
+    name: "sync",
+    description: "Wireframe/page sync. status (default): what needs syncing — sides marked outdated, pairs changed since the last confirmed sync, pairs never confirmed, wireframes without a page. outdated: mark a file (wireframe or page) as needing an update to match its counterpart, with a note. done: confirm a pair is in sync now (records content hashes, clears marks). clear: drop an outdated mark.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["status", "outdated", "done", "clear"], default: "status" },
+        file: { type: "string", description: "Project-relative wireframe or page path, e.g. design/pages/vendas/nova-venda.tsx." },
+        note: { type: "string", description: "outdated: what must change, e.g. \"add the discount field from the wireframe\"." },
+        json: { type: "boolean", description: "status: machine-readable list of pairs." },
+      },
+    },
+  },
+  {
     name: "run",
     description: 'Run any other cdesign command, for example "tokens search danger border", "tokens set color/x --light #fff --usage \\"…\\"", "check", "comments", "context", "init".',
     inputSchema: { type: "object", properties: { args: { type: "string", description: "Arguments after `cdesign`" } }, required: ["args"] },
@@ -86,7 +112,7 @@ const mcp = new Server({ name: "cdesign", version: "0.1.0" }, { capabilities: { 
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
-  const a = (req.params.arguments ?? {}) as { mode?: "react" | "html"; tailwind?: boolean; action?: string; query?: string; offset?: number; ids?: string[]; args?: string; page?: string; selected?: boolean; selector?: string; width?: number; theme?: string; format?: string; y?: number; full?: boolean; responsive?: boolean };
+  const a = (req.params.arguments ?? {}) as { mode?: "react" | "html"; tailwind?: boolean; action?: string; query?: string; offset?: number; ids?: string[]; args?: string; page?: string; selected?: boolean; selector?: string; width?: number; theme?: string; format?: string; y?: number; full?: boolean; responsive?: boolean; id?: string; title?: string; file?: string; note?: string; json?: boolean };
   let text: string;
   switch (req.params.name) {
     case "open": text = await cli(["open", ...(a.mode ? ["--mode", a.mode] : []), ...(a.tailwind === undefined ? [] : [a.tailwind ? "--tailwind" : "--no-tailwind"])]); break;
@@ -113,6 +139,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
     }
     case "review": text = await cli(["review"]); break;
+    case "flows": text = await cli(["flows", a.action ?? "list", ...(a.id ? [a.id] : []), ...(a.title ? ["--title", a.title] : [])]); break;
+    case "sync": text = await cli(["sync", a.action ?? "status", ...(a.file ? [a.file] : []), ...(a.note ? ["--note", a.note] : []), ...(a.json ? ["--json"] : [])]); break;
     case "resolve": text = await cli(["resolve", ...(a.ids ?? [])]); break;
     case "run": text = await cli(split(a.args ?? "")); break;
     default: throw new Error(`unknown tool: ${req.params.name}`);

@@ -78,7 +78,8 @@
     picked = el;
     el.classList.add("__cd-sel");
     const r = el.getBoundingClientRect();
-    post({ file: fileOf(el), cdId: el.getAttribute("data-cd-id"), uses: usesOf(el), selector: selectorOf(el), tag: el.tagName.toLowerCase(), text: (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 200), size: `${px(r.width)} x ${px(r.height)} px` });
+    parent.postMessage({ cd: "picked" }, "*"); // other previews on the map drop their outline
+    post({ page: decodeURIComponent(location.pathname.replace(/^\/p\//, "")), file: fileOf(el), cdId: el.getAttribute("data-cd-id"), uses: usesOf(el), selector: selectorOf(el), tag: el.tagName.toLowerCase(), text: (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 200), size: `${px(r.width)} x ${px(r.height)} px` });
     inspect(el);
   };
   // after a reload the page is new: redraw the outline for the selection the server still holds
@@ -444,6 +445,7 @@
     }
     if (e.data?.cd === "clear" && (picked || tab)) { unpick(); post(null); }
     if (e.data?.cd === "pins") { pins(); restore(); }
+    if (e.data?.cd === "unpick") unpick();
   });
   addEventListener("load", pins);
   parent.postMessage({ cd: "ready" }, "*");

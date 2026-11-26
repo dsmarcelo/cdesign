@@ -14,6 +14,7 @@
 <link rel="icon" type="image/png" sizes="192x192" href="/__cd/icon-192.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/__cd/apple-touch-icon.png">
 <link rel="stylesheet" href="/__cd/chat.css">
+<link rel="stylesheet" href="/__cd/map.css">
 <script>try{document.documentElement.dataset.theme=localStorage.getItem("cd-theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light")}catch{}</script>
 <style>
   html{background:#000;overscroll-behavior:none}
@@ -155,6 +156,8 @@
   <b>cdesign</b>
   <button id="more" class="ic" title="Show/hide toolbar"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg></button>
   <div id="bar">
+  <button id="back" class="ic" title="Back to the map (Esc)" aria-label="Back to the map" hidden><svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3 5 8l5 5"/></svg></button>
+  <span id="views" class="grp seg" role="group" aria-label="View"><button data-v="flows" aria-pressed="false" title="Flow map (M)">Flows</button><button data-v="pages" aria-pressed="false" title="Pages map">Pages</button><button data-v="files" aria-pressed="true" title="Open page with the file list">Files</button></span>
   <div class="bar-context">
   <select id="proj" title="Switch project"></select>
   <button type="button" class="install-app" hidden>Install app</button>
@@ -179,7 +182,8 @@
   <div id="cm" role="tabpanel"></div>
   <i id="lrs" title="Drag to resize" role="separator" aria-orientation="vertical"></i>
 </aside>
-<main><div id="stage">
+<div id="map" aria-label="Project map"></div>
+<main><div id="flowbar" hidden></div><div id="stage">
   <div class="dev" id="d1"><iframe id="fr"></iframe><i class="rh" id="rx"></i><i class="rh" id="ry"></i><i class="rh" id="rxy"></i><span id="dim"></span></div>
   <div class="dev" id="d2"><iframe id="fr2"></iframe></div>
 </div></main>
@@ -232,6 +236,7 @@
   </div>
 </dialog>
 <script src="/__cd/chat.js" defer></script>
+<script src="/__cd/map.js"></script>
 <script>
 const $ = (s) => document.querySelector(s);
 const pageHash = () => {
@@ -240,7 +245,7 @@ const pageHash = () => {
 };
 const pagePath = (file) => file.split("/").map(encodeURIComponent).join("/");
 const previewPath = (file) => "/p/" + pagePath(file);
-let cur = pageHash() || null, mode = null; // mode: null | "select" | "comment"
+let cur = (isMapHash(pageHash()) ? null : pageHash()) || null, mode = null; // mode: null | "select" | "comment"
 const tabId = Math.random().toString(36).slice(2, 10);
 // tell the server which page this tab shows; the agent reads it through `cdesign page`
 const report = () => fetch("/__cd/page", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tabId, file: cur }), keepalive: true }).catch(() => {});
@@ -394,16 +399,17 @@ async function files() {
   const had = cur;
   if (!cur || !l.includes(cur)) cur = l[0] ?? null;
   if (cur !== had) {
-    if (cur) history.replaceState(null, "", "#" + pagePath(cur));
+    if (cur && !isMapHash(pageHash())) history.replaceState(null, "", "#" + pagePath(cur));
     report();
   }
   $("#files").innerHTML = "";
   draw(tree(l), $("#files"), "design/");
   if (!l.length) $("#files").textContent = "No preview entries. Add a page or component preview.";
   $("#full-page").disabled = !cur;
+  flowbar();
 }
 $("#full-page").onclick = () => { if (cur) location.href = previewPath(cur) + "?full=1"; };
-const frames = () => [$("#fr"), $("#fr2")];
+const frames = () => [$("#fr"), $("#fr2"), ...document.querySelectorAll("#map iframe[src]")]; // map previews take the select/comment tools too
 // Only the viewer hash adds history entries; frame loads must not compete with it.
 const loadFrame = (f, url) => f.contentWindow.location.replace(url);
 const load = () => { if (cur) { loadFrame($("#fr"), previewPath(cur)); if (view === "split") loadFrame($("#fr2"), previewPath(cur)); } };
@@ -541,6 +547,7 @@ function setMode(m) {
   mode = mode === m ? null : m;
   $("#mode").classList.toggle("on", mode === "comment");
   $("#sel").classList.toggle("on", mode === "select");
+  document.body.classList.toggle("picking", !!mode);
   if (mode !== "select") send({ cd: "clear" }); // the agent only sees a selection while Select is active
   sync();
 }
@@ -609,14 +616,30 @@ for (const [id, dx, dy] of [["rx", 1, 0], ["ry", 0, 1], ["rxy", 1, 1]]) {
 addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "b") { e.preventDefault(); return $("#tl").click(); }
   if ($("#website-dialog").open || $("#share-dialog").open || /input|textarea/i.test(e.target.tagName)) return;
+  if (e.key === "m" && !e.ctrlKey && !e.metaKey) return goMap(document.body.classList.contains("map") ? (pageHash() === "map:pages" ? "flows" : "pages") : undefined);
+  if (document.body.classList.contains("map") && e.key === "Escape") { if (mode) setMode(mode); else if (cur) setCur(cur); return; }
   if (e.key === "c") setMode("comment");
   if (e.key === "s") setMode("select");
-  if (e.key === "Escape") send({ cd: "clear" });
+  if (e.key === "Escape") { if (mode) setMode(mode); else goMap(); }
 });
-addEventListener("hashchange", () => { const h = pageHash(); if (h && h !== cur) setCur(h); });
+addEventListener("hashchange", () => {
+  const h = pageHash();
+  if (isMapHash(h)) return showMap(h);
+  if (document.body.classList.contains("map")) hideMap();
+  if (h && h !== cur) setCur(h);
+});
+$("#back").onclick = () => goMap();
+document.querySelectorAll("#views button").forEach((b) => b.onclick = () => {
+  if (b.dataset.v !== "files") return goMap(b.dataset.v);
+  if (cur) { if (pageHash() !== cur) location.hash = pagePath(cur); } else hideMap();
+  $("#tab-files").click();
+  if (hidden("cd-hide-l")) $("#tl").click();
+});
 addEventListener("focus", report);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) report(); });
-addEventListener("message", (e) => { if (e.data?.cd === "ready") sync(); if (e.data?.cd === "sidebar" && e.source && frames().some((f) => f.contentWindow === e.source)) $("#tl").click(); });
+addEventListener("message", (e) => {
+  if (e.data?.cd === "picked") frames().forEach((f) => f.contentWindow !== e.source && f.contentWindow?.postMessage({ cd: "unpick" }, "*"));
+  if (e.data?.cd === "ready") sync(); if (e.data?.cd === "sidebar" && e.source && frames().some((f) => f.contentWindow === e.source)) $("#tl").click(); });
 frames().forEach((f) => f.addEventListener("load", () => { sync(); applyTheme(); }));
 
 async function addFolder() {
@@ -804,10 +827,10 @@ es.onmessage = (e) => {
     if (next) viewerInstance = next;
     return;
   }
-  if (e.data === "reload") $("#fr").contentWindow.location.reload(), view === "split" && $("#fr2").contentWindow.location.reload(), files();
+  if (e.data === "reload") $("#fr").contentWindow.location.reload(), view === "split" && $("#fr2").contentWindow.location.reload(), files(), mapRefresh();
   if (e.data === "comments") { comments(); send({ cd: "pins" }); agent(); }
   if (e.data === "agent") agent();
 };
-files().then(load); comments(); applyTheme(); agent();
+files().then(load); comments(); applyTheme(); agent(); mapInit();
 }
 </script>
