@@ -643,8 +643,32 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
       if (!listPages(root).includes(rel)) return new Response("not a preview entry for this mode", { status: 404 });
       let html: string;
       try { html = await adapter(root).render(root, rel); } catch (e) { html = errorDocument(e); }
-      const tag = url.searchParams.has("raw") ? "" : `<script src="/__cd/overlay.js"></script>`; // raw: screenshots, no commenting overlay
-      const body = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, tag + "</body>") : html + tag;
+      let tag = "";
+      if (!url.searchParams.has("raw")) {
+        if (url.searchParams.has("full")) {
+          const href = "/#" + rel.split("/").map(encodeURIComponent).join("/");
+          tag = `<style>
+            #__cd-return{all:initial;box-sizing:border-box;position:fixed;z-index:2147483647;
+              left:calc(8px + env(safe-area-inset-left));bottom:calc(8px + env(safe-area-inset-bottom));
+              width:24px;height:24px;display:grid;place-items:center;background:#171717;color:#fafafa;
+              border:1px solid #737373;border-radius:5px;cursor:pointer;touch-action:manipulation}
+            #__cd-return:focus-visible{outline:2px solid #fff;outline-offset:2px;box-shadow:0 0 0 5px #171717}
+          </style><a id="__cd-return" href="${href}" aria-label="Return to cdesign" title="Return to cdesign"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M6 3v10"/></svg></a>
+          <script>
+            // Keep the daemon available while this standalone preview is open.
+            new EventSource("/__cd/events").onmessage = (event) => {
+              if (event.data === "reload") location.reload();
+            };
+            try {
+              document.documentElement.dataset.theme = localStorage.getItem("cd-theme") ||
+                (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+            } catch {}
+          </script>`;
+        } else {
+          tag = `<script src="/__cd/overlay.js"></script>`;
+        }
+      }
+      const body = /<\/body>/i.test(html) ? html.replace(/<\/body>/i, () => tag + "</body>") : html + tag;
       return new Response(body, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
     }
     return new Response(f, { headers: { "cache-control": "no-store" } });

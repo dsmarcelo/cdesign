@@ -167,6 +167,21 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
     await until(() => ev("document.querySelector('#fr2').contentWindow.location.href==='about:blank'"));
     expect(await ev("history.length")).toBe(historyLength);
     await browserHistory(-1); await viewerState(initial);
+    await ev("document.querySelector('#full-page').click()");
+    await until(() => ev(`location.pathname === '/p/'+${JSON.stringify(initial)} && !!document.querySelector('#__cd-return')`));
+    expect(await ev(`(() => {
+      const rect = document.querySelector('#__cd-return').getBoundingClientRect();
+      return [rect.width, rect.height, rect.left, innerHeight - rect.bottom];
+    })()`)).toEqual([24, 24, 8, 8]);
+    expect(await ev("!!document.querySelector('#fr, script[src=\"/__cd/overlay.js\"]')")).toBe(false);
+    await until(() => ev(`fetch('/__cd/projects').then(r => r.json()).then(data =>
+      data.projects.some(p => p.id === data.current && p.tabs > 0))`));
+    put("design/components/ui/Button.tsx", button.replace("Count ", "Full page "));
+    await until(() => ev("document.querySelector('button')?.textContent === 'Full page 0'"));
+    put("design/components/ui/Button.tsx", button);
+    await until(() => ev("document.querySelector('button')?.textContent === 'Count 0'"));
+    await ev("document.querySelector('#__cd-return').click()");
+    await viewerState(initial);
     // Viewer reloads an inline preview after a component edit, preserving the active entry.
     put("design/components/ui/Button.tsx", button.replace("Count ", "Updated "));
     await until(() => ev("document.querySelector('#fr').contentDocument?.querySelector('button')?.textContent==='Updated 0'"));
