@@ -97,6 +97,23 @@ async function runBrowserChecks(mapsOnly = false) {
           // Links back to the opener are ↩ badges, not dashed arrows.
           expect(await ev('document.querySelectorAll(".edges > path[stroke-dasharray]").length')).toBe(0);
           expect(await ev('document.querySelectorAll(".flow-body .badge.ret").length')).toBe(2);
+          // Clicking an arrow's line fits the screen at its end (the app frame) to the canvas.
+          const fitted = await ev(`(() => {
+            const hit = [...document.querySelectorAll(".edges > path.hit")].find((p) => p.textContent === "Go to done");
+            hit.dispatchEvent(new MouseEvent("click", {bubbles: true, detail: 1}));
+            const frame = document.querySelector('[data-step="done"] .thumb').getBoundingClientRect();
+            const vp = document.querySelector('.map-viewport').getBoundingClientRect();
+            return {
+              cx: Math.abs(frame.left + frame.width / 2 - vp.left - vp.width / 2),
+              cy: Math.abs(frame.top + frame.height / 2 - vp.top - vp.height / 2),
+              fill: Math.max(frame.width / (vp.width - 32), frame.height / (vp.height - 32)),
+              selected: document.querySelector('.board-selected')?.dataset.step,
+            };
+          })()`);
+          expect(fitted.cx).toBeLessThan(2);
+          expect(fitted.cy).toBeLessThan(2);
+          expect(Math.abs(fitted.fill - 1)).toBeLessThan(0.01);
+          await until(() => ev(`document.querySelector('.board-selected')?.dataset.step === "done"`));
         }
         const key = (key: string, code: string, shiftKey = false) => ev(`window.dispatchEvent(new KeyboardEvent("keydown", ${JSON.stringify({key, code, shiftKey, cancelable: true})}))`);
         const camera = () => ev("document.querySelector('.map-position').style.translate");

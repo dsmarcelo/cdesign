@@ -138,7 +138,7 @@ function layoutFlow(flow: Flow, layer: Layer, device: Device) {
   const width = (colX.at(-1) ?? PAD) + (colW.at(-1) ?? D) + PAD;
   const height = y - VGAP * 2 + PAD;
 
-  type Edge = { d: string; dashed?: boolean; label?: string; mid: [number, number] };
+  type Edge = { d: string; to: string; dashed?: boolean; label?: string; mid: [number, number] };
   const edges: Edge[] = [];
   const centre = (id: string) => pos[id].y + pos[id].h / 2;
   // Elbows from each screen to its destinations: ports spread down the right side in child order, and the
@@ -163,8 +163,8 @@ function layoutFlow(flow: Flow, layer: Layer, device: Device) {
       const xv = stem[k];
       edges.push(
         xv === undefined
-          ? { d: `M${sx} ${py} H${t.x}`, dashed: !!l.dashed, label: l.label, mid: [(edge + t.x) / 2, py] }
-          : { d: `M${sx} ${py} H${xv} V${ty} H${t.x}`, dashed: !!l.dashed, label: l.label, mid: [(xv + t.x) / 2, ty] }
+          ? { d: `M${sx} ${py} H${t.x}`, to: l.to, dashed: !!l.dashed, label: l.label, mid: [(edge + t.x) / 2, py] }
+          : { d: `M${sx} ${py} H${xv} V${ty} H${t.x}`, to: l.to, dashed: !!l.dashed, label: l.label, mid: [(xv + t.x) / 2, ty] }
       );
     });
   }
@@ -173,7 +173,7 @@ function layoutFlow(flow: Flow, layer: Layer, device: Device) {
     const l = flow.links[k], a = pos[l.from], b = pos[l.to];
     const x = colEnd(l.from) + GAP * 0.55 + n * 36;
     const sy = a.y + a.h * 0.8, ty = b.y + b.h * 0.2;
-    edges.push({ d: `M${a.x + a.w} ${sy} H${x} V${ty} H${b.x + b.w}`, dashed: true, label: l.label, mid: [x, (sy + ty) / 2] });
+    edges.push({ d: `M${a.x + a.w} ${sy} H${x} V${ty} H${b.x + b.w}`, to: l.to, dashed: true, label: l.label, mid: [x, (sy + ty) / 2] });
   });
   // Everything else (long returns, skips) runs in its own lane above the flow.
   lanes.forEach((k, n) => {
@@ -184,6 +184,7 @@ function layoutFlow(flow: Flow, layer: Layer, device: Device) {
     const sy = a.y + a.h * 0.1, ty = b.y + b.h * 0.1;
     edges.push({
       d: `M${a.x + a.w} ${sy} H${sx} V${lane} H${tx} V${ty} H${b.x}`,
+      to: l.to,
       dashed: true,
       label: l.label,
       mid: [(sx + tx) / 2, lane],
@@ -193,7 +194,8 @@ function layoutFlow(flow: Flow, layer: Layer, device: Device) {
   return { width, height, pos, views, edges, returns };
 }
 
-function EdgeSvg({ paths }: { paths: { d: string; dashed?: boolean }[] }) {
+/** Each arrow also gets a wide invisible stroke so its line is easy to click; clicking goes to the arrow's end. */
+function EdgeSvg({ paths, onGo }: { paths: { d: string; to: string; dashed?: boolean }[]; onGo: (to: string) => void }) {
   return (
     <svg className="edges">
       <defs>
@@ -204,11 +206,17 @@ function EdgeSvg({ paths }: { paths: { d: string; dashed?: boolean }[] }) {
       {paths.map((p, i) => (
         <path key={i} d={p.d} markerEnd="url(#ah)" strokeDasharray={p.dashed ? "14 12" : undefined} />
       ))}
+      {paths.map((p, i) => (
+        <path key={"hit" + i} className="hit" d={p.d} onClick={() => onGo(p.to)}>
+          <title>Go to {p.to}</title>
+        </path>
+      ))}
     </svg>
   );
 }
 
 function ScreenCard({
+  step,
   file,
   title,
   device,
@@ -222,6 +230,7 @@ function ScreenCard({
   onFrameLoad,
   registerFrame,
 }: {
+  step: string;
   file: string | null;
   title: string;
   device: Device;
@@ -238,7 +247,7 @@ function ScreenCard({
   const [w, h] = MAP_DEVICE[device];
   const st = item ? SYNC_STATE[item.state] : null;
   return (
-    <div data-screen={file ?? undefined} className={`node screen ${device}${cls ? " " + cls : ""}`} style={style}>
+    <div data-screen={file ?? undefined} data-step={step} className={`node screen ${device}${cls ? " " + cls : ""}`} style={style}>
       <div className="cap">
         <button
           type="button"
@@ -441,19 +450,26 @@ export function ProjectMap({
     panTo(cx + (from.x - cx) * ratio + dx, cy + (from.y - cy) * ratio + dy);
   };
 
-  const fit = (target: HTMLElement | undefined = flowBodyRef.current ?? undefined, save = true) => {
+  const fit = (target: HTMLElement | undefined = flowBodyRef.current ?? undefined, save = true, maxZoom = target === selection ? 16 : 1) => {
     const viewport = viewportRef.current, canvas = canvasRef.current;
     if (!viewport || !canvas) return;
     const bounds = (target ?? canvas).getBoundingClientRect();
     const origin = canvas.getBoundingClientRect();
     const old = zoomRef.current;
     const width = Math.max(1, bounds.width / old), height = Math.max(1, bounds.height / old);
-    const maxZoom = target === selection ? 16 : 1;
     const z = Math.max(0.02, Math.min(maxZoom, (viewport.clientWidth - 32) / width,
       (viewport.clientHeight - 32) / height));
     applyZoom(z);
     panTo((viewport.clientWidth - width * z) / 2 - (bounds.left - origin.left) / old * z,
       (viewport.clientHeight - height * z) / 2 - (bounds.top - origin.top) / old * z, save);
+  };
+
+  /** Centres a step and zooms so its app frame (or decision diamond) fills the canvas. */
+  const goToStep = (id: string) => {
+    const node = flowBodyRef.current?.querySelector<HTMLElement>(`[data-step="${CSS.escape(id)}"]`);
+    if (!node) return;
+    if (node.dataset.screen) setSelection(node);
+    fit(node.querySelector<HTMLElement>(".thumb") ?? node, true, 16);
   };
 
   useLayoutEffect(() => {
@@ -857,7 +873,7 @@ export function ProjectMap({
                     {activeFlow.errors.length > 0 && <div className="flow-errors">{activeFlow.errors.join("\n")}</div>}
                     {flowLayout && (
                       <div className="flow-body" ref={flowBodyRef} style={{ width: flowLayout.width, height: flowLayout.height }}>
-                        <EdgeSvg paths={flowLayout.edges} />
+                        <EdgeSvg paths={flowLayout.edges} onGo={goToStep} />
                         {flowLayout.edges.map(
                           (e, i) =>
                             e.label && (
@@ -872,6 +888,7 @@ export function ProjectMap({
                             return (
                               <div
                                 key={s.id}
+                                data-step={s.id}
                                 className="node decision"
                                 title={s.decision}
                                 style={{ left: p.x, top: p.y, width: p.w, height: p.h }}
@@ -888,6 +905,7 @@ export function ProjectMap({
                           return (
                             <ScreenCard
                               key={s.id}
+                              step={s.id}
                               file={v.file}
                               title={s.title ?? s.id}
                               device={v.device}
