@@ -604,9 +604,12 @@ export function ProjectMap({
     const wheel = (e: WheelEvent) => {
       e.preventDefault();
       const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? viewport.clientHeight : 1;
-      if (e.ctrlKey || e.metaKey || (!e.shiftKey && e.deltaX === 0)) {
+      // Like Figma: two-finger scroll pans in any direction; a trackpad pinch (which browsers send as ctrl+wheel)
+      // or Ctrl/⌘ + wheel zooms around the pointer. Each event's step is capped so a mouse notch is not a huge jump.
+      if (e.ctrlKey || e.metaKey) {
         const r = viewport.getBoundingClientRect();
-        setZoomAt(zoomRef.current * Math.exp(-e.deltaY * unit / 300), e.clientX - r.left, e.clientY - r.top);
+        const d = Math.max(-40, Math.min(40, e.deltaY * unit));
+        setZoomAt(zoomRef.current * Math.exp(-d / 100), e.clientX - r.left, e.clientY - r.top);
       } else {
         const sideways = e.shiftKey && !e.deltaX;
         panTo(position.current.x - (sideways ? e.deltaY : e.deltaX) * unit,

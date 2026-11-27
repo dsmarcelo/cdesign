@@ -131,13 +131,18 @@ async function runBrowserChecks(mapsOnly = false) {
           const x = Math.round(left + 100), y = Math.round(top + 100);
           const before = canvas.getBoundingClientRect();
           viewport.dispatchEvent(new WheelEvent('wheel', {
-            clientX: x, clientY: y, deltaY: -60, cancelable: true
+            clientX: x, clientY: y, deltaY: -60, ctrlKey: true, cancelable: true
           }));
           const after = canvas.getBoundingClientRect();
           return Math.abs((x - before.left) - (x - after.left) / Number(canvas.style.zoom));
         })()`);
         expect(anchorError).toBeLessThan(1);
         expect(Number(await zoom())).toBeGreaterThan(1);
+        // A plain vertical two-finger scroll pans down without zooming.
+        const zoomBefore = await zoom(), yBefore = await camera();
+        await ev(`document.querySelector('.map-viewport').dispatchEvent(new WheelEvent('wheel', {deltaY: 80, cancelable: true}))`);
+        expect(await zoom()).toBe(zoomBefore);
+        expect(await camera()).not.toBe(yBefore);
         await ev("document.querySelector('#map .thumb').click()");
         await until(() => ev("!!document.querySelector('.board-selected')"));
         await key("@", "Digit2", true);
@@ -221,7 +226,7 @@ async function runBrowserChecks(mapsOnly = false) {
       await clickElement();
       await until(() => ev(`!!document.querySelector(".board-comment textarea")`));
       const beforeWheel = await ev(`document.querySelector(".map-canvas").style.zoom`);
-      await cmd("Input.dispatchMouseEvent", {type: "mouseWheel", ...point, deltaY: -50, deltaX: 0});
+      await cmd("Input.dispatchMouseEvent", {type: "mouseWheel", ...point, deltaY: -50, deltaX: 0, modifiers: 2});
       await until(() => ev(`document.querySelector(".map-canvas").style.zoom !== ${JSON.stringify(beforeWheel)}`));
       await ev(`document.querySelector(".board-comment textarea").value = "Review this flow element";
         document.querySelector(".board-comment").requestSubmit()`);
