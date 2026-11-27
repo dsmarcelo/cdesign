@@ -78,9 +78,9 @@ In the viewer, press `C`, click an element, and save your comment with **Add** o
 
 The viewer opens on a free canvas. Each tab in the top bar is a flow (`design/flows/<id>.json`); `+` adds a tab, double-click renames it. A tab's pages are live frames you place anywhere: drag a frame by its label (or its body in Design mode), and drag the handles on the selected frame to resize it. The size menu in the bottom toolbar (Phone, Tablet, Laptop, Desktop…) resizes every frame in the tab at once. **Add page** puts another page or `page.tsx#state` in the tab. Positions and sizes are saved to the flow file.
 
-- **Design** (`D`): click an element to select it for the agent, or use **Comment** (`C`) to pick an element and add a draft. Drafts use the same comment workflow as full pages.
+- **Design** (`D`): as in Figma, hovering outlines the element under the pointer and a click selects it for the agent (its tag and size show under it). **Comment** (`C`) picks an element and adds a draft; drafts use the same comment workflow as full pages. Click a frame's label to select the frame itself (move, resize, `Delete`).
 - **Preview** (`P`): every frame is interactive: scroll, click and type as in the real app.
-- Open a frame (the expand button on its label, `Enter`, or double-click) to show the page by itself with device sizes, split view and the style inspector. `Esc`, ← or `M` returns to the canvas.
+- Open a frame (the expand button on its label, or `Enter` with the frame or one of its elements selected) to show the page by itself with device sizes, split view and the style inspector. `Esc`, ← or `M` returns to the canvas.
 
 Navigation follows Figma: two-finger trackpad scroll or the mouse wheel pans, pinch or `Ctrl` / `⌘` + scroll zooms around the pointer, `Space`-drag, middle-drag or the Hand tool (`H`) pans, and dragging empty canvas pans too. `+` / `−` zoom, `0` is 100%, `Shift+1` fits the tab, `Shift+2` fits the selected frame, arrow keys pan. `Delete` removes the selected frame from the tab (the page file stays). The camera is remembered per tab.
 

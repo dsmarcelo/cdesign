@@ -97,7 +97,7 @@
   const onBoard = !!window.frameElement?.closest("#map");
   if (onBoard) {
     const boardCss = document.createElement("style");
-    boardCss.textContent = "html:not(.__cd-live),html:not(.__cd-live) body{overflow:hidden!important}*{scrollbar-width:none!important}*::-webkit-scrollbar{display:none!important}";
+    boardCss.textContent = "html:not(.__cd-live),html:not(.__cd-live) body{overflow:hidden!important}*{scrollbar-width:none!important}*::-webkit-scrollbar{display:none!important}.__cd-sel,.__cd-hl{outline:none!important}";
     document.head.appendChild(boardCss);
     document.addEventListener("cd-board-pick", (e) => {
       const el = target(e);

@@ -191,12 +191,13 @@ async function runBrowserChecks(mapsOnly = false) {
         w.dispatchEvent(e);
         return e.defaultPrevented || w.onbeforeunload !== null;
       })()`)).toBe(false);
-      const point = await ev(`(() => {
+      const buttonPoint = () => ev(`(() => {
         const f = document.querySelector('[data-frame="home"] iframe');
         const frame = f.getBoundingClientRect(), button = f.contentDocument.querySelector("button").getBoundingClientRect();
         return {x: frame.left + frame.width * (button.left + button.width / 2) / f.clientWidth,
           y: frame.top + frame.height * (button.top + button.height / 2) / f.clientHeight};
       })()`);
+      let point = await buttonPoint();
       expect(await ev(`document.elementFromPoint(${point.x}, ${point.y})?.matches('[data-frame="home"] .frame-body')`)).toBe(true);
       const clickElement = async () => {
         await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", ...point});
@@ -209,6 +210,25 @@ async function runBrowserChecks(mapsOnly = false) {
       expect(selection.page).toBe("design/pages/Home.tsx");
       expect(await ev(`document.querySelector('[data-frame="home"] iframe').contentDocument.querySelector("button.__cd-sel")?.textContent`)).toBe("Count 0");
       expect(flowFile().frames[0].x).toBe(0); // a click is not a drag
+      // Figma-style: the pick is outlined by the canvas, the frame itself is not selected, and a double-click does not open the page.
+      expect(await ev(`document.querySelector('[data-frame="home"] .cv-pick-tag')?.textContent`)).toMatch(/^button · \d+ × \d+$/);
+      expect(await ev(`document.querySelector(".frame.sel")`)).toBe(null);
+      await cmd("Input.dispatchMouseEvent", {type: "mousePressed", ...point, button: "left", buttons: 1, clickCount: 2});
+      await cmd("Input.dispatchMouseEvent", {type: "mouseReleased", ...point, button: "left", clickCount: 2});
+      await Bun.sleep(200);
+      expect(await ev("location.hash")).toBe("#flow:home");
+      await key("Delete", "Delete"); // removes frames only, never the frame of a picked element
+      await Bun.sleep(200);
+      expect(flowFile().frames.length).toBe(2);
+      // Hovering another element (the second button) outlines it.
+      const title = await ev(`(() => {
+        const f = document.querySelector('[data-frame="home"] iframe'), r = f.getBoundingClientRect();
+        const el = f.contentDocument.querySelectorAll("button")[1];
+        const b = el.getBoundingClientRect();
+        return {x: r.left + r.width * (b.left + b.width / 2) / f.clientWidth, y: r.top + r.height * (b.top + b.height / 2) / f.clientHeight};
+      })()`);
+      await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", ...title});
+      await until(() => ev(`!!document.querySelector('[data-frame="home"] .cv-hover')`));
 
       await ev(`document.querySelector('.cv-toolbar button[aria-label="Comment"]').click()`);
       await clickElement();
@@ -229,7 +249,14 @@ async function runBrowserChecks(mapsOnly = false) {
       expect(await ev(`!!document.querySelector(".board-comment")`)).toBe(false);
       await ev(`document.querySelector('.cv-toolbar button[aria-label="Select"]').click()`);
 
-      // A frame opens as a full page; Back returns to its tab.
+      // Enter opens the picked element's page; Back returns to its tab. The label button opens it too.
+      point = await buttonPoint(); // the touch pan above moved the camera
+      await clickElement();
+      await until(() => ev(`!!document.querySelector('[data-frame="home"] .cv-pick')`));
+      await key("Enter", "Enter");
+      await until(() => ev(`location.hash === "#design/pages/Home.tsx"`));
+      await ev(`document.querySelector("#back").click()`);
+      await until(() => ev(`location.hash === "#flow:home" && !document.querySelector("#map").hidden`));
       await ev(`document.querySelector('[data-frame="home"] .frame-acts button[title^="Open"]').click()`);
       await until(() => ev(`location.hash === "#design/pages/Home.tsx" && getComputedStyle(document.querySelector("main")).display !== "none" && document.querySelector("#map").hidden`));
       await ev(`document.querySelector("#back").click()`);

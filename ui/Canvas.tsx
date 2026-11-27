@@ -15,6 +15,27 @@ const GAP = 80;
 const ZOOM_STEPS = [0.05, 0.1, 0.15, 0.25, 0.35, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 const DEFAULT_SIZE: [number, number] = FRAME_PRESETS["iPhone 18"];
 
+/** An element's box in its frame's own CSS pixels (the iframe is unscaled inside the zoomed canvas). */
+type Box = { frame: string; x: number; y: number; w: number; h: number; tag: string };
+const boxOf = (frame: string, el: Element): Box => {
+  const r = el.getBoundingClientRect();
+  return { frame, x: r.left, y: r.top, w: r.width, h: r.height, tag: el.tagName.toLowerCase() };
+};
+const sameBox = (a: Box | null, b: Box | null) =>
+  a === b || (!!a && !!b && a.frame === b.frame && a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h);
+
+/** The stamped element under a viewport point inside a frame card, if its preview is loaded. */
+function elementAt(card: Element, clientX: number, clientY: number): Element | null {
+  const frame = card.querySelector("iframe");
+  const doc = frame?.contentDocument;
+  if (!frame || !doc) return null;
+  const b = frame.getBoundingClientRect();
+  if (!b.width || !b.height) return null;
+  const x = (clientX - b.left) * frame.clientWidth / b.width;
+  const y = (clientY - b.top) * frame.clientHeight / b.height;
+  return doc.elementFromPoint(x, y)?.closest("[data-cd-id]") ?? null;
+}
+
 export const frameTitle = (f: FlowFrame) => {
   if (f.title) return f.title;
   const [file, state] = splitState(f.page);
@@ -170,6 +191,9 @@ export function Canvas({
   const [hand, setHand] = useState(false);
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  const [hover, setHover] = useState<Box | null>(null);
+  const [picked, setPicked] = useState<Box | null>(null);
+  const pickedEl = useRef<Element | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [comment, setComment] = useState<BoardElement | null>(null);
   const [adding, setAdding] = useState(false);
@@ -195,6 +219,8 @@ export function Canvas({
   };
 
   const clearPick = useCallback(() => {
+    pickedEl.current = null;
+    setPicked(null);
     const frame = pickedFrame.current;
     if (!frame) return;
     frame.contentDocument?.dispatchEvent(new Event("cd-board-clear"));
@@ -396,7 +422,18 @@ export function Canvas({
     }
   };
 
+  /** Figma-style hover: outline the element under a mouse pointer in Design mode. */
+  const trackHover = (e: React.PointerEvent<HTMLDivElement>) => {
+    const target = e.target as Element;
+    const card = !interact && !hand && !space.current && e.pointerType === "mouse" && !e.buttons && !pointers.current.size
+      ? target.closest(".frame-body")?.closest<HTMLElement>("[data-frame]") : null;
+    const el = card ? elementAt(card, e.clientX, e.clientY) : null;
+    const next = card && el ? boxOf(card.dataset.frame!, el) : null;
+    setHover((h) => sameBox(h, next) ? h : next);
+  };
+
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    trackHover(e);
     const points = pointers.current;
     const previous = points.get(e.pointerId);
     if (!previous) return;
@@ -583,7 +620,7 @@ export function Canvas({
         (target instanceof HTMLElement && (target.isContentEditable || target.closest("input,textarea,select,.board-comment,.cv-add")))) return;
       const modified = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
-      if (!modified && key === "escape" && (selected || comment || adding)) {
+      if (!modified && key === "escape" && (selected || picked || comment || adding)) {
         if (adding) setAdding(false);
         else if (comment) closeComment();
         else {
@@ -600,11 +637,11 @@ export function Canvas({
       else if (!modified && key === "d") onInteract(false);
       else if (!modified && key === "p") onInteract(true);
       else if (!modified && (key === "delete" || key === "backspace") && selected) removeFrame(selected);
-      else if (!modified && key === "enter" && selected) {
-        const f = framesRef.current.find((x) => x.id === selected);
+      else if (!modified && key === "enter" && (selected || picked)) {
+        const f = framesRef.current.find((x) => x.id === (selected ?? picked?.frame));
         if (f) onOpen(f.page);
       } else if (!modified && e.shiftKey && (e.code === "Digit1" || key === "!")) fit();
-      else if (!modified && e.shiftKey && (e.code === "Digit2" || key === "@")) { if (selected) focusFrame(selected); }
+      else if (!modified && e.shiftKey && (e.code === "Digit2" || key === "@")) { const id = selected ?? picked?.frame; if (id) focusFrame(id); }
       else if ((modified && key === "0") || (!modified && !e.shiftKey && key === "0")) setZoomAt(1);
       else if (key === "+" || key === "=") stepZoom(1);
       else if (key === "-" || key === "_") stepZoom(-1);
@@ -651,17 +688,15 @@ export function Canvas({
       return;
     }
     if (target.closest(".frame-label,.rz")) return;
-    setSelected(card.dataset.frame!);
     if (interact || (mode === "comment" && comment)) return;
+    // A click inside a frame picks the element under it; the frame itself is selected from its label.
+    setSelected(null);
     viewportRef.current?.focus({ preventScroll: true });
 
     const frame = card.querySelector("iframe");
     const preview = frame?.contentDocument;
     if (preview && frame && event.detail > 0) {
-      const bounds = frame.getBoundingClientRect();
-      const x = (event.clientX - bounds.left) * frame.clientWidth / bounds.width;
-      const y = (event.clientY - bounds.top) * frame.clientHeight / bounds.height;
-      const element = preview.elementFromPoint(x, y)?.closest("[data-cd-id]")
+      const element = elementAt(card, event.clientX, event.clientY)
         ?? (mode === "comment" ? preview.querySelector("[data-cd-id]") : null);
       if (element) {
         let found = false;
@@ -670,6 +705,8 @@ export function Canvas({
           detail: (value: BoardElement) => {
             if (pickedFrame.current !== frame) pickedFrame.current?.contentDocument?.dispatchEvent(new Event("cd-board-clear"));
             pickedFrame.current = frame;
+            pickedEl.current = element;
+            setPicked(boxOf(card.dataset.frame!, element));
             onElementSelect(value);
             if (mode === "comment") setComment(value);
             found = true;
@@ -689,6 +726,32 @@ export function Canvas({
       return;
     }
     clearPick();
+    setSelected(card.dataset.frame!);
+  };
+
+  /** Keep the picked element's box on it while the page lays out, re-finding it after a reload. */
+  useEffect(() => {
+    if (!picked) return;
+    let raf = 0;
+    const tick = () => {
+      let el = pickedEl.current;
+      if (el && !el.isConnected) {
+        const doc = pickedFrame.current?.contentDocument;
+        const id = el.getAttribute("data-cd-id"), file = el.getAttribute("data-cd-file");
+        el = pickedEl.current = [...doc?.querySelectorAll(`[data-cd-id="${id}"]`) ?? []].find((x) => x.getAttribute("data-cd-file") === file) ?? null;
+      }
+      if (!el) { setPicked(null); return; }
+      const next = boxOf(picked.frame, el);
+      setPicked((p) => p && !sameBox(p, next) ? next : p);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [picked?.frame, !!picked]);
+
+  const boxStyle = (b: Box, f: FlowFrame) => {
+    const x = Math.max(0, b.x), y = Math.max(0, b.y);
+    return { left: x, top: y, width: Math.max(0, Math.min(f.w, b.x + b.w) - x), height: Math.max(0, Math.min(f.h, b.y + b.h) - y) };
   };
 
   const sizes = new Set(frames.map((f) => `${f.w}x${f.h}`));
@@ -717,6 +780,7 @@ export function Canvas({
             className={`cv-viewport${hand || spaceHeld ? " hand" : ""}${mode === "comment" && !interact ? " commenting" : ""}`}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
+            onPointerLeave={() => setHover(null)}
             onPointerUp={endPointer}
             onPointerCancel={endPointer}
             onLostPointerCapture={endPointer}
@@ -736,7 +800,7 @@ export function Canvas({
                       key={f.id}
                       data-frame={f.id}
                       data-screen={f.page}
-                      className={`frame${sel ? " sel" : ""}`}
+                      className={`frame${sel ? " sel" : ""}${!interact && picked?.frame === f.id ? " pick" : ""}`}
                       style={{ left: f.x, top: f.y, width: f.w, height: f.h }}
                     >
                       <div
@@ -777,7 +841,6 @@ export function Canvas({
                       <div
                         className="frame-body"
                         onPointerDown={!interact && mode !== "comment" ? startMove(f.id, true) : undefined}
-                        onDoubleClick={() => { if (!interact && mode !== "comment") onOpen(f.page); }}
                       >
                         <iframe
                           key={f.page}
@@ -789,6 +852,12 @@ export function Canvas({
                           onLoad={(e) => frameLoaded(e.currentTarget)}
                         />
                       </div>
+                      {!interact && hover?.frame === f.id && !sameBox(hover, picked) && <i className="cv-hover" style={boxStyle(hover, f)} />}
+                      {!interact && picked?.frame === f.id && (
+                        <i className="cv-pick" style={boxStyle(picked, f)}>
+                          <span className="cv-pick-tag">{picked.tag} · {Math.round(picked.w)} × {Math.round(picked.h)}</span>
+                        </i>
+                      )}
                       {sel && (
                         <>
                           <i className="rz e" title="Drag to resize" onPointerDown={startResize(f.id, 1, 0)} />
