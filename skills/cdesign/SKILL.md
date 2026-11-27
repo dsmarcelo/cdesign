@@ -28,20 +28,33 @@ The project is planned as **flows** of **wireframes** first; real **pages** come
   - **Devices.** A wireframe can exist for phone, desktop or both. One unsuffixed file (`cliente.tsx`) is responsive and is shown on both. For separate layouts add siblings `cliente.phone.tsx` and `cliente.desktop.tsx` (point the flow step at either one; the other is found automatically). There are no tablet wireframes. The map draws each screen at real device size (phone 402×874, iPhone 18; desktop 1280×800) and has a Phone/Desktop toggle; a screen missing on the chosen device falls back to the other one, labeled "Phone only"/"Desktop only".
   - **Fill the viewport.** The map already draws the device frame. A wireframe must render the screen itself edge to edge (`min-h-screen w-full`), never its own phone bezel, fixed `w-[390px]` box, rounded device border or gray page padding around it.
 - `design/pages/**`: the real screens. The Pages map groups them by first-level folder; the hub is the file named like the folder (or `index`).
-- `design/flows/<id>.json`: one file per user flow. `id` = lowercase letters, digits, dashes. Arrows exist **only** here (never inferred from page links):
+- `design/flows/<id>.json`: one file per user flow. `id` = lowercase letters, digits, dashes. Define each navigation arrow as a link in this file:
 ```json
-{ "title": "Nova venda", "description": "Do cliente ao pagamento.",
+{ "title": "Nova venda", "description": "Da lista de vendas à confirmação.",
   "steps": [
-    { "id": "cliente", "title": "Buscar cliente", "wireframe": "design/wireframe/vendas/cliente.tsx", "page": "design/pages/vendas/nova-venda.tsx" },
-    { "id": "encontrado", "decision": "Cliente encontrado?" },
-    { "id": "cadastro", "title": "Cadastrar cliente", "wireframe": "design/wireframe/vendas/cadastro.tsx", "note": "optional context" } ],
+    { "id": "lista", "title": "Vendas", "wireframe": "design/wireframe/vendas/lista.tsx" },
+    { "id": "pedido", "title": "Revisar pedido", "wireframe": "design/wireframe/vendas/pedido.tsx" },
+    { "id": "registrou", "decision": "Venda registrada?" },
+    { "id": "confirmacao", "title": "Venda registrada", "wireframe": "design/wireframe/vendas/confirmacao.tsx" },
+    { "id": "cliente", "title": "Selecionar cliente", "wireframe": "design/wireframe/vendas/cliente.tsx" } ],
   "links": [
-    { "from": "cliente", "to": "encontrado" },
-    { "from": "encontrado", "to": "cadastro", "label": "Não" },
-    { "from": "cadastro", "to": "cliente", "label": "Voltar", "dashed": true } ] }
+    { "from": "lista", "to": "pedido", "label": "Nova venda" },
+    { "from": "pedido", "to": "registrou", "label": "Registrar" },
+    { "from": "pedido", "to": "cliente", "label": "Cliente" },
+    { "from": "cliente", "to": "pedido", "label": "Selecionar", "dashed": true },
+    { "from": "registrou", "to": "confirmacao", "label": "Sim" },
+    { "from": "registrou", "to": "pedido", "label": "Não · Tentar novamente", "dashed": true } ] }
 ```
-  A screen step has a `wireframe`, a `page`, or both (paths project-relative, the files must exist). A decision step has only `decision` (the question); label its outgoing links (`Sim`/`Não`…). The map shows every screen live, so the user can zoom out to see the whole flow and use the Select tool (`S`) on elements inside any screen without opening it; `cdesign page` then reports that file and element. Layout is automatic (left to right; the first link out of a step stays on the main row, later ones branch below; loops are drawn dashed). Run `cdesign flows check` after editing a flow.
+  A screen step has a `wireframe`, a `page`, or both. Use existing, project-relative paths. Use `decision` for a question and label its outgoing links with the outcomes.
+
 - `design/sync.json`: written by `cdesign sync`; never edit it by hand. It stores, per page, the content hashes of the pair when it was last confirmed in sync, and explicit `outdated` marks with notes. Commit it with the design.
+
+**Authoring a flow layout**
+
+- List the entry screen first, then the main steps in reading order. For each step, list its primary **forward** link before optional branches. cdesign follows that order to build the main row from left to right.
+- Give each short detour its own screen and link from the step that opens it. If it rejoins the journey, link back to the existing step. With a single main row, cdesign can place one-step detours side by side beneath it.
+- Mark return and retry links with `"dashed": true`. Use short labels that explain the action or outcome at a glance. The viewer routes loop-back links between main steps above the row and return links from detours in the space between rows.
+- Run `cdesign flows check`, then open **Flows** and use **Fit** to review the whole journey on the supported devices. The screens are live previews. Use **Select** (`S`) to inspect an element inside a preview, and `cdesign page` to retrieve the selection.
 
 **Sync rules**
 - A wireframe change does **not** require a page change: wireframes are a prototype until the user decides to build or update the page. Do not touch the page unless asked.

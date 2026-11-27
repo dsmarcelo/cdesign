@@ -61,9 +61,24 @@ async function runBrowserChecks(mapsOnly = false) {
     };
     await cmd("Page.enable");
     if (mapsOnly) {
-      put("design/flows/home.json", JSON.stringify({title: "Home", steps: [{id: "home", title: "Home", page: "design/pages/Home.tsx"}]}));
+      put("design/flows/home.json", JSON.stringify({
+        title: "Home",
+        steps: ["home", "next", "done", "option-one", "option-two"].map((id) => ({id, title: id, page: "design/pages/Home.tsx"})),
+        links: [
+          {from: "home", to: "next"}, {from: "next", to: "done"},
+          {from: "home", to: "option-one"}, {from: "option-one", to: "home"},
+          {from: "home", to: "option-two"}, {from: "option-two", to: "home"},
+        ],
+      }));
       for (const route of ["map:pages", "flow:home"]) {
         await navigate("/#" + route, "#map .thumb");
+        if (route === "flow:home") {
+          const rows = await ev(`Array.from(document.querySelectorAll(".flow-body .screen"), node => node.offsetTop)`);
+          expect(rows.slice(0, 3)).toEqual([rows[0], rows[0], rows[0]]);
+          expect(rows[3]).toBeGreaterThan(rows[0]);
+          expect(rows[4]).toBe(rows[3]);
+          expect(await ev('document.querySelectorAll(".edges > path[stroke-dasharray]").length')).toBe(2);
+        }
         const key = (key: string, code: string, shiftKey = false) => ev(`window.dispatchEvent(new KeyboardEvent("keydown", ${JSON.stringify({key, code, shiftKey, cancelable: true})}))`);
         const camera = () => ev("document.querySelector('.map-position').style.translate");
         const zoom = () => ev("document.querySelector('.map-canvas').style.zoom");
@@ -109,6 +124,7 @@ async function runBrowserChecks(mapsOnly = false) {
         await cmd("Input.dispatchKeyEvent", {type: "keyDown", key: " ", code: "Space"});
         expect(await ev("!!document.querySelector('.map-viewport.hand')")).toBe(true);
         expect(await ev(`document.elementFromPoint(${x}, ${y})?.closest('.map-viewport')?.className ?? document.elementFromPoint(${x}, ${y})?.outerHTML.slice(0, 100)`)).toBe("map-viewport hand");
+        await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x, y});
         await cmd("Input.dispatchMouseEvent", {type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1});
         await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x: x + 45, y: y + 25, buttons: 1});
         await until(async () => (await camera()) !== beforeDrag);

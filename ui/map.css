@@ -31,8 +31,9 @@ body.map :is(#w,#devs,#full-page){display:none!important}
 .group{border:1px solid var(--line);border-radius:24px;padding:calc(24px / var(--z,1) * .5) 48px 48px;background:#0a0a0a}
 .group h3{margin:0 0 calc(40px / var(--z,1));font-size:calc(13px / var(--z,1));font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
 .group-body,.flow-body{position:relative}
-.edges{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;color:#525252}
-.edges path{fill:none;stroke:currentColor;stroke-width:1.5}
+.edges{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;color:#888}
+.edges > path{fill:none;stroke:currentColor;stroke-linejoin:round}
+.edges > path[stroke-dasharray]{opacity:.65}
 
 .node{position:absolute}
 .node.screen{display:block}
@@ -56,10 +57,10 @@ body.picking #map .thumb{cursor:crosshair}
 .badge.warn{color:var(--warn);border-color:#78350f;background:#1c1206}
 
 .node.decision{display:grid;place-items:center;pointer-events:none}
-.node.decision .dia{position:absolute;left:50%;top:50%;width:60%;aspect-ratio:1;transform:translate(-50%,-50%) rotate(45deg);border:calc(1.5px / var(--z,1)) solid #737373;border-radius:8%;background:#0a0a0a}
+.node.decision .dia{position:absolute;left:50%;top:50%;width:70.71%;aspect-ratio:1;transform:translate(-50%,-50%) rotate(45deg);border:calc(1.5px / var(--z,1)) solid #737373;border-radius:8%;background:#0a0a0a}
 .node.decision span{position:relative;max-width:60%;font-size:calc(13px / var(--z,1));font-weight:600;text-align:center;line-height:1.25}
 .elabel{position:absolute;transform:translate(-50%,-50%);padding:.1em .7em;border-radius:999px;background:#000;border:1px solid var(--line);color:#d4d4d4;font-size:calc(12px / var(--z,1));white-space:nowrap;pointer-events:none;z-index:1}
-.edges path{stroke-width:calc(1.5px / var(--z,1))}
+.edges > path{stroke-width:calc(1.5px / var(--z,1))}
 
 #map.panel{padding-right:340px}
 .sync-panel{position:fixed;right:0;bottom:0;width:340px;max-width:100%;overflow:auto;z-index:4;padding:16px;background:#000;border-left:1px solid var(--line)}
@@ -105,3 +106,5 @@ main>#stage{flex:1 1 0;height:auto;min-height:0}
 .board-selected .thumb{outline:2px solid #5da9ff}
 
 .map-position{position:absolute;inset:0 auto auto 0}
+
+.flow-body .cap .open{white-space:normal;overflow-wrap:anywhere}

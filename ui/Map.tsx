@@ -81,51 +81,88 @@ function layoutFlow(flow: Flow, layer: Layer, device: Device) {
   const size: Record<string, [number, number]> = {};
   const D = 220;
   for (const s of flow.steps) {
-    if (s.decision) size[s.id] = [D * 1.6, D];
+    if (s.decision) size[s.id] = [D, D];
     else {
       views[s.id] = stepView(s, layer, device);
       size[s.id] = MAP_DEVICE[views[s.id].device];
     }
   }
-  const layers = Math.max(...ids.map((i) => layerOf[i]), 0) + 1;
-  const GAP = 300, ROW = 260, PAD = 120;
-  const colW = Array.from({ length: layers }, (_, x) =>
+  const GAP = 320, ROW = 260, PAD = 120;
+  const rankCount = Math.max(...ids.map((i) => layerOf[i]), 0) + 1;
+  const colW = Array.from({ length: rankCount }, (_, x) =>
     Math.max(D, ...ids.filter((i) => layerOf[i] === x).map((i) => size[i][0]))
   );
-  const rowH = Math.max(...ids.map((i) => size[i][1]), D);
   const colX = colW.map((_, x) => PAD + colW.slice(0, x).reduce((a, w) => a + w + GAP, 0));
-  const pos: Record<string, { x: number; y: number; w: number; h: number }> = Object.fromEntries(
-    ids.map((i) => {
-      const [w, h] = size[i], x = layerOf[i];
-      return [i, { x: colX[x] + (colW[x] - w) / 2, y: PAD + row[i] * (rowH + ROW) + (rowH - h) / 2, w, h }];
-    })
-  );
-  const maxH = (maxRow + 1) * rowH + Math.max(0, maxRow) * ROW;
-  const width = (colX[layers - 1] ?? PAD) + (colW[layers - 1] ?? D) + PAD;
-  const height = PAD * 2 + maxH + (back.size ? 260 : 0);
-
-  const anchor = (i: string, side: "out" | "in" | "bottom"): [number, number] => {
-    const p = pos[i], cy = p.y + p.h / 2;
-    if (side === "out") return [p.x + p.w, cy];
-    if (side === "in") return [p.x, cy];
-    return [p.x + p.w / 2, p.y + p.h];
-  };
+  const rowH = Math.max(...ids.map((i) => size[i][1]), D);
+  // Put one-step detours side by side when the rest of the flow forms a single main row.
+  const detours = ids.filter((i) => row[i] > 0 && out[i].every((k) => back.has(k)) &&
+    flow.links.some((l, k) => !back.has(k) && l.to === i && row[l.from] === 0));
+  const compact = detours.length > 0 && ids.every((i) => row[i] === 0 || detours.includes(i));
+  const side = new Set(compact ? detours : []);
+  const feedback = flow.links.flatMap((l, k) => back.has(k) && !side.has(l.from) && !side.has(l.to) ? [k] : []);
+  const branch = flow.links.flatMap((l, k) => side.has(l.from) || side.has(l.to) ? [k] : []);
+  const LANE = device === "desktop" ? 104 : 60;
+  const captionClearance = device === "desktop" ? 520 : 320;
+  const top = PAD + (feedback.length ? captionClearance + (feedback.length - 1) * LANE : 0);
+  const branchTop = top + rowH + captionClearance + branch.length * LANE;
+  const pos = Object.fromEntries(ids.map((i) => {
+    const [w, h] = size[i], x = layerOf[i];
+    return [i, { x: colX[x] + (colW[x] - w) / 2, y: top + row[i] * (rowH + ROW) + (rowH - h) / 2, w, h }];
+  }));
+  const mainWidth = (colX.at(-1) ?? PAD) + (colW.at(-1) ?? D) - PAD;
+  let branchWidth = 0;
+  if (compact) {
+    const parentRank = (i: string) => layerOf[flow.links.find((l, k) => !back.has(k) && l.to === i)!.from];
+    detours.sort((a, b) => parentRank(a) - parentRank(b));
+    branchWidth = detours.reduce((sum, i) => sum + size[i][0], 0) + (detours.length - 1) * GAP;
+    let x = PAD + Math.max(0, (mainWidth - branchWidth) / 2);
+    for (const i of detours) {
+      pos[i].x = x;
+      pos[i].y = branchTop + (rowH - pos[i].h) / 2;
+      x += pos[i].w + GAP;
+    }
+  }
+  const width = Math.max(mainWidth, branchWidth) + 2 * PAD;
+  const height = PAD + (compact ? branchTop + rowH : top + (maxRow + 1) * rowH + Math.max(0, maxRow) * ROW);
 
   const edges = flow.links.map((l, k) => {
-    if (back.has(k) || l.from === l.to) {
-      const [sx, sy] = anchor(l.from, "in"), [tx, ty] = anchor(l.to, "bottom"), dx = Math.max(160, GAP / 2);
-      const c1: [number, number] = [sx - dx, sy], c2: [number, number] = [tx, Math.max(ty + 200, sy)];
+    const from = pos[l.from], to = pos[l.to];
+    const branchLane = branch.indexOf(k);
+    const feedbackLane = feedback.indexOf(k);
+    if (branchLane !== -1 || feedbackLane !== -1) {
+      const below = branchLane !== -1;
+      const lane = below ? top + rowH + 44 + branchLane * LANE : top - captionClearance - feedbackLane * LANE;
+      const sidePort = (id: string, p: typeof from, source: boolean) => {
+        const sign = source ? 1 : -1;
+        const x = source ? p.x + p.w : p.x;
+        const rank = layerOf[id];
+        const columnEdge = colX[rank] + (source ? colW[rank] : 0);
+        const offset = 44 + 56 * feedbackLane / Math.max(1, feedback.length);
+        return { x, y: p.y + p.h * (below ? 0.22 : 0.26), stem: below ? x + sign * 50 : columnEdge + sign * offset };
+      };
+      const bottomPort = (id: string, p: typeof from) => {
+        const links = branch.filter((index) => {
+          const link = flow.links[index];
+          return link.from === id || link.to === id;
+        });
+        const x = p.x + p.w * (links.indexOf(k) + 1) / (links.length + 1);
+        return { x, y: p.y + p.h, stem: x };
+      };
+      const start = below && !side.has(l.from) ? bottomPort(l.from, from) : sidePort(l.from, from, true);
+      const end = below && !side.has(l.to) ? bottomPort(l.to, to) : sidePort(l.to, to, false);
+      const sx = start.stem, tx = end.stem;
       return {
-        d: `M${sx} ${sy} C${c1[0]} ${c1[1]},${c2[0]} ${c2[1]},${tx} ${ty + 6}`,
-        dashed: true,
+        d: `M${start.x} ${start.y} H${sx} V${lane} H${tx} V${end.y} H${end.x}`,
+        dashed: back.has(k) || !!l.dashed,
         label: l.label,
-        mid: [(sx + 3 * c1[0] + 3 * c2[0] + tx) / 8, (sy + 3 * c1[1] + 3 * c2[1] + ty) / 8] as [number, number],
+        mid: [(sx + tx) / 2, lane] as [number, number],
       };
     }
-    const [sx, sy] = anchor(l.from, "out"), [tx, ty] = anchor(l.to, "in");
+    const sx = from.x + from.w, sy = from.y + from.h / 2;
+    const tx = to.x, ty = to.y + to.h / 2;
     const c = Math.max(80, (tx - sx) / 2);
     return {
-      d: `M${sx} ${sy} C${sx + c} ${sy},${tx - c} ${ty},${tx - 2} ${ty}`,
+      d: `M${sx} ${sy} C${sx + c} ${sy},${tx - c} ${ty},${tx} ${ty}`,
       dashed: !!l.dashed,
       label: l.label,
       mid: [(sx + tx) / 2, (sy + ty) / 2] as [number, number],

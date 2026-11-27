@@ -85,7 +85,7 @@ Scroll vertically, pinch on a trackpad, or press `+` / `−` to zoom. Press `Shi
 
 
 - **Pages** groups `design/pages/` by first-level folder, with the file named like the folder (or `index`) as the hub, and live thumbnails.
-- **Flows** draws each `design/flows/<id>.json` left to right: screens, decision diamonds and labeled arrows (`Sim`/`Não`), with loops dashed. A **Wireframes | Screens** toggle shows each step's wireframe (`design/wireframe/…`) or its real page.
+- **Flows** draws each `design/flows/<id>.json` left to right: screens, decision diamonds and labeled arrows (`Sim`/`Não`). Short detours can sit side by side below the main sequence, with dashed return paths in separate lanes. A **Wireframes | Screens** toggle shows each step's wireframe (`design/wireframe/…`) or its real page.
 - Every screen is a live preview at real device size (phone 402×874, desktop 1280×800); zoom with Ctrl/⌘ + wheel or the −/+/Fit buttons and drag the background to pan. A **Phone | Desktop** toggle picks the device. Wireframes are responsive by default; `name.phone.tsx` / `name.desktop.tsx` siblings give separate layouts per device. Wireframes should fill the viewport and not draw their own device frame.
 - The Select tool (`S`) works inside map screens: the picked element is what `cdesign page` reports to the agent.
 - Clicking a card opens it in the normal viewer (all sizes, select, comment, chat). A bar above it shows the flow, the next screens, a Wireframe/Screen switch for paired steps and the sync state.
