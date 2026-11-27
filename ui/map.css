@@ -18,6 +18,7 @@ body.map :is(#w,#devs,#full-page,#sel,#mode){display:none!important}
 .map-head .chips button.bad{border-color:var(--bad)}
 .map-head .sync-btn{height:26px;padding:0 10px;font-size:12px}
 .map-head .sync-btn.warn{border-color:var(--warn);color:var(--warn)}
+.map-head .step-jump{height:26px;font-size:12px;max-width:160px;padding:0 6px;border-radius:6px}
 .map-head .zoom{margin-left:auto}
 .map-head .zoom button{height:26px;min-width:28px;padding:0 6px;font-size:12px}
 .map-canvas{padding:8px 0 48px;width:max-content;min-width:100%}

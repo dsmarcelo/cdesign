@@ -96,8 +96,8 @@ function layoutFlow(flow: Flow, layer: Layer, device: Device) {
     else lanes.push(k);
   });
 
-  const GAP = device === "desktop" ? 480 : 420;
-  const VGAP = device === "desktop" ? 600 : 560;
+  const GAP = device === "desktop" ? 400 : 340;
+  const VGAP = device === "desktop" ? 420 : 360;
   const PAD = 120;
   const LANE = device === "desktop" ? 104 : 60;
   const captionClearance = device === "desktop" ? 520 : 320;
@@ -191,6 +191,24 @@ function layoutFlow(flow: Flow, layer: Layer, device: Device) {
     });
   });
 
+  // Nudge overlapping edge labels apart vertically so branch labels remain legible.
+  const placedLabels: { x: number; y: number; w: number; h: number }[] = [];
+  for (const e of edges.filter((edge) => edge.label).sort((a, b) => a.mid[1] - b.mid[1])) {
+    const w = Math.max(80, e.label!.length * 10 + 36);
+    const h = 44;
+    const mx = e.mid[0];
+    let my = e.mid[1];
+    for (let iter = 0; iter < 12; iter++) {
+      const hit = placedLabels.find(
+        (p) => Math.abs(mx - p.x) < (w + p.w) / 2 && Math.abs(my - p.y) < (h + p.h) / 2
+      );
+      if (!hit) break;
+      my = hit.y + (h + hit.h) / 2 + 8;
+    }
+    e.mid = [mx, my];
+    placedLabels.push({ x: mx, y: my, w, h });
+  }
+
   return { width, height, pos, views, edges, returns };
 }
 
@@ -254,7 +272,7 @@ function ScreenCard({
           className="open"
           title={file ? "Open " + file : title}
           disabled={!file}
-          onClick={() => file && onOpen(file)}
+          onClick={() => file && mode !== "comment" && onOpen(file)}
         >
           {title}
         </button>
@@ -352,6 +370,8 @@ function BoardComment({ element, onClose }: { element: BoardElement; onClose: ()
   );
 }
 
+const ZOOM_STEPS = [0.05, 0.1, 0.15, 0.25, 0.35, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
+
 export function ProjectMap({
   visible,
   route,
@@ -362,6 +382,7 @@ export function ProjectMap({
   onOpen,
   onSyncAction,
   onSyncOpen,
+  onToast,
   onFrameLoad,
   onNavigateHash,
 }: {
@@ -374,6 +395,7 @@ export function ProjectMap({
   onOpen: (file: string) => void;
   onSyncAction: (action: "done" | "outdated" | "clear", file: string, note?: string) => void;
   onSyncOpen?: (open: boolean) => void;
+  onToast?: (msg: string) => void;
   onFrameLoad: (f: HTMLIFrameElement) => void;
   onNavigateHash: (h: string) => void;
 }) {
@@ -451,6 +473,60 @@ export function ProjectMap({
     applyZoom(next);
     panTo(cx + (from.x - cx) * ratio + dx, cy + (from.y - cy) * ratio + dy);
   };
+
+  const zoomCentered = useCallback((nextZoom: number) => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const vr = viewport.getBoundingClientRect();
+    const selectedVisible = selection && viewport.contains(selection);
+    let anchorX = vr.width / 2;
+    let anchorY = vr.height / 2;
+    if (selectedVisible && selection) {
+      const sr = selection.getBoundingClientRect();
+      if (sr.right > vr.left && sr.left < vr.right && sr.bottom > vr.top && sr.top < vr.bottom) {
+        anchorX = sr.left + sr.width / 2 - vr.left;
+        anchorY = sr.top + sr.height / 2 - vr.top;
+      }
+    }
+    setZoomAt(nextZoom, anchorX, anchorY);
+
+    const nodes = [...(flowBodyRef.current?.querySelectorAll<HTMLElement>(".node") ?? [])];
+    if (!nodes.length) return;
+    const inView = nodes.some((n) => {
+      const r = n.getBoundingClientRect();
+      return r.right > vr.left + 20 && r.left < vr.right - 20 && r.bottom > vr.top + 20 && r.top < vr.bottom - 20;
+    });
+    if (!inView || (nextZoom === 1 && !selectedVisible)) {
+      const cx = vr.left + vr.width / 2, cy = vr.top + vr.height / 2;
+      const atCenter = nodes.some((n) => {
+        const r = n.getBoundingClientRect();
+        return cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
+      });
+      if (!inView || !atCenter) {
+        let target = nodes[0];
+        let best = Infinity;
+        for (const n of nodes) {
+          const r = n.getBoundingClientRect();
+          const d = Math.hypot(r.left + r.width / 2 - cx, r.top + r.height / 2 - cy);
+          if (d < best) { best = d; target = n; }
+        }
+        const tr = target.getBoundingClientRect();
+        panTo(
+          position.current.x + (cx - (tr.left + tr.width / 2)),
+          position.current.y + (cy - (tr.top + tr.height / 2))
+        );
+      }
+    }
+  }, [selection]);
+
+  const stepZoom = useCallback((dir: 1 | -1) => {
+    const cur = zoomRef.current;
+    const eps = 0.005;
+    const next = dir > 0
+      ? ZOOM_STEPS.find((z) => z > cur + eps) ?? cur * 1.25
+      : [...ZOOM_STEPS].reverse().find((z) => z < cur - eps) ?? cur / 1.25;
+    zoomCentered(next);
+  }, [zoomCentered]);
 
   const fit = (target: HTMLElement | undefined = flowBodyRef.current ?? undefined, save = true, maxZoom = target === selection ? 16 : 1) => {
     const viewport = viewportRef.current, canvas = canvasRef.current;
@@ -652,9 +728,9 @@ export function ProjectMap({
       else if (!modified && e.shiftKey && (e.code === "Digit1" || key === "!")) fit();
       else if (!modified && e.shiftKey && (e.code === "Digit2" || key === "@")) {
         if (selection && viewport.contains(selection)) fit(selection);
-      } else if (!modified && (key === "0" || (e.shiftKey && e.code === "Digit0"))) setZoomAt(1);
-      else if (key === "+" || key === "=") setZoomAt(zoomRef.current * 1.25);
-      else if (key === "-" || key === "_") setZoomAt(zoomRef.current / 1.25);
+      } else if (!modified && (key === "0" || (e.shiftKey && e.code === "Digit0"))) zoomCentered(1);
+      else if (key === "+" || key === "=") stepZoom(1);
+      else if (key === "-" || key === "_") stepZoom(-1);
       else if (!modified && ["arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key)) {
         const step = e.shiftKey ? 100 : 20;
         panTo(position.current.x + (key === "arrowleft" ? step : key === "arrowright" ? -step : 0),
@@ -681,7 +757,7 @@ export function ProjectMap({
       window.removeEventListener("keyup", keyUp);
       window.removeEventListener("blur", releaseSpace);
     };
-  }, [visible, route, cameraKey, selection, comment, closeComment, clearPick, chooseTool]);
+  }, [visible, route, cameraKey, selection, comment, closeComment, clearPick, chooseTool, stepZoom, zoomCentered]);
 
   useEffect(() => {
     selection?.classList.add("board-selected");
@@ -697,16 +773,18 @@ export function ProjectMap({
     const target = event.target as Element;
     const card = target.closest<HTMLElement>("[data-screen]");
     setSelection(card);
-    if (target.closest("button") || (mode === "comment" && comment)) return;
+    if (mode === "comment" && comment) return;
+    if (target.closest("button") && !(mode === "comment" && card)) return;
     viewportRef.current?.focus({ preventScroll: true });
 
-    const frame = target.closest(".thumb")?.querySelector("iframe");
+    const frame = (card ?? target.closest(".thumb"))?.querySelector("iframe");
     const preview = frame?.contentDocument;
     if (preview && frame && event.detail > 0) {
       const bounds = frame.getBoundingClientRect();
       const x = (event.clientX - bounds.left) * frame.clientWidth / bounds.width;
       const y = (event.clientY - bounds.top) * frame.clientHeight / bounds.height;
-      const element = preview.elementFromPoint(x, y)?.closest("[data-cd-id]");
+      const element = preview.elementFromPoint(x, y)?.closest("[data-cd-id]")
+        ?? (mode === "comment" ? preview.querySelector("[data-cd-id]") : null);
       if (element) {
         let found = false;
         element.dispatchEvent(new CustomEvent("cd-board-pick", {
@@ -723,6 +801,25 @@ export function ProjectMap({
         }));
         if (found) return;
       }
+    }
+    if (mode === "comment") {
+      if (card?.dataset.screen) {
+        const page = card.dataset.screen;
+        const el: BoardElement = {
+          page,
+          file: splitState(page)[0],
+          cdId: "1:1",
+          uses: [],
+          selector: "body",
+          tag: "screen",
+          text: card.querySelector(".open")?.textContent || page,
+          size: "",
+        };
+        onElementSelect(el);
+        setComment(el);
+        return;
+      }
+      onToast?.("Click a screen to add a comment");
     }
     clearPick();
   };
@@ -828,19 +925,46 @@ export function ProjectMap({
               ))}
             </div>
 
+            {activeFlow && activeFlow.steps.some((s) => !s.decision) && (
+              <select
+                className="step-jump"
+                aria-label="Jump to step"
+                title="Jump to step"
+                value=""
+                onChange={(e) => {
+                  const id = e.target.value;
+                  if (!id) return;
+                  if (matchMedia("(max-width:700px)").matches) {
+                    const st = activeFlow.steps.find((s) => s.id === id);
+                    const v = st ? stepView(st, layer, device) : null;
+                    if (v?.file) onOpen(v.file);
+                    else goToStep(id);
+                  } else {
+                    goToStep(id);
+                  }
+                }}
+              >
+                <option value="">Steps…</option>
+                {activeFlow.steps.filter((s) => !s.decision).map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.title ?? s.id}
+                  </option>
+                ))}
+              </select>
+            )}
             <div className="seg" role="group" aria-label="Canvas tools">
               <button type="button" aria-pressed={!hand && mode !== "comment"} title="Select (V or S)" onClick={() => chooseTool("select")}>Select</button>
               <button type="button" aria-pressed={!hand && mode === "comment"} title="Comment (C)" onClick={() => chooseTool("comment")}>Comment</button>
               <button type="button" aria-pressed={hand} title="Hand tool (H) · Select (V)" onClick={() => setHand(!hand)}>Hand</button>
             </div>
             <div className="zoom grp" role="group" aria-label="Canvas zoom">
-              <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => setZoomAt(zoomRef.current / 1.25)}>
+              <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => stepZoom(-1)}>
                 −
               </button>
-              <button type="button" aria-label="Actual size" title="Actual size" onClick={() => setZoomAt(1)}>
+              <button type="button" aria-label="Actual size" title="Actual size" onClick={() => zoomCentered(1)}>
                 {zoomPct}%
               </button>
-              <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => setZoomAt(zoomRef.current * 1.25)}>
+              <button type="button" aria-label="Zoom in" title="Zoom in" onClick={() => stepZoom(1)}>
                 +
               </button>
               <button

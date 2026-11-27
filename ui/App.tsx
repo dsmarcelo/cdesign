@@ -208,6 +208,7 @@ export function App() {
 
   const leftHidden = mob ? mobHideLeft : deskHideLeft;
   const inMap = mapRoute !== null;
+  const isWireframe = !inMap && Boolean(cur && cur.startsWith("design/wireframe/"));
 
   const toast = useCallback((t: string) => {
     setToastText(t);
@@ -1160,10 +1161,11 @@ export function App() {
             </button>
             <button
               id="theme"
-              className={`ic${theme === "dark" ? " on" : ""}`}
+              className={`ic${theme === "dark" && !isWireframe ? " on" : ""}`}
+              disabled={isWireframe}
               aria-label="Dark preview"
-              aria-pressed={theme === "dark"}
-              title="Toggle light/dark preview"
+              aria-pressed={theme === "dark" && !isWireframe}
+              title={isWireframe ? "Wireframes always render in light mode" : "Toggle light/dark preview"}
               onClick={() => {
                 const next = theme === "dark" ? "light" : "dark";
                 lsSet("cd-theme", next);
@@ -1279,6 +1281,7 @@ export function App() {
         onSyncOpen={(open) => {
           if (open && !mob && !deskHideLeft && innerWidth < 1400) setDeskHideLeft(true);
         }}
+        onToast={toast}
         onFrameLoad={onFrameLoad}
         onNavigateHash={(h) => {
           location.hash = h;

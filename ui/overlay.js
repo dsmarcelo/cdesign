@@ -96,6 +96,9 @@
   // The parent owns pointer gestures on the canvas, including over this iframe.
   const onBoard = !!window.frameElement?.closest("#map");
   if (onBoard) {
+    const boardCss = document.createElement("style");
+    boardCss.textContent = "html,body{overflow:hidden!important;scrollbar-width:none!important}*{scrollbar-width:none!important}*::-webkit-scrollbar{display:none!important}";
+    document.head.appendChild(boardCss);
     document.addEventListener("cd-board-pick", (e) => {
       const el = target(e);
       if (!el) return;
