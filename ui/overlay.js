@@ -93,11 +93,11 @@
     post(selectionOf(el));
     inspect(el);
   };
-  // The parent owns pointer gestures on the canvas, including over this iframe.
+  // In Design the parent owns pointer gestures on the canvas, including over this iframe; in Preview (html.__cd-live) the page scrolls itself.
   const onBoard = !!window.frameElement?.closest("#map");
   if (onBoard) {
     const boardCss = document.createElement("style");
-    boardCss.textContent = "html,body{overflow:hidden!important;scrollbar-width:none!important}*{scrollbar-width:none!important}*::-webkit-scrollbar{display:none!important}";
+    boardCss.textContent = "html:not(.__cd-live),html:not(.__cd-live) body{overflow:hidden!important}*{scrollbar-width:none!important}*::-webkit-scrollbar{display:none!important}";
     document.head.appendChild(boardCss);
     document.addEventListener("cd-board-pick", (e) => {
       const el = target(e);

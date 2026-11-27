@@ -12,7 +12,7 @@ import { publishWebsite, publishingStatus, shareScreen, listShares, deleteShare 
 import { colorTokens, sizeTokens } from "./tokens";
 import { applyEdit, editInfo } from "./edit";
 import { contextChips } from "./chat-context";
-import { listFlows, syncItems, markOutdated, markSynced, clearOutdated } from "./flows";
+import { listFlows, createFlow, updateFlow, deleteFlow } from "./flows";
 import { ProjectChat, ChatError, MAX_BODY, capabilitiesOf, commandsOf } from "./chat";
 import { Updater, runtimeFingerprint } from "./updater";
 import { PROVIDERS } from "./chat-registry";
@@ -92,7 +92,7 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     if (old) return old;
     const p: Project = { id: projectId(root), root, clients: new Set(), tabOf: new Map(), tabs: new Map(), on: false, watchers: [], undo: [] };
     ensureDataDir(root);
-    let ct: Timer | undefined, t: Timer | undefined;
+    let ct: Timer | undefined, t: Timer | undefined, ft: Timer | undefined;
     const quiet = (w: FSWatcher) => (w.on("error", () => {}), w);
     p.watchers.push(quiet(watch(dataDir(root), (_e, f) => {
       if (f === "agent.json") return presence(p);
@@ -102,6 +102,12 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     })));
     p.watchers.push(quiet(watch(root, { recursive: true }, (_e, f) => {
       if (!f || f.split(sep).some((s) => SKIP.has(s))) return;
+      /** Canvas layout changes (a frame dragged) only refresh the tabs, so the live previews keep their state. */
+      if (f.split(sep).join("/").startsWith("design/flows/") && f.endsWith(".json")) {
+        clearTimeout(ft);
+        ft = setTimeout(() => push(p, "flows"), 50);
+        return;
+      }
       invalidateReact(root);
       clearTimeout(t);
       t = setTimeout(() => push(p, "reload"), 80);
@@ -509,19 +515,15 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
     }
     if (p === "/__cd/files") return json(listPages(root));
     if (p === "/__cd/config") return json(readConfig(root));
-    if (p === "/__cd/flows" && req.method === "GET") {
-      const flows = listFlows(root);
-      return json({ flows, sync: syncItems(root, flows) });
-    }
-    if (p === "/__cd/sync" && req.method === "POST") {
-      const b = (await req.json()) as { action?: string; file?: unknown; note?: unknown };
-      if (typeof b.file !== "string") return json({ error: "file required" }, 400);
+    if (p === "/__cd/flows" && req.method === "GET") return json({ flows: listFlows(root) });
+    if (p.startsWith("/__cd/flows") && req.method === "POST") {
+      const b = (await req.json().catch(() => ({}))) as { title?: unknown; frames?: unknown };
+      const m = p.match(/^\/__cd\/flows(?:\/([a-z0-9-]+)(\/delete)?)?$/);
+      if (!m) return json({ error: "not found" }, 404);
       try {
-        if (b.action === "outdated") markOutdated(root, b.file, typeof b.note === "string" ? b.note : undefined);
-        else if (b.action === "done") markSynced(root, b.file);
-        else if (b.action === "clear") clearOutdated(root, b.file);
-        else return json({ error: "action must be outdated, done or clear" }, 400);
-        return json({ ok: true, sync: syncItems(root) });
+        if (!m[1]) return json({ flow: createFlow(root, typeof b.title === "string" ? b.title : "Untitled") });
+        if (m[2]) { deleteFlow(root, m[1]); return json({ ok: true }); }
+        return json({ flow: updateFlow(root, m[1], b) });
       } catch (e) { return json({ error: (e as Error).message }, 400); }
     }
     if (p === "/__cd/style-options") {

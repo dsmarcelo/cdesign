@@ -29,20 +29,13 @@ test.skipIf(!chrome)("browser: Issue #11 mobile, desktop layout, canvas zoom/com
   const init = Bun.spawnSync([process.execPath, cli, "init"], { cwd: root });
   expect(init.exitCode).toBe(0);
 
-  put("design/wireframe/Home.tsx", "export default function Home(){return <main><h1>Home wire</h1></main>}");
   put("design/pages/Home.tsx", 'import {useEffect, useState} from "react"; export default function Home(){const [h, setH] = useState(location.hash); useEffect(()=>{const f=()=>setH(location.hash); addEventListener("hashchange",f); return ()=>removeEventListener("hashchange",f);},[]); return <main style={{minHeight:"120vh"}}><button id="cta">Action {h}</button><nav style={{position:"fixed",bottom:0,left:0,right:0,height:48}}>Bottom Nav</nav></main>}');
   put("design/pages/Second.tsx", "export default function Second(){return <main><p>Second screen</p></main>}");
   put("design/flows/main.json", JSON.stringify({
     title: "Main Flow",
-    steps: [
-      { id: "home", title: "Home Screen With A Very Long Title For Truncation", wireframe: "design/wireframe/Home.tsx", page: "design/pages/Home.tsx" },
-      { id: "check", decision: "Ready to continue?" },
-      { id: "second", title: "Second Step With A Very Long Title", page: "design/pages/Second.tsx" },
-    ],
-    links: [
-      { from: "home", to: "check", label: "Proceed" },
-      { from: "check", to: "second", label: "Yes" },
-      { from: "check", to: "home", label: "No" },
+    frames: [
+      { id: "home", title: "Home Screen With A Very Long Title For Truncation", page: "design/pages/Home.tsx", x: 0, y: 0, w: 402, h: 874 },
+      { id: "second", title: "Second Step With A Very Long Title", page: "design/pages/Second.tsx", x: 482, y: 0, w: 402, h: 874 },
     ],
   }));
 
@@ -125,52 +118,50 @@ test.skipIf(!chrome)("browser: Issue #11 mobile, desktop layout, canvas zoom/com
     await cmd("Runtime.enable");
     await cmd("Log.enable");
 
-    // 1. Desktop (998x800) checks on #map:flows
+    // 1. Desktop (998x800) checks on the canvas
     await cmd("Emulation.setDeviceMetricsOverride", { width: 998, height: 800, deviceScaleFactor: 1, mobile: false });
-    await cmd("Page.navigate", { url: `${base}/#map:flows` });
-    await until(() => ev("document.readyState==='complete' && !!document.querySelector('.flow-body .screen')"));
-
-    expect(await ev("document.querySelector('#views [data-v=preview]')?.textContent")).toBe("Preview");
-
-    // Toggle Sync and verify no ResizeObserver loop console error
-    await ev("document.querySelector('.map-head .sync-btn').click()");
-    await until(() => ev("!!document.querySelector('.sync-panel')"));
-    await Bun.sleep(100);
+    await cmd("Page.navigate", { url: `${base}/#flow:main` });
+    await until(() => ev("document.readyState==='complete' && document.querySelectorAll('.cv-canvas .frame').length === 2"));
+    expect(await ev("document.querySelector('.tabs .tab.on')?.textContent")).toContain("Main Flow");
     expect(consoleErrors.some((e) => /ResizeObserver/i.test(e))).toBe(false);
-    await ev("document.querySelector('.sync-panel .close').click()");
 
-    // Zoom in steps smoothly around content instead of jumping to 195% into empty space
-    const initialZoom = Number(await ev("parseFloat(document.querySelector('.map-canvas').style.zoom)"));
+    // Zoom in steps smoothly around content instead of jumping into empty space
+    await ev("document.querySelector('button[aria-label=\"Fit to window\"]').click()");
+    const zoom = () => ev("parseFloat(document.querySelector('.cv-canvas').style.zoom)");
+    const initialZoom = Number(await zoom());
     await ev("document.querySelector('button[aria-label=\"Zoom in\"]').click()");
-    const afterOne = Number(await ev("parseFloat(document.querySelector('.map-canvas').style.zoom)"));
+    const afterOne = Number(await zoom());
     expect(afterOne).toBeGreaterThan(initialZoom);
-    expect(afterOne).toBeLessThanOrEqual(1);
+    expect(afterOne).toBeLessThan(initialZoom * 1.6);
     await ev("document.querySelector('button[aria-label=\"Zoom in\"]').click()");
-    await ev("document.querySelector('button[aria-label=\"Zoom in\"]').click()");
-    const afterThree = Number(await ev("parseFloat(document.querySelector('.map-canvas').style.zoom)"));
-    expect(afterThree).toBeLessThan(1.5);
     expect(await ev(`(() => {
-      const vr = document.querySelector('.map-viewport').getBoundingClientRect();
-      return [...document.querySelectorAll('.flow-body .node')].some(n => {
+      const vr = document.querySelector('.cv-viewport').getBoundingClientRect();
+      return [...document.querySelectorAll('.cv-canvas .frame')].some(n => {
         const r = n.getBoundingClientRect();
         return r.right > vr.left && r.left < vr.right && r.bottom > vr.top && r.top < vr.bottom;
       });
     })()`)).toBe(true);
+    // The canvas toolbar stays inside the viewport
+    expect(await ev("(() => { const r = document.querySelector('.cv-toolbar').getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })()")).toBe(true);
 
-    // Canvas Comment tool on a node title opens .board-comment instead of navigating
+    // Comment tool on an element inside a frame opens .board-comment instead of navigating
     await ev("document.querySelector('button[aria-label=\"Fit to window\"]').click()");
-    await ev("document.querySelector('.map-head button[title=\"Comment (C)\"]').click()");
-    const titlePos = await ev(`(() => {
-      const r = document.querySelector('.flow-body .screen .cap .open').getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    await until(() => ev("!!document.querySelector('.frame[data-frame=home] iframe')?.contentDocument?.querySelector('#cta')"));
+    await ev("document.querySelector('.cv-toolbar button[aria-label=Comment]').click()");
+    const ctaPos = await ev(`(() => {
+      const f = document.querySelector('.frame[data-frame=home] iframe');
+      const fr = f.getBoundingClientRect(), z = fr.width / f.offsetWidth;
+      const r = f.contentDocument.querySelector('#cta').getBoundingClientRect();
+      return { x: fr.left + (r.left + r.width / 2) * z, y: fr.top + (r.top + r.height / 2) * z };
     })()`);
-    await clickAt(titlePos.x, titlePos.y);
+    await clickAt(ctaPos.x, ctaPos.y);
     await until(() => ev("!!document.querySelector('.board-comment textarea')"));
-    expect(await ev("location.hash")).toBe("#map:flows");
+    expect(await ev("location.hash")).toBe("#flow:main");
     await ev("document.querySelector('.board-comment button[type=button]').click()");
+    await ev("document.querySelector('.cv-toolbar button[aria-label=Select]').click()");
 
-    // Switch to Preview detail view (Home.tsx)
-    await ev("document.querySelector('#views [data-v=preview]').click()");
+    // Open the Home frame as a full page
+    await ev("document.querySelector('.frame[data-frame=home] .frame-acts button[aria-label^=Open]').click()");
     await until(() => ev("!!document.querySelector('#fr')?.contentDocument?.querySelector('#cta')"));
 
     // Phone detail view at 998px: no topbar overflow & single-line #dev
@@ -247,21 +238,22 @@ test.skipIf(!chrome)("browser: Issue #11 mobile, desktop layout, canvas zoom/com
     expect(await ev("document.querySelector('#d1').getBoundingClientRect().width")).toBeGreaterThanOrEqual(380);
     expect(await ev("document.querySelector('#fr').getBoundingClientRect().width")).toBeGreaterThanOrEqual(380);
 
-    // Real pointer click on #pl opens drawer & #bar, second click closes
+    // Real pointer click on #pl opens the drawer, second click closes it
     const plPos = await ev(`(() => {
       const r = document.querySelector('#pl').getBoundingClientRect();
       return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
     })()`);
     await clickAt(plPos.x, plPos.y);
-    await until(() => ev("!document.body.classList.contains('hl') && document.body.classList.contains('bar')"));
+    await until(() => ev("!document.body.classList.contains('hl')"));
     expect(await ev("getComputedStyle(document.querySelector('aside.l')).display")).not.toBe("none");
     await clickAt(plPos.x, plPos.y);
-    await until(() => ev("document.body.classList.contains('hl') && !document.body.classList.contains('bar')"));
+    await until(() => ev("document.body.classList.contains('hl')"));
 
-    // Compact mobile .map-head on #map:flows
-    await ev("document.querySelector('#mob-back').click()");
-    await until(() => ev("document.body.classList.contains('map') && !!document.querySelector('.map-head')"));
-    expect(await ev("document.querySelector('.map-head').getBoundingClientRect().height")).toBeLessThanOrEqual(60);
+    // Back to the canvas: compact mobile head and toolbar
+    await ev("document.querySelector('#back').click()");
+    await until(() => ev("!document.querySelector('#map').hidden && !!document.querySelector('.cv-head')"));
+    expect(await ev("document.querySelector('.cv-head').getBoundingClientRect().height")).toBeLessThanOrEqual(60);
+    expect(await ev("document.querySelector('.cv-toolbar').getBoundingClientRect().right <= innerWidth + 1")).toBe(true);
 
     // Full page heartbeat uses keepalive
     const fullHtml = await (await fetch(`${base}/p/design/pages/Home.tsx?full=1`)).text();

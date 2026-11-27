@@ -66,8 +66,7 @@ In the viewer, press `C`, click an element, and save your comment with **Add** o
 | `mcp` | MCP server (stdio) that teaches agents how to use cdesign |
 | `resolve <id...>` | Mark comments done |
 | `comments [--all]` | List pending comments |
-| `flows [list\|show <id>\|check\|new <id> [--title t]]` | User flows in `design/flows/<id>.json`: screens (wireframe + page pairs) and decisions joined by labeled links, drawn as the viewer's flow map |
-| `sync [status\|outdated <file> [--note t]\|done <file>\|clear <file>] [--json]` | What needs syncing between wireframes and pages: marked outdated, changed since last sync, never synced, wireframes without a page. Marks live in `design/sync.json` |
+| `flows [list\|show <id>\|check\|new <id> [--title t]\|add <id> <page[#state]> [--title t]\|rm <id> <frame\|page>]` | Canvas tabs in `design/flows/<id>.json`: each is a set of page frames with a position and device size |
 | `init [dir]` | Scaffold the `design/` structure |
 | `tokens <sub>` | Search, show, set, remove, build and export tokens |
 | `check` | Verify tokens and components are defined and documented |
@@ -75,22 +74,17 @@ In the viewer, press `C`, click an element, and save your comment with **Add** o
 | `context [list\|find <words>\|get <id>\|for <path>] [--offset n]` | Discover guidance, read a topic/contract, or map direct dependencies. `--full` opts into legacy inventories |
 | `serve [dir] [--port n]` | Run the viewer in the foreground (it normally starts by itself) |
 
-## Flows, pages and wireframes
+## Canvas and flows
 
-Open **Flows** in the viewer toolbar to work on the shared canvas. Use **Wireframes** for the low-fidelity previews and **Screens & Components** for the corresponding pages. Each flow shows the pages and component states referenced by its steps. Add a dialog, filter overlay, or other component state as a step by pointing its `page` field at the preview. Browse the project-wide inventory in **Files**.
+The viewer opens on a free canvas. Each tab in the top bar is a flow (`design/flows/<id>.json`); `+` adds a tab, double-click renames it. A tab's pages are live frames you place anywhere: drag a frame by its label (or its body in Design mode), and drag the handles on the selected frame to resize it. The size menu in the bottom toolbar (Phone, Tablet, Laptop, Desktop…) resizes every frame in the tab at once. **Add page** puts another page or `page.tsx#state` in the tab. Positions and sizes are saved to the flow file.
 
-The canvas opens fitted to the window on first visit and remembers your zoom and position per flow, layer and device across reloads. Hold `Space` and drag, middle-drag, or press `H` for the Hand tool and `V` to return to selection. Two-finger trackpad scrolling or the mouse wheel pans in any direction, as in Figma. Hold `Shift` while scrolling to pan horizontally. On a touchscreen, drag with one finger or pinch and pan with two.
+- **Design** (`D`): click an element to select it for the agent, or use **Comment** (`C`) to pick an element and add a draft. Drafts use the same comment workflow as full pages.
+- **Preview** (`P`): every frame is interactive: scroll, click and type as in the real app.
+- Open a frame (the expand button on its label, `Enter`, or double-click) to show the page by itself with device sizes, split view and the style inspector. `Esc`, ← or `M` returns to the canvas.
 
-Pinch on a trackpad, or hold `Ctrl` / `⌘` and scroll, to zoom around the pointer. `+` / `−` also zoom. Press `Shift+1` to fit the current flow, `Shift+2` to fit the selected frame, or `Shift+0` for 100%. Arrow keys pan, and holding `Shift` increases the distance.
+Navigation follows Figma: two-finger trackpad scroll or the mouse wheel pans, pinch or `Ctrl` / `⌘` + scroll zooms around the pointer, `Space`-drag, middle-drag or the Hand tool (`H`) pans, and dragging empty canvas pans too. `+` / `−` zoom, `0` is 100%, `Shift+1` fits the tab, `Shift+2` fits the selected frame, arrow keys pan. `Delete` removes the selected frame from the tab (the page file stays). The camera is remembered per tab.
 
-- Each `design/flows/<id>.json` defines live screens, decision diamonds and labeled arrows. The canvas grows to the right as a tree: each screen's destinations are stacked in the next column and joined by elbow arrows; links back to the opener show as a ↩ badge. A step's `page` may carry a URL state (`nova-venda.tsx#venda/cliente`) so a dialog or sheet is shown open on its page.
-- Use **Phone** or **Desktop** to switch preview sizes (402×874 or 1280×800). Wireframes are responsive by default. Use `name.phone.tsx` and `name.desktop.tsx` siblings for separate layouts. Draw each screen edge to edge so it fills its preview.
-- Click or tap an element to select it for the agent. Use **Comment** (`C`), pick an element, and add your draft. Drafts and pins use the same comment workflow as **Files**. Pan and zoom over previews with either tool active.
-- Activate a frame's title or double-click its preview to open it by itself for interacting with the prototype or editing styles in the inspector. `M` switches between this view and the canvas. `Esc` also returns to the canvas from an opened page.
-
-- Wireframes are prototypes: changing one does not require changing its page. Agents or the user mark the side that must follow as **outdated** (`cdesign sync outdated <file> --note …`, or the button in the bar) and confirm alignment with `cdesign sync done <file>`. `cdesign sync` (MCP `sync`) answers "what needs syncing?". State lives in `design/sync.json` (content hashes + marks), committed with the design.
-
-Website exports exclude `design/wireframe/` like `design/prototype/`.
+A frame's `page` may carry a URL state (`nova-venda.tsx#venda/cliente`) so a dialog or sheet is shown open on its page. Flow files in the older `steps`/`links` format still open: their screens become frames and arrows, decisions and wireframes are ignored.
 
 ## React or HTML mode
 
@@ -183,7 +177,7 @@ design/
   prototype/              work in progress; moved to components/ or pages/ once done
 ```
 
-Group pages by feature or screen type under `design/pages/`, put lo-fi wireframes under `design/wireframe/`, describe user flows in `design/flows/<id>.json`, give other experiments a folder under `design/prototype/`, and group components by family under `design/components/` or by feature under `design/features/`. Use short, descriptive names and reuse existing groups. The Files tab lists preview entries inside `design/`, including nested folders.
+Group pages by feature or screen type under `design/pages/`, describe user flows in `design/flows/<id>.json`, give other experiments a folder under `design/prototype/`, and group components by family under `design/components/` or by feature under `design/features/`. Use short, descriptive names and reuse existing groups. The Files tab lists preview entries inside `design/`, including nested folders.
 
 Every folder keeps its previews in its own `previews/` subfolder. Prototypes start in `prototype/`; when one is done, the agent asks whether to move it to `components/`, `features/` or `pages/`. Moved files stay editable.
 

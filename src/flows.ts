@@ -1,46 +1,49 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { insideProject } from "./modes";
 
 /**
- * Flows: one JSON file per user flow in design/flows/<id>.json. A flow is a graph of steps (screens and decisions)
- * joined by links. A screen step pairs a wireframe (design/wireframe/…, the plan) with the real page (design/pages/…)
- * once one exists. The pair is what sync tracks: design/sync.json records the content hashes of both files when
- * they were last confirmed in sync, plus explicit "outdated" marks that agents or the user set.
+ * Flows: one JSON file per canvas tab in design/flows/<id>.json. A flow is a set of frames, each a page placed on
+ * the canvas at x/y with its own device size w×h. The viewer writes positions and sizes when the user drags or
+ * resizes a frame; agents may add frames too. Older files with `steps`/`links` are read as frames (screens only).
  */
-export type FlowStep = { id: string; title?: string; wireframe?: string; page?: string; decision?: string; note?: string; wireframes?: Variants };
-/** Device variants of one wireframe: `name.phone.tsx` and `name.desktop.tsx` siblings; an unsuffixed file is responsive (both). */
-export type Variants = { phone?: string; desktop?: string };
-
-const VARIANT = /\.(phone|desktop)(\.(?:tsx|html))$/;
-export function variantsOf(root: string, file: string): Variants {
-  const m = file.match(VARIANT);
-  const base = m ? file.slice(0, m.index) : file.replace(/\.(tsx|html)$/, "");
-  const ext = m ? m[2] : file.slice(base.length);
-  const sib = (d: string) => existsSync(join(root, `${base}.${d}${ext}`)) ? `${base}.${d}${ext}` : undefined;
-  if (m) return { phone: m[1] === "phone" ? file : sib("phone"), desktop: m[1] === "desktop" ? file : sib("desktop") };
-  return { phone: sib("phone") ?? file, desktop: sib("desktop") ?? file };
-}
-export type FlowLink = { from: string; to: string; label?: string; dashed?: boolean };
-export type Flow = { id: string; file: string; title: string; description?: string; steps: FlowStep[]; links: FlowLink[]; errors: string[] };
+export type FlowFrame = { id: string; page: string; title?: string; x: number; y: number; w: number; h: number };
+export type Flow = { id: string; file: string; title: string; description?: string; frames: FlowFrame[]; errors: string[] };
 
 export const FLOWS_DIR = "design/flows";
-export const WIREFRAME_DIR = "design/wireframe";
-const SYNC_FILE = "design/sync.json";
+export const DEFAULT_SIZE: [number, number] = [402, 874];
+const GAP = 80;
 const ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const PREVIEWABLE = /\.(tsx|html)$/;
 
 const str = (v: unknown) => typeof v === "string" && v.trim() ? v.trim() : undefined;
+const num = (v: unknown) => typeof v === "number" && Number.isFinite(v) ? Math.round(v) : undefined;
+const size = (v: unknown, d: number) => Math.max(200, Math.min(4000, num(v) ?? d));
 
 /** `page.tsx#venda/cliente` -> `page.tsx`: the part after "#" is the URL state the page opens with (a dialog or sheet showing). */
 export const baseFile = (path: string) => path.split("#")[0];
 
-function checkFile(root: string, ref: string | undefined, kind: string, step: string, errors: string[]) {
-  if (ref === undefined) return;
+export const slug = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63) || "frame";
+
+function checkPage(root: string, ref: string, frame: string, errors: string[]) {
   const path = baseFile(ref);
-  if (!path.startsWith("design/") || !PREVIEWABLE.test(path)) errors.push(`step "${step}": ${kind} must be a project-relative design/… .tsx or .html file, got "${path}"`);
-  else if (!existsSync(join(root, path)) || !insideProject(root, path)) errors.push(`step "${step}": ${kind} file not found: ${path}`);
+  if (!path.startsWith("design/") || !PREVIEWABLE.test(path)) errors.push(`frame "${frame}": page must be a project-relative design/… .tsx or .html file, got "${path}"`);
+  else if (!existsSync(join(root, path)) || !insideProject(root, path)) errors.push(`frame "${frame}": page file not found: ${path}`);
+}
+
+/** A frame placed after the others: to the right of the rightmost one, top-aligned with the first. */
+export function nextSlot(frames: FlowFrame[], w = DEFAULT_SIZE[0]): { x: number; y: number } {
+  if (!frames.length) return { x: 0, y: 0 };
+  return { x: Math.max(...frames.map((f) => f.x + f.w)) + GAP, y: Math.min(...frames.map((f) => f.y)) };
+}
+
+/** `design/pages/vendas/nova-venda.tsx#venda/cliente` -> `nova-venda-venda-cliente` */
+const idBase = (page: string) => { const [f, state] = page.split("#"); return f.split("/").pop()!.replace(/\.(tsx|html)$/, "") + (state ? "-" + state : ""); };
+
+function uniqueId(frames: { id: string }[], base: string) {
+  let id = slug(base), n = 2;
+  while (frames.some((f) => f.id === id)) id = `${slug(base).slice(0, 59)}-${n++}`;
+  return id;
 }
 
 export function readFlow(root: string, id: string): Flow {
@@ -48,31 +51,26 @@ export function readFlow(root: string, id: string): Flow {
   const errors: string[] = [];
   let raw: Record<string, unknown> = {};
   try { raw = JSON.parse(readFileSync(join(root, file), "utf8")); }
-  catch (e) { return { id, file, title: id, steps: [], links: [], errors: [`invalid JSON: ${(e as Error).message}`] }; }
+  catch (e) { return { id, file, title: id, frames: [], errors: [`invalid JSON: ${(e as Error).message}`] }; }
   if (!ID.test(id)) errors.push(`file name must be lowercase letters, digits and dashes: ${id}.json`);
-  const steps: FlowStep[] = [];
-  const seen = new Set<string>();
-  for (const s of Array.isArray(raw.steps) ? raw.steps as Record<string, unknown>[] : []) {
-    const step: FlowStep = { id: str(s?.id) ?? "", title: str(s?.title), wireframe: str(s?.wireframe), page: str(s?.page), decision: str(s?.decision), note: str(s?.note) };
-    if (!ID.test(step.id)) { errors.push(`step id must be lowercase letters, digits and dashes: "${step.id}"`); continue; }
-    if (seen.has(step.id)) { errors.push(`duplicate step id "${step.id}"`); continue; }
-    seen.add(step.id);
-    if (step.decision && (step.wireframe || step.page)) errors.push(`step "${step.id}": a decision has no wireframe or page`);
-    if (!step.decision && !step.wireframe && !step.page) errors.push(`step "${step.id}": needs a wireframe, a page, or a decision`);
-    checkFile(root, step.wireframe, "wireframe", step.id, errors);
-    checkFile(root, step.page, "page", step.id, errors);
-    if (step.wireframe && existsSync(join(root, step.wireframe))) step.wireframes = variantsOf(root, step.wireframe);
-    steps.push(step);
+  const frames: FlowFrame[] = [];
+  const legacy = !Array.isArray(raw.frames) && Array.isArray(raw.steps);
+  const list = (Array.isArray(raw.frames) ? raw.frames : legacy ? raw.steps : []) as Record<string, unknown>[];
+  if (raw.frames !== undefined && !Array.isArray(raw.frames)) errors.push(`"frames" must be an array`);
+  for (const f of list) {
+    const page = str(f?.page);
+    if (legacy && !page) continue; // decisions and wireframe-only steps of the old format have no frame
+    const title = str(f?.title);
+    const id = str(f?.id) ?? uniqueId(frames, title ?? (page ? idBase(page) : "frame"));
+    if (!ID.test(id)) { errors.push(`frame id must be lowercase letters, digits and dashes: "${id}"`); continue; }
+    if (frames.some((x) => x.id === id)) { errors.push(`duplicate frame id "${id}"`); continue; }
+    if (!page) { errors.push(`frame "${id}": needs a page`); continue; }
+    checkPage(root, page, id, errors);
+    const w = size(f.w, DEFAULT_SIZE[0]), h = size(f.h, DEFAULT_SIZE[1]);
+    const slot = nextSlot(frames, w);
+    frames.push({ id, page, ...(title ? { title } : {}), x: num(f.x) ?? slot.x, y: num(f.y) ?? slot.y, w, h });
   }
-  if (!Array.isArray(raw.steps)) errors.push(`"steps" must be an array`);
-  const links: FlowLink[] = [];
-  for (const l of Array.isArray(raw.links) ? raw.links as Record<string, unknown>[] : []) {
-    const link: FlowLink = { from: str(l?.from) ?? "", to: str(l?.to) ?? "", label: str(l?.label), dashed: l?.dashed === true || undefined };
-    if (!seen.has(link.from) || !seen.has(link.to)) { errors.push(`link ${link.from || "?"} -> ${link.to || "?"}: unknown step id`); continue; }
-    links.push(link);
-  }
-  if (raw.links !== undefined && !Array.isArray(raw.links)) errors.push(`"links" must be an array`);
-  return { id, file, title: str(raw.title) ?? id, description: str(raw.description), steps, links, errors };
+  return { id, file, title: str(raw.title) ?? id, description: str(raw.description), frames, errors };
 }
 
 export function listFlows(root: string): Flow[] {
@@ -81,183 +79,91 @@ export function listFlows(root: string): Flow[] {
   return readdirSync(dir).filter((f) => f.endsWith(".json")).sort().map((f) => readFlow(root, f.slice(0, -5)));
 }
 
-export function newFlow(root: string, id: string, title?: string): string {
+const flowPath = (root: string, id: string) => {
   if (!ID.test(id)) throw new Error("Flow id must be lowercase letters, digits and dashes, e.g. nova-venda");
-  const file = `${FLOWS_DIR}/${id}.json`;
-  if (existsSync(join(root, file))) throw new Error(`${file} already exists`);
+  return join(root, FLOWS_DIR, `${id}.json`);
+};
+
+function writeFlow(root: string, f: Pick<Flow, "id" | "title" | "description" | "frames">) {
   mkdirSync(join(root, FLOWS_DIR), { recursive: true });
-  writeFileSync(join(root, file), JSON.stringify({ title: title ?? id, description: "", steps: [], links: [] }, null, 2) + "\n");
-  return file;
+  const frames = f.frames.map(({ id, page, title, x, y, w, h }) => ({ id, ...(title ? { title } : {}), page, x, y, w, h }));
+  writeFileSync(flowPath(root, f.id), JSON.stringify({ title: f.title, ...(f.description ? { description: f.description } : {}), frames }, null, 2) + "\n");
 }
 
-// ---------- sync between wireframes and pages ----------
-
-type SyncFile = {
-  version: 1;
-  /** keyed by page path: the wireframe it was last confirmed against, with both content hashes at that moment */
-  pairs: Record<string, { wireframe: string; wireframeHash: string; pageHash: string; syncedAt: string }>;
-  /** keyed by file (a page or a wireframe): it must be updated to match its counterpart */
-  outdated: Record<string, { note?: string; at: string }>;
-};
-export type SyncState = "no-page" | "no-wireframe" | "never-synced" | "in-sync" | "wireframe-changed" | "page-changed" | "both-changed";
-export type SyncItem = {
-  wireframe?: string;
-  wireframes?: Variants;
-  page?: string;
-  state: SyncState;
-  /** explicit marks: which side needs updating, and why */
-  outdated: { file: string; side: "page" | "wireframe"; note?: string; at: string }[];
-  steps: { flow: string; step: string; title: string }[];
-  syncedAt?: string;
-};
-
-const fileHash = (root: string, f: string) => { try { return createHash("sha1").update(readFileSync(join(root, f))).digest("hex"); } catch { return ""; } };
-/** A wireframe's hash covers all of its device variants, so editing the desktop sibling also counts as a wireframe change. */
-const hash = (root: string, ref: string) => {
-  const f = baseFile(ref);
-  if (!f.startsWith(WIREFRAME_DIR + "/")) return fileHash(root, f);
-  const v = variantsOf(root, f), files = [...new Set([v.phone, v.desktop].filter(Boolean) as string[])].sort();
-  return files.length === 1 ? fileHash(root, files[0]) : createHash("sha1").update(files.map((x) => fileHash(root, x)).join()).digest("hex");
-};
-export function readSync(root: string): SyncFile {
-  try {
-    const s = JSON.parse(readFileSync(join(root, SYNC_FILE), "utf8"));
-    return { version: 1, pairs: s.pairs && typeof s.pairs === "object" ? s.pairs : {}, outdated: s.outdated && typeof s.outdated === "object" ? s.outdated : {} };
-  } catch { return { version: 1, pairs: {}, outdated: {} }; }
+export function newFlow(root: string, id: string, title?: string): string {
+  const path = flowPath(root, id);
+  if (existsSync(path)) throw new Error(`${FLOWS_DIR}/${id}.json already exists`);
+  writeFlow(root, { id, title: title ?? id, frames: [] });
+  return `${FLOWS_DIR}/${id}.json`;
 }
-const writeSync = (root: string, s: SyncFile) => { mkdirSync(join(root, "design"), { recursive: true }); writeFileSync(join(root, SYNC_FILE), JSON.stringify(s, null, 2) + "\n"); };
 
-/** Every wireframe/page pairing that the flows declare, merged across flows (the same screen may appear in several). */
-export function syncItems(root: string, flows = listFlows(root)): SyncItem[] {
-  const s = readSync(root);
-  const items = new Map<string, SyncItem>();
-  for (const flow of flows) for (const step of flow.steps) {
-    if (step.decision) continue;
-    const key = `${step.wireframe ?? ""}|${step.page ?? ""}`;
-    const item = items.get(key) ?? { wireframe: step.wireframe, wireframes: step.wireframes, page: step.page, state: "never-synced" as SyncState, outdated: [], steps: [] };
-    item.steps.push({ flow: flow.id, step: step.id, title: step.title ?? step.id });
-    items.set(key, item);
-  }
-  for (const item of items.values()) {
-    const { wireframe, page } = item;
-    if (!page) item.state = "no-page";
-    else if (!wireframe) item.state = "no-wireframe";
-    else {
-      const rec = s.pairs[page];
-      if (!rec || rec.wireframe !== wireframe) item.state = "never-synced";
-      else {
-        const w = hash(root, wireframe) !== rec.wireframeHash, p = hash(root, page) !== rec.pageHash;
-        item.state = w && p ? "both-changed" : w ? "wireframe-changed" : p ? "page-changed" : "in-sync";
-        item.syncedAt = rec.syncedAt;
-      }
+/** Creates a flow from a tab title, picking a free id from it. */
+export function createFlow(root: string, title: string): Flow {
+  let base = slug(title) === "frame" ? "flow" : slug(title), id = base, n = 2;
+  while (existsSync(join(root, FLOWS_DIR, `${id}.json`))) id = `${base.slice(0, 59)}-${n++}`;
+  newFlow(root, id, title.trim() || id);
+  return readFlow(root, id);
+}
+
+export function deleteFlow(root: string, id: string) {
+  const path = flowPath(root, id);
+  if (!existsSync(path)) throw new Error(`${FLOWS_DIR}/${id}.json does not exist`);
+  rmSync(path);
+}
+
+/** Replaces a flow's title and/or frames (the viewer sends the whole frame list after a drag, resize, add or remove). */
+export function updateFlow(root: string, id: string, patch: { title?: unknown; frames?: unknown }): Flow {
+  if (!existsSync(flowPath(root, id))) throw new Error(`${FLOWS_DIR}/${id}.json does not exist`);
+  const cur = readFlow(root, id);
+  const title = str(patch.title) ?? cur.title;
+  let frames = cur.frames;
+  if (patch.frames !== undefined) {
+    if (!Array.isArray(patch.frames)) throw new Error("frames must be an array");
+    frames = [];
+    for (const f of patch.frames as Record<string, unknown>[]) {
+      const page = str(f?.page);
+      if (!page) throw new Error("every frame needs a page");
+      const errors: string[] = [];
+      checkPage(root, page, page, errors);
+      if (errors.length) throw new Error(errors[0]);
+      const t = str(f.title);
+      const fid = str(f.id) && ID.test(f.id as string) && !frames.some((x) => x.id === f.id) ? f.id as string : uniqueId(frames, t ?? idBase(page));
+      const w = size(f.w, DEFAULT_SIZE[0]), h = size(f.h, DEFAULT_SIZE[1]);
+      const slot = nextSlot(frames, w);
+      frames.push({ id: fid, page, ...(t ? { title: t } : {}), x: num(f.x) ?? slot.x, y: num(f.y) ?? slot.y, w, h });
     }
-    for (const [file, side] of [[page, "page"], [wireframe, "wireframe"]] as const)
-      if (file && s.outdated[file]) item.outdated.push({ file, side, ...s.outdated[file] });
   }
-  return [...items.values()];
+  writeFlow(root, { id, title, description: cur.description, frames });
+  return readFlow(root, id);
 }
 
-/** The pair a file belongs to (as wireframe or page), from the flows. A plain page path also matches a step that opens it with a URL state. */
-export function pairOf(root: string, file: string, flows = listFlows(root)): SyncItem | undefined {
-  const items = syncItems(root, flows);
-  return items.find((i) => i.wireframe === file || i.page === file) ?? items.find((i) => !!i.page && baseFile(i.page) === file);
+/** Adds a page as a frame after the others, sized like the last frame. */
+export function addFrame(root: string, id: string, page: string, title?: string): FlowFrame {
+  const cur = readFlow(root, id);
+  const last = cur.frames.at(-1);
+  const w = last?.w ?? DEFAULT_SIZE[0], h = last?.h ?? DEFAULT_SIZE[1];
+  const f = updateFlow(root, id, { frames: [...cur.frames, { page, title, ...nextSlot(cur.frames, w), w, h }] });
+  return f.frames.at(-1)!;
 }
 
-function known(root: string, file: string) {
-  const item = pairOf(root, file);
-  if (!item) throw new Error(`${file} is not a wireframe or page of any flow in ${FLOWS_DIR}/. Add it to a flow step first.`);
-  return item;
-}
-
-/** Mark one side as needing an update to match the other (the file given is the one to change). */
-export function markOutdated(root: string, file: string, note?: string) {
-  known(root, file);
-  const s = readSync(root);
-  s.outdated[file] = { ...(note ? { note } : {}), at: new Date().toISOString() };
-  writeSync(root, s);
-}
-
-/** Confirm a pair is in sync now: records both hashes and clears outdated marks on both sides. */
-export function markSynced(root: string, file: string) {
-  const item = known(root, file);
-  if (!item.wireframe || !item.page) throw new Error(`${file} has no ${item.page ? "wireframe" : "page"} in its flow step, so there is nothing to sync. Use \`sync clear\` to drop an outdated mark.`);
-  const s = readSync(root);
-  s.pairs[item.page] = { wireframe: item.wireframe, wireframeHash: hash(root, item.wireframe), pageHash: hash(root, item.page), syncedAt: new Date().toISOString() };
-  delete s.outdated[item.page];
-  delete s.outdated[item.wireframe];
-  writeSync(root, s);
-  return item;
-}
-
-/** Drop an outdated mark without confirming sync (for example: decided the change stays in the prototype only). */
-export function clearOutdated(root: string, file: string) {
-  const s = readSync(root);
-  if (!s.outdated[file]) return false;
-  delete s.outdated[file];
-  writeSync(root, s);
+export function removeFrame(root: string, id: string, ref: string): boolean {
+  const cur = readFlow(root, id);
+  const frames = cur.frames.filter((f) => f.id !== ref && f.page !== ref);
+  if (frames.length === cur.frames.length) return false;
+  updateFlow(root, id, { frames });
   return true;
 }
 
-const STATE_TEXT: Record<SyncState, string> = {
-  "no-page": "wireframe only, no page yet",
-  "no-wireframe": "page without a wireframe",
-  "never-synced": "never confirmed in sync",
-  "in-sync": "in sync",
-  "wireframe-changed": "wireframe changed since last sync",
-  "page-changed": "page changed since last sync",
-  "both-changed": "both changed since last sync",
-};
-
-/** The answer to "what needs syncing?": explicit marks first, then drift to review, then what is still prototype-only. */
-export function syncReport(root: string): string {
-  const flows = listFlows(root);
-  if (!flows.length) return `No flows yet. Create one with \`cdesign flows new <id> --title "…"\` (writes ${FLOWS_DIR}/<id>.json); see \`cdesign skills get cdesign\` > Flows.`;
-  const items = syncItems(root, flows);
-  const where = (i: SyncItem) => i.steps.map((s) => `${s.flow}/${s.step}`).join(", ");
-  const pair = (i: SyncItem) => `${i.wireframe ?? "(no wireframe)"} <-> ${i.page ?? "(no page)"}`;
-  const out: string[] = [];
-  const marked = items.flatMap((i) => i.outdated.map((o) => ({ i, o })));
-  out.push(`Marked outdated (${marked.length}): update the file to match its counterpart, then run \`cdesign sync done <file>\``);
-  for (const { i, o } of marked) out.push(`  ${o.side} ${o.file} must follow ${o.side === "page" ? i.wireframe ?? "?" : i.page ?? "?"}${o.note ? ` — ${o.note}` : ""} (marked ${o.at.slice(0, 10)}; ${where(i)})`);
-  const drift = items.filter((i) => !i.outdated.length && ["wireframe-changed", "page-changed", "both-changed"].includes(i.state));
-  out.push(`\nChanged since last sync (${drift.length}): review; a wireframe change does not require a page change while it is still a prototype`);
-  for (const i of drift) out.push(`  ${STATE_TEXT[i.state]}: ${pair(i)} (${where(i)})`);
-  const never = items.filter((i) => !i.outdated.length && i.state === "never-synced");
-  out.push(`\nNever confirmed in sync (${never.length}): compare, then \`cdesign sync done <page>\` or mark the side that is behind`);
-  for (const i of never) out.push(`  ${pair(i)} (${where(i)})`);
-  const proto = items.filter((i) => i.state === "no-page");
-  out.push(`\nWireframes without a page yet (${proto.length})`);
-  for (const i of proto) out.push(`  ${i.wireframe} (${where(i)})`);
-  const inSync = items.filter((i) => i.state === "in-sync").length;
-  out.push(`\nIn sync: ${inSync} pair(s).`);
-  const errors = flows.flatMap((f) => f.errors.map((e) => `  ${f.file}: ${e}`));
-  if (errors.length) out.push(`\nFlow problems (${errors.length}):\n${errors.join("\n")}`);
-  return out.join("\n");
-}
-
-export function flowText(root: string, f: Flow): string {
-  const items = syncItems(root, [f]);
-  const stateOf = (s: FlowStep) => items.find((i) => i.wireframe === s.wireframe && i.page === s.page);
-  const lines = [`${f.title} (${f.file})${f.description ? `\n${f.description}` : ""}`, "steps:"];
-  for (const s of f.steps) {
-    if (s.decision) { lines.push(`  ◇ ${s.id}: ${s.decision}`); continue; }
-    const st = stateOf(s);
-    const marks = st?.outdated.map((o) => ` [${o.side} outdated${o.note ? `: ${o.note}` : ""}]`).join("") ?? "";
-    const dev = s.wireframes ? (s.wireframes.phone === s.wireframes.desktop ? " (responsive)" : ` (${[s.wireframes.phone && "phone", s.wireframes.desktop && "desktop"].filter(Boolean).join(" + ")})`) : "";
-    lines.push(`  ▢ ${s.id}${s.title ? ` "${s.title}"` : ""}: wireframe ${s.wireframe ?? "-"}${dev} | page ${s.page ?? "-"} | ${st ? STATE_TEXT[st.state] : ""}${marks}${s.note ? `\n      note: ${s.note}` : ""}`);
-  }
-  lines.push("links:", ...f.links.map((l) => `  ${l.from} -> ${l.to}${l.label ? ` "${l.label}"` : ""}${l.dashed ? " (dashed)" : ""}`));
+export function flowText(f: Flow): string {
+  const lines = [`${f.title} (${f.file})${f.description ? `\n${f.description}` : ""}`, "frames:"];
+  for (const s of f.frames) lines.push(`  ▢ ${s.id}${s.title ? ` "${s.title}"` : ""}: ${s.page} at ${s.x},${s.y} size ${s.w}×${s.h}`);
+  if (!f.frames.length) lines.push("  (none)");
   if (f.errors.length) lines.push("problems:", ...f.errors.map((e) => `  ${e}`));
   return lines.join("\n");
 }
 
-/** Short line for `cdesign page`: how the open file relates to flows and its counterpart. */
+/** Short line for `cdesign page`: the flows (canvas tabs) that show the open file. */
 export function pageFlowNote(root: string, file: string): string {
-  let item: SyncItem | undefined;
-  try { item = pairOf(root, file); } catch { return ""; }
-  if (!item) return "";
-  const other = item.wireframe === file ? item.page : item.wireframe;
-  const role = item.wireframe === file ? "wireframe" : "page";
-  const marks = item.outdated.map((o) => `${o.side} marked outdated${o.note ? ` (${o.note})` : ""}`).join("; ");
-  return `Flow: ${role} of ${item.steps.map((s) => `${s.flow}/${s.step}`).join(", ")}; counterpart: ${other ?? "none yet"}; sync: ${STATE_TEXT[item.state]}${marks ? `; ${marks}` : ""}. See \`cdesign sync\`.`;
+  const where = listFlows(root).flatMap((f) => f.frames.filter((s) => baseFile(s.page) === file).map((s) => `${f.id}/${s.id}`));
+  return where.length ? `Flow: shown as ${where.join(", ")}.` : "";
 }

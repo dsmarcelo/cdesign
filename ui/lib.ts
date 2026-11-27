@@ -1,4 +1,6 @@
 export const MAP_RE = /^(map:(pages|flows)|flow:[a-z0-9-]+)$/;
+/** The canvas tab a map hash opens; null for the legacy `map:*` routes (first tab). */
+export const flowOfHash = (h: string | null | undefined) => h?.startsWith("flow:") ? h.slice(5) : null;
 export const isMapHash = (h: string | null | undefined) => MAP_RE.test(h || "");
 
 export const pageHash = () => {
@@ -25,19 +27,12 @@ export const DEVICES: Record<string, [number, number]> = {
   "Galaxy Z Fold cover (thin)": [360, 840],
 };
 
-export const MAP_DEVICE: Record<"phone" | "desktop", [number, number]> = {
-  phone: [402, 874],
-  desktop: [1280, 800],
-};
-
-export const SYNC_STATE: Record<string, [string, string]> = {
-  "no-page": ["Wireframe only", "mut"],
-  "no-wireframe": ["No wireframe", "mut"],
-  "never-synced": ["Never synced", "mut"],
-  "in-sync": ["In sync", "ok"],
-  "wireframe-changed": ["Wireframe changed", "chg"],
-  "page-changed": ["Page changed", "chg"],
-  "both-changed": ["Both changed", "chg"],
+/** Frame sizes for the canvas toolbar: picking one resizes every frame of the open tab. */
+export const FRAME_PRESETS: Record<string, [number, number]> = {
+  ...DEVICES,
+  "Tablet": [768, 1024],
+  "Laptop": [1280, 800],
+  "Desktop": [1440, 900],
 };
 
 export type ViewerMode = null | "select" | "comment";
@@ -64,37 +59,9 @@ export type CommentItem = {
 
 export type ProjectInfo = { id: string; name: string; root: string; url: string };
 
-export type FlowStep = {
-  id: string;
-  title?: string;
-  decision?: string;
-  wireframe?: string;
-  wireframes?: { phone?: string; desktop?: string };
-  page?: string;
-};
-
-export type FlowLink = { from: string; to: string; label?: string; dashed?: boolean };
-
-export type Flow = {
-  id: string;
-  title: string;
-  description?: string;
-  steps: FlowStep[];
-  links: FlowLink[];
-  errors: string[];
-};
-
-export type OutdatedMark = { file: string; side: string; note?: string };
-
-export type SyncItem = {
-  wireframe?: string;
-  page?: string;
-  state: string;
-  steps: { flow: string; step: string; title: string }[];
-  outdated: OutdatedMark[];
-};
-
-export type FlowsData = { flows: Flow[]; sync: SyncItem[] };
+export type FlowFrame = { id: string; page: string; title?: string; x: number; y: number; w: number; h: number };
+export type Flow = { id: string; title: string; description?: string; frames: FlowFrame[]; errors: string[] };
+export type FlowsData = { flows: Flow[] };
 
 export type TunnelInfo = { url?: string | null; starting?: boolean; error?: string | null };
 

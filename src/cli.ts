@@ -14,7 +14,7 @@ import { componentPreview } from "./previews";
 import { setup, readConfig, type SetupOptions } from "./project";
 import * as tk from "./tokens";
 import { context, folderGuidance, guidanceFiles, startup } from "./context";
-import { listFlows, readFlow, newFlow, flowText, syncReport, syncItems, markOutdated, markSynced, clearOutdated, pageFlowNote, FLOWS_DIR } from "./flows";
+import { listFlows, readFlow, newFlow, flowText, addFrame, removeFrame, pageFlowNote, FLOWS_DIR } from "./flows";
 import { beat, dataDir, ensureDataDir, daemonLogPath, daemonPath, homeDir, projectId, readComments, readTunnelConfig, writeTunnelConfig, update, commentsPath, type Comment } from "./store";
 
 const [cmd = "restart-app", ...rest] = process.argv.slice(2);
@@ -541,39 +541,32 @@ ${now}`);
   }
   case "flows": {
     const root = findRoot();
-    const [sub = "list", id] = rest;
-    if (sub === "list") {
-      const flows = listFlows(root);
-      if (!flows.length) console.log(`No flows yet. Create one: cdesign flows new <id> --title "Nova venda" (writes ${FLOWS_DIR}/<id>.json).`);
-      for (const f of flows) console.log(`${f.id}  ${f.title}  (${f.steps.filter((s) => !s.decision).length} screens, ${f.steps.filter((s) => s.decision).length} decisions, ${f.links.length} links)${f.errors.length ? `  ${f.errors.length} problem(s): run cdesign flows check` : ""}`);
-    } else if (sub === "show" && id) {
-      if (!existsSync(join(root, FLOWS_DIR, `${id}.json`))) fail(`No flow ${FLOWS_DIR}/${id}.json`);
-      console.log(flowText(root, readFlow(root, id)));
-    } else if (sub === "check") {
-      const errors = listFlows(root).flatMap((f) => f.errors.map((e) => `ERROR  ${f.file}: ${e}`));
-      console.log(errors.length ? errors.join("\n") : "flows ok");
-      process.exitCode = errors.length ? 1 : 0;
-    } else if (sub === "new" && id) {
-      try { console.log(`wrote ${newFlow(root, id, flag("--title"))}`); } catch (e) { fail((e as Error).message); }
-    } else console.log(`cdesign flows [list] | show <id> | check | new <id> [--title text]
-flows live in ${FLOWS_DIR}/<id>.json; see \`cdesign skills get cdesign\` > Flows, wireframes and sync`);
-    break;
-  }
-  case "sync": {
-    const root = findRoot();
-    const asJson = rest.includes("--json");
-    if (asJson) rest.splice(rest.indexOf("--json"), 1);
-    const note = flag("--note");
-    const [sub = "status", file] = rest;
+    const [sub = "list", id, page] = rest;
+    const known = () => { if (!existsSync(join(root, FLOWS_DIR, `${id}.json`))) fail(`No flow ${FLOWS_DIR}/${id}.json`); };
     try {
-      if (sub === "status") console.log(asJson ? JSON.stringify(syncItems(root), null, 2) : syncReport(root));
-      else if (sub === "outdated" && file) { markOutdated(root, file, note); console.log(`marked outdated: ${file}${note ? ` (${note})` : ""}`); }
-      else if (sub === "done" && file) { const i = markSynced(root, file); console.log(`in sync: ${i.wireframe} <-> ${i.page}`); }
-      else if (sub === "clear" && file) console.log(clearOutdated(root, file) ? `cleared outdated mark: ${file}` : `${file} was not marked outdated`);
-      else console.log(`cdesign sync [status] [--json]          what needs syncing between wireframes and pages
-cdesign sync outdated <file> [--note text]  mark a wireframe or page as needing an update to match its counterpart
-cdesign sync done <file>                     confirm the pair is in sync now (records both hashes, clears marks)
-cdesign sync clear <file>                    drop an outdated mark without confirming sync`);
+      if (sub === "list") {
+        const flows = listFlows(root);
+        if (!flows.length) console.log(`No flows yet. Create one: cdesign flows new <id> --title "Nova venda" (writes ${FLOWS_DIR}/<id>.json).`);
+        for (const f of flows) console.log(`${f.id}  ${f.title}  (${f.frames.length} frames)${f.errors.length ? `  ${f.errors.length} problem(s): run cdesign flows check` : ""}`);
+      } else if (sub === "show" && id) {
+        known();
+        console.log(flowText(readFlow(root, id)));
+      } else if (sub === "check") {
+        const errors = listFlows(root).flatMap((f) => f.errors.map((e) => `ERROR  ${f.file}: ${e}`));
+        console.log(errors.length ? errors.join("\n") : "flows ok");
+        process.exitCode = errors.length ? 1 : 0;
+      } else if (sub === "new" && id) console.log(`wrote ${newFlow(root, id, flag("--title"))}`);
+      else if (sub === "add" && id && page) {
+        known();
+        const f = addFrame(root, id, page, flag("--title"));
+        console.log(`added frame ${f.id} (${f.page}) at ${f.x},${f.y} size ${f.w}×${f.h}`);
+      } else if (sub === "rm" && id && page) {
+        known();
+        console.log(removeFrame(root, id, page) ? `removed ${page} from ${id}` : `${page} is not a frame of ${id}`);
+      } else console.log(`cdesign flows [list] | show <id> | check | new <id> [--title text]
+cdesign flows add <id> <page[#state]> [--title text]   place a page on the flow's canvas, after the other frames
+cdesign flows rm <id> <frame-id|page>                  take a frame off the canvas (the page file stays)
+flows are the viewer's canvas tabs, stored in ${FLOWS_DIR}/<id>.json; see \`cdesign skills get cdesign\` > Flows`);
     } catch (e) { fail((e as Error).message); }
     break;
   }
@@ -807,9 +800,8 @@ type styles: set type/<name> --group G --size 14px --line 20px --weight 500 [--f
   wait [--timeout s]                    run in the background: exits with the batch when the user presses Send
   resolve <id...>                       mark comments done
   comments [--all]                      list pending comments
-  flows [list|show <id>|check|new <id> [--title t]]  user flows in design/flows/*.json (screens, decisions, links)
-  sync [status|outdated <file> [--note t]|done <file>|clear <file>] [--json]
-                                        what needs syncing between wireframes and pages; mark outdated / in sync
+  flows [list|show <id>|check|new <id> [--title t]|add <id> <page>|rm <id> <frame>]
+                                        canvas tabs in design/flows/*.json: pages placed as frames
   init [dir] [--mode react|html] [--tailwind|--no-tailwind]  scaffold design/ (design-system.md, tokens, _head, pages, components, features, prototype)
   check                                 verify tokens/components are defined and documented
   tokens <sub>                          query/change design/tokens.json, export css or tailwind (run: cdesign tokens)

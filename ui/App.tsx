@@ -3,6 +3,7 @@ import { ChatPane } from "./Chat";
 import { ShareDialog, TunnelDialog, UpdateDialog, WebsiteDialog } from "./Dialogs";
 import {
   DEVICES,
+  flowOfHash,
   isMapHash,
   lsGet,
   lsSet,
@@ -14,13 +15,14 @@ import {
   ssSet,
   type BoardElement,
   type CommentItem,
+  type FlowFrame,
   type FlowsData,
   type ProjectInfo,
   type SidebarTab,
   type TunnelInfo,
   type ViewerMode,
 } from "./lib";
-import { FlowBar, ProjectMap } from "./Map";
+import { Canvas } from "./Canvas";
 
 type TreeNode = { dirs: Record<string, TreeNode>; files: { name: string; path: string }[] };
 
@@ -141,7 +143,9 @@ export function App() {
     const h = pageHash();
     return isMapHash(h) ? h : null;
   });
-  const [flowsData, setFlowsData] = useState<FlowsData>({ flows: [], sync: [] });
+  const [flowsData, setFlowsData] = useState<FlowsData>({ flows: [] });
+  const [interact, setInteract] = useState(() => ssGet("cd-interact") === "1");
+  const [renamingTab, setRenamingTab] = useState<string | null>(null);
   const [comments, setComments] = useState<CommentItem[]>([]);
   const [doneOpen, setDoneOpen] = useState(false);
   const [agentState, setAgentState] = useState<"" | "on" | "working">("");
@@ -163,8 +167,6 @@ export function App() {
   const [mob, setMob] = useState(() => matchMedia("(max-width:700px)").matches);
   const [mobHideLeft, setMobHideLeft] = useState(true);
   const [deskHideLeft, setDeskHideLeft] = useState(() => lsGet("cd-hide-l") === "1");
-  const [barOpen, setBarOpen] = useState(false);
-  const [barBottom, setBarBottom] = useState(() => lsGet("cd-bar-bottom") === "1");
 
   const [view, setView] = useState<string>(() => {
     const w = ssGet("cd-width");
@@ -213,7 +215,7 @@ export function App() {
 
   const leftHidden = mob ? mobHideLeft : deskHideLeft;
   const inMap = mapRoute !== null;
-  const isWireframe = !inMap && Boolean(cur && cur.startsWith("design/wireframe/"));
+  const activeFlow = flowsData.flows.find((f) => f.id === flowOfHash(mapRoute)) ?? flowsData.flows[0] ?? null;
 
   const toast = useCallback((t: string) => {
     setToastText(t);
@@ -304,6 +306,11 @@ export function App() {
     location.hash = lastMapRef.current || ssGet("cd-last-map") || "map:flows";
   }, []);
 
+  const setInteractMode = useCallback((on: boolean) => {
+    setInteract(on);
+    ssSet("cd-interact", on ? "1" : "");
+  }, []);
+
   const changeBoardTool = useCallback((tool: "select" | "comment") => {
     setMode(tool, false);
   }, [setMode]);
@@ -355,31 +362,72 @@ export function App() {
     return { changed, hasFlows: d.flows.length > 0 };
   }, []);
 
+  /** A source file changed: reload the canvas previews (flow layout changes arrive as "flows" and keep them). */
   const refreshMap = useCallback(async () => {
-    const { changed } = await fetchMap();
+    await fetchMap();
     if (!mapRouteRef.current) return;
-    if (!changed) {
-      for (const f of document.querySelectorAll<HTMLIFrameElement>("#map iframe[src]")) {
-        try {
-          f.contentWindow?.location.reload();
-        } catch {}
-      }
+    for (const f of document.querySelectorAll<HTMLIFrameElement>("#map iframe[src]")) {
+      try {
+        f.contentWindow?.location.reload();
+      } catch {}
     }
   }, [fetchMap]);
 
-  const syncAction = useCallback(
-    async (action: "done" | "outdated" | "clear", file: string, note?: string) => {
-      const r = await fetch("/__cd/sync", {
+  const flowRequest = useCallback(
+    async (path: string, body: unknown) => {
+      const r = await fetch("/__cd/flows" + path, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action, file, note }),
+        body: JSON.stringify(body),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) return toast(j.error || "Sync update failed");
-      setFlowsData((prev) => ({ ...prev, sync: j.sync }));
-      toast(action === "done" ? "Marked in sync" : action === "outdated" ? "Marked outdated" : "Mark cleared");
+      if (!r.ok) {
+        toast(j.error || "Could not update the tab");
+        fetchMap();
+        return null;
+      }
+      return j as { flow?: { id: string } };
     },
-    [toast]
+    [toast, fetchMap]
+  );
+
+  const saveFrames = useCallback(
+    (id: string, frames: FlowFrame[]) => {
+      setFlowsData((d) => ({ flows: d.flows.map((f) => (f.id === id ? { ...f, frames } : f)) }));
+      flowRequest("/" + id, { frames });
+    },
+    [flowRequest]
+  );
+
+  const newTab = useCallback(async () => {
+    const j = await flowRequest("", { title: "Untitled" });
+    if (!j?.flow) return;
+    await fetchMap();
+    location.hash = "flow:" + j.flow.id;
+    setRenamingTab(j.flow.id);
+  }, [flowRequest, fetchMap]);
+
+  const renameTab = useCallback(
+    async (id: string, title: string) => {
+      setRenamingTab(null);
+      const t = title.trim();
+      if (!t || t === flowsData.flows.find((f) => f.id === id)?.title) return;
+      setFlowsData((d) => ({ flows: d.flows.map((f) => (f.id === id ? { ...f, title: t } : f)) }));
+      await flowRequest("/" + id, { title: t });
+    },
+    [flowRequest, flowsData]
+  );
+
+  const closeTab = useCallback(
+    async (id: string) => {
+      const f = flowsData.flows.find((x) => x.id === id);
+      if (!f || !confirm(`Delete the tab “${f.title}”? Its pages stay; only design/flows/${id}.json is removed.`)) return;
+      if (!(await flowRequest(`/${id}/delete`, {}))) return;
+      const rest = flowsData.flows.filter((x) => x.id !== id);
+      await fetchMap();
+      if (flowOfHash(mapRouteRef.current) === id || !mapRouteRef.current) location.hash = rest[0] ? "flow:" + rest[0].id : "map:flows";
+    },
+    [flowRequest, fetchMap, flowsData]
   );
 
   // Sync body classes and CSS variables
@@ -390,11 +438,9 @@ export function App() {
     document.body.classList.toggle("tablet", view === "768px");
     document.body.classList.toggle("phone", view === "phone");
     document.body.classList.toggle("split", view === "split");
-    document.body.classList.toggle("bar", barOpen);
-    document.body.classList.toggle("bb", barBottom);
     document.body.classList.toggle("remote", remote);
     document.body.classList.toggle("nop", currentProject === null);
-  }, [leftHidden, inMap, view, barOpen, barBottom, remote, currentProject]);
+  }, [leftHidden, inMap, view, remote, currentProject]);
 
   // Theme application
   useEffect(() => {
@@ -636,6 +682,7 @@ export function App() {
           fetchFiles();
           refreshMap();
         }
+        if (e.data === "flows") fetchMap();
         if (e.data === "comments") {
           fetchComments();
           sendToFrames({ cd: "pins" });
@@ -648,14 +695,14 @@ export function App() {
       loadPreview(initialFile);
       fetchComments();
       fetchAgent();
-      const { hasFlows } = await fetchMap();
+      await fetchMap();
       const h = pageHash();
       if (isMapHash(h)) {
         lastMapRef.current = h;
         ssSet("cd-last-map", h);
         setMapRoute(h);
-      } else if (openedWithoutHashRef.current && hasFlows && (!h || h === initialFile)) {
-        location.replace("#map:flows");
+      } else if (openedWithoutHashRef.current && (!h || h === initialFile)) {
+        location.replace("#" + (ssGet("cd-last-map") || "map:flows"));
       }
     })();
 
@@ -694,11 +741,7 @@ export function App() {
         else goMap();
         return;
       }
-      if (mapRouteRef.current && e.key === "Escape") {
-        if (modeRef.current) setMode(modeRef.current);
-        else if (curRef.current) setCur(curRef.current);
-        return;
-      }
+      if (mapRouteRef.current) return; // the canvas handles its own keys
       if (e.key === "c" && !mapRouteRef.current) setMode("comment");
       if (e.key === "s" && !mapRouteRef.current) setMode("select");
       if (e.key === "Escape") {
@@ -899,10 +942,7 @@ export function App() {
       } else {
         setCur(c.file);
       }
-      if (mob) {
-        setMobHideLeft(true);
-        setBarOpen(false);
-      }
+      if (mob) setMobHideLeft(true);
     },
     [files, inMap, mob, setCur]
   );
@@ -949,145 +989,253 @@ export function App() {
             <path d="M6 3v10" />
           </svg>
         </button>
-        <div id="pill">
-          <button
-            id="pl"
-            type="button"
-            className={!leftHidden || barOpen ? "on" : undefined}
-            title="Files and tools"
-            aria-label="Files and tools"
-            aria-expanded={!leftHidden || barOpen}
-            onClick={() => {
-              const isMob = matchMedia("(max-width:700px)").matches;
-              if (isMob && !mob) setMob(true);
-              const open = !(isMob ? mobHideLeft : deskHideLeft) || barOpen;
-              setMobHideLeft(open);
-              setBarOpen(!open);
+        <button
+          id="pl"
+          type="button"
+          className={`ic${!leftHidden ? " on" : ""}`}
+          title="Chat, files and comments"
+          aria-label="Chat, files and comments"
+          aria-expanded={!leftHidden}
+          onClick={() => {
+            const isMob = matchMedia("(max-width:700px)").matches;
+            if (isMob && !mob) setMob(true);
+            setMobHideLeft((h) => !h);
+          }}
+        >
+          <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+            <path d="M2.5 4h11M2.5 8h11M2.5 12h11" />
+          </svg>
+        </button>
+        <div className="bar-proj">
+          <select
+            id="proj"
+            title="Switch project"
+            value={currentProjUrl}
+            onChange={async (e) => {
+              const v = e.target.value;
+              if (v === "#add") return addFolder();
+              if (v === "#close" && currentProject) {
+                await fetch(`/__cd/projects/${currentProject}/remove`, { method: "POST" });
+                location.href = location.origin.replace(/^(https?:\/\/)[^.]+\.localhost/, "$1localhost");
+                return;
+              }
+              if (v) location.href = v;
             }}
           >
-            <svg className="o" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-              <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" />
-              <path d="M6 3v10" />
+            {projectList.map((p) => (
+              <option key={p.id} value={p.url}>
+                {p.name}
+              </option>
+            ))}
+            {!remote && <option value="#add">Add folder…</option>}
+            {currentProject && !remote && <option value="#close">Close this project</option>}
+          </select>
+
+        </div>
+        <nav className="tabs" role="tablist" aria-label="Flows">
+          {flowsData.flows.map((f) => {
+            const on = inMap && f.id === activeFlow?.id;
+            return (
+              <div
+                key={f.id}
+                role="tab"
+                tabIndex={0}
+                aria-selected={on}
+                className={`tab${on ? " on" : ""}${!inMap && f.id === activeFlow?.id ? " last" : ""}${f.errors.length ? " bad" : ""}`}
+                title={f.errors.length ? f.errors.join("\n") : f.description || f.title}
+                onClick={() => { if (renamingTab !== f.id) location.hash = "flow:" + f.id; }}
+                onDoubleClick={() => setRenamingTab(f.id)}
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); location.hash = "flow:" + f.id; }
+                  if (e.key === "F2") setRenamingTab(f.id);
+                }}
+              >
+                {renamingTab === f.id ? (
+                  <input
+                    autoFocus
+                    aria-label="Tab name"
+                    defaultValue={f.title}
+                    onFocus={(e) => e.currentTarget.select()}
+                    onBlur={(e) => renameTab(f.id, e.currentTarget.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                      if (e.key === "Escape") setRenamingTab(null);
+                    }}
+                  />
+                ) : (
+                  <span>{f.title}</span>
+                )}
+                <button
+                  type="button"
+                  className="x"
+                  aria-label={`Delete tab ${f.title}`}
+                  title="Delete tab"
+                  onClick={(e) => { e.stopPropagation(); closeTab(f.id); }}
+                >
+                  <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M4.5 4.5l7 7m0-7-7 7" /></svg>
+                </button>
+              </div>
+            );
+          })}
+          <button type="button" className="ic tab-add" title="New tab" aria-label="New tab" onClick={newTab}>
+            <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M8 3v10M3 8h10" /></svg>
+          </button>
+        </nav>
+        <div className="bar-right">
+          <button type="button" className="install-app" hidden={!installVisible} onClick={triggerInstall}>
+            Install app
+          </button>
+          <button type="button" className="update-app" hidden={!updateAvailable} disabled={updateBusy} onClick={applyUpdate}>
+            Update cdesign
+          </button>
+          <button
+            id="project-tools-toggle"
+            ref={toolsToggleRef}
+            className="ic"
+            popoverTarget="project-tools"
+            aria-label="Project tools"
+            title="Project tools"
+          >
+            <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor">
+              <circle cx="3" cy="8" r="1.4" />
+              <circle cx="8" cy="8" r="1.4" />
+              <circle cx="13" cy="8" r="1.4" />
             </svg>
-            <svg className="x" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
-              <path d="M4 4l8 8M12 4l-8 8" />
+          </button>
+          <span id="agent" className={agentState} role="img" aria-label={agentLabel} title={agentLabel}>
+            <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="2.5" y="5" width="11" height="8.5" rx="2" />
+              <path d="M8 5V2m-2.5 7h.01m5 0h.01" />
+            </svg>
+          </span>
+          <button
+            id="theme"
+            className={`ic${theme === "dark" ? " on" : ""}`}
+            aria-label="Dark preview"
+            aria-pressed={theme === "dark"}
+            title="Toggle light/dark preview"
+            onClick={() => {
+              const next = theme === "dark" ? "light" : "dark";
+              lsSet("cd-theme", next);
+              setTheme(next);
+            }}
+          >
+            <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="8" cy="8" r="2.75" />
+              <path d="M8 1v2m0 10v2M1 8h2m10 0h2M3 3l1.5 1.5m7 7L13 13m0-10-1.5 1.5m-7 7L3 13" />
             </svg>
           </button>
         </div>
-        <b>cdesign</b>
-        <button
-          id="mob-back"
-          type="button"
-          title="Back to flows"
-          hidden={inMap}
-          onClick={() => goMap()}
-        >
-          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M10 3 5 8l5 5" />
-          </svg>
-          Flows
-        </button>
-        <button
-          id="more"
-          className={`ic${barOpen ? " on" : ""}`}
-          title="Show/hide toolbar"
-          onClick={() => setBarOpen((o) => !o)}
-        >
-          <svg viewBox="0 0 16 16" fill="currentColor">
-            <circle cx="3" cy="8" r="1.4" />
-            <circle cx="8" cy="8" r="1.4" />
-            <circle cx="13" cy="8" r="1.4" />
-          </svg>
-        </button>
+      </header>
 
-        <div id="bar" ref={barRef}>
-          <button
-            id="back"
-            className="ic"
-            title="Back to the map (Esc)"
-            aria-label="Back to the map"
-            hidden={inMap}
-            onClick={() => goMap()}
-          >
+      <aside className="l" id="lside" ref={lsideRef} data-tab={activeTab}>
+        <div id="ltabs" role="tablist">
+          <button id="tab-chat" role="tab" aria-selected={activeTab === "chat"} onClick={() => selectTab("chat")}>
+            Chat
+          </button>
+          <button id="tab-files" role="tab" aria-selected={activeTab === "files"} onClick={() => selectTab("files")}>
+            Files
+          </button>
+          <button id="tab-comments" role="tab" aria-selected={activeTab === "comments"} onClick={() => selectTab("comments")}>
+            Comments{openComments.length > 0 && <span className="tab-badge">{openComments.length}</span>}
+          </button>
+        </div>
+
+        <div id="files" role="tabpanel">
+          {!files.length ? (
+            "No preview entries. Add a page or component preview."
+          ) : (
+            <>
+              <input
+                type="search"
+                className="file-filter"
+                placeholder="Filter files…"
+                aria-label="Filter files"
+                value={fileFilter}
+                onChange={(e) => setFileFilter(e.target.value)}
+              />
+              {!filteredFiles.length ? (
+                <small style={{ color: "var(--mut)" }}>No files match “{fileFilter.trim()}”.</small>
+              ) : (
+                <FileTree
+                  node={fileTree}
+                  prefix="design/"
+                  cur={cur}
+                  opened={openedDirs}
+                  forceOpen={Boolean(fileFilter.trim())}
+                  onToggle={(key, open) => {
+                    setOpenedDirs((prev) => {
+                      const next = new Set(prev);
+                      if (open) next.add(key);
+                      else next.delete(key);
+                      ssSet("cd-opened", JSON.stringify([...next]));
+                      return next;
+                    });
+                  }}
+                  onSelect={(path) => {
+                    setCur(path);
+                    if (mob) setMobHideLeft(true);
+                  }}
+                />
+              )}
+            </>
+          )}
+        </div>
+
+        <ChatPane tabId={tabIdRef.current} activeTab={activeTab} comments={comments} />
+
+        <div id="cm" role="tabpanel">
+          {!comments.length ? (
+            <small style={{ color: "var(--mut)" }}>No comments yet. Toggle Comment and click an element.</small>
+          ) : (
+            <>
+              {openComments.map(renderCommentCard)}
+              {doneComments.length > 0 && (
+                <details className="cdone" open={doneOpen} onToggle={(e) => setDoneOpen(e.currentTarget.open)}>
+                  <summary>Done ({doneComments.length})</summary>
+                  {doneComments.map(renderCommentCard)}
+                </details>
+              )}
+            </>
+          )}
+        </div>
+
+        <i id="lrs" title="Drag to resize" role="separator" aria-orientation="vertical" onPointerDown={startSidebarResize} />
+      </aside>
+
+      <Canvas
+        visible={inMap}
+        flow={activeFlow}
+        files={files}
+        mode={mode}
+        interact={interact}
+        onInteract={setInteractMode}
+        onToolChange={changeBoardTool}
+        onElementSelect={selectBoardElement}
+        onOpen={(file) => {
+          lastMapRef.current = activeFlow ? "flow:" + activeFlow.id : pageHash();
+          ssSet("cd-last-map", lastMapRef.current);
+          setCur(file);
+        }}
+        onSave={saveFrames}
+        onToast={toast}
+        onFrameLoad={onFrameLoad}
+        onNewTab={newTab}
+      />
+
+      <main ref={mainRef}>
+        <div id="bar" className="page-bar">
+          <button id="back" type="button" title="Back to the canvas (Esc)" aria-label="Back to the canvas" onClick={() => goMap()}>
             <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M10 3 5 8l5 5" />
             </svg>
+            <span>{activeFlow?.title ?? "Canvas"}</span>
           </button>
-
-          <span id="views" className="grp seg" role="group" aria-label="View">
-            <button data-v="flows" aria-pressed={inMap} title="Flow map (M)" onClick={goMap}>
-              Flows
-            </button>
-            <button
-              data-v="preview"
-              aria-pressed={!inMap}
-              title="Open page preview"
-              onClick={() => {
-                if (cur) {
-                  if (pageHash() !== cur) location.hash = pagePath(cur);
-                  setMapRoute(null);
-                } else {
-                  setMapRoute(null);
-                }
-              }}
-            >
-              Preview
-            </button>
+          <span className="page-name" title={cur ?? undefined}>
+            {cur?.replace(/^design\//, "")}
+            {curFragment && <small>#{curFragment}</small>}
           </span>
-
-          <div className="bar-context">
-            <select
-              id="proj"
-              title="Switch project"
-              value={currentProjUrl}
-              onChange={async (e) => {
-                const v = e.target.value;
-                if (v === "#add") return addFolder();
-                if (v === "#close" && currentProject) {
-                  await fetch(`/__cd/projects/${currentProject}/remove`, { method: "POST" });
-                  location.href = location.origin.replace(/^(https?:\/\/)[^.]+\.localhost/, "$1localhost");
-                  return;
-                }
-                if (v) location.href = v;
-              }}
-            >
-              {projectList.map((p) => (
-                <option key={p.id} value={p.url}>
-                  {p.name}
-                </option>
-              ))}
-              {!remote && <option value="#add">Add folder…</option>}
-              {currentProject && !remote && <option value="#close">Close this project</option>}
-            </select>
-
-            <button type="button" className="install-app" hidden={!installVisible} onClick={triggerInstall}>
-              Install app
-            </button>
-            <button type="button" className="update-app" hidden={!updateAvailable} disabled={updateBusy} onClick={applyUpdate}>
-              Update cdesign
-            </button>
-            <button
-              id="project-tools-toggle"
-              ref={toolsToggleRef}
-              className="ic"
-              popoverTarget="project-tools"
-              aria-label="Project tools"
-              title="Project tools"
-            >
-              <svg aria-hidden="true" viewBox="0 0 16 16" fill="currentColor">
-                <circle cx="3" cy="8" r="1.4" />
-                <circle cx="8" cy="8" r="1.4" />
-                <circle cx="13" cy="8" r="1.4" />
-              </svg>
-            </button>
-            <span id="agent" className={agentState} role="img" aria-label={agentLabel} title={agentLabel}>
-              <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="2.5" y="5" width="11" height="8.5" rx="2" />
-                <path d="M8 5V2m-2.5 7h.01m5 0h.01" />
-              </svg>
-            </span>
-          </div>
-
           <span id="w" className="grp">
             <button className={`ic${view === "100%" ? " on" : ""}`} data-w="100%" title="Full width" onClick={() => setWidth("100%")}>
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -1171,19 +1319,6 @@ export function App() {
             </button>
           </span>
 
-          <button
-            id="bb"
-            title="Move the toolbar to the bottom/top of the screen"
-            onClick={() => {
-              setBarBottom((b) => {
-                lsSet("cd-bar-bottom", !b ? "1" : "0");
-                return !b;
-              });
-            }}
-          >
-            {barBottom ? "Toolbar: bottom" : "Toolbar: top"}
-          </button>
-
           <div className="bar-actions">
             <button
               id="full-page"
@@ -1195,24 +1330,6 @@ export function App() {
             >
               <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M6 2H2v4m8-4h4v4M2 10v4h4m8-4v4h-4" />
-              </svg>
-            </button>
-            <button
-              id="theme"
-              className={`ic${theme === "dark" && !isWireframe ? " on" : ""}`}
-              disabled={isWireframe}
-              aria-label="Dark preview"
-              aria-pressed={theme === "dark" && !isWireframe}
-              title={isWireframe ? "Wireframes always render in light mode" : "Toggle light/dark preview"}
-              onClick={() => {
-                const next = theme === "dark" ? "light" : "dark";
-                lsSet("cd-theme", next);
-                setTheme(next);
-              }}
-            >
-              <svg aria-hidden="true" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="8" cy="8" r="2.75" />
-                <path d="M8 1v2m0 10v2M1 8h2m10 0h2M3 3l1.5 1.5m7 7L13 13m0-10-1.5 1.5m-7 7L3 13" />
               </svg>
             </button>
             <button
@@ -1242,116 +1359,6 @@ export function App() {
             </button>
           </div>
         </div>
-      </header>
-
-      <aside className="l" id="lside" ref={lsideRef} data-tab={activeTab}>
-        <div id="ltabs" role="tablist">
-          <button id="tab-chat" role="tab" aria-selected={activeTab === "chat"} onClick={() => selectTab("chat")}>
-            Chat
-          </button>
-          <button id="tab-files" role="tab" aria-selected={activeTab === "files"} onClick={() => selectTab("files")}>
-            Files
-          </button>
-          <button id="tab-comments" role="tab" aria-selected={activeTab === "comments"} onClick={() => selectTab("comments")}>
-            Comments{openComments.length > 0 && <span className="tab-badge">{openComments.length}</span>}
-          </button>
-        </div>
-
-        <div id="files" role="tabpanel">
-          {!files.length ? (
-            "No preview entries. Add a page or component preview."
-          ) : (
-            <>
-              <input
-                type="search"
-                className="file-filter"
-                placeholder="Filter files…"
-                aria-label="Filter files"
-                value={fileFilter}
-                onChange={(e) => setFileFilter(e.target.value)}
-              />
-              {!filteredFiles.length ? (
-                <small style={{ color: "var(--mut)" }}>No files match “{fileFilter.trim()}”.</small>
-              ) : (
-                <FileTree
-                  node={fileTree}
-                  prefix="design/"
-                  cur={cur}
-                  opened={openedDirs}
-                  forceOpen={Boolean(fileFilter.trim())}
-                  onToggle={(key, open) => {
-                    setOpenedDirs((prev) => {
-                      const next = new Set(prev);
-                      if (open) next.add(key);
-                      else next.delete(key);
-                      ssSet("cd-opened", JSON.stringify([...next]));
-                      return next;
-                    });
-                  }}
-                  onSelect={(path) => {
-                    setCur(path);
-                    if (mob) setMobHideLeft(true);
-                  }}
-                />
-              )}
-            </>
-          )}
-        </div>
-
-        <ChatPane tabId={tabIdRef.current} activeTab={activeTab} comments={comments} />
-
-        <div id="cm" role="tabpanel">
-          {!comments.length ? (
-            <small style={{ color: "var(--mut)" }}>No comments yet. Toggle Comment and click an element.</small>
-          ) : (
-            <>
-              {openComments.map(renderCommentCard)}
-              {doneComments.length > 0 && (
-                <details className="cdone" open={doneOpen} onToggle={(e) => setDoneOpen(e.currentTarget.open)}>
-                  <summary>Done ({doneComments.length})</summary>
-                  {doneComments.map(renderCommentCard)}
-                </details>
-              )}
-            </>
-          )}
-        </div>
-
-        <i id="lrs" title="Drag to resize" role="separator" aria-orientation="vertical" onPointerDown={startSidebarResize} />
-      </aside>
-
-      <ProjectMap
-        visible={inMap}
-        route={mapRoute ?? "map:flows"}
-        data={flowsData}
-        mode={mode}
-        onToolChange={changeBoardTool}
-        onElementSelect={selectBoardElement}
-        onOpen={(file) => {
-          lastMapRef.current = pageHash();
-          setCur(file);
-        }}
-        onSyncAction={syncAction}
-        onSyncOpen={(open) => {
-          if (open && !mob && !deskHideLeft && innerWidth < 1400) setDeskHideLeft(true);
-        }}
-        onToast={toast}
-        onFrameLoad={onFrameLoad}
-        onNavigateHash={(h) => {
-          location.hash = h;
-        }}
-      />
-
-      <main ref={mainRef}>
-        <FlowBar
-          cur={cur && curFragment ? cur + "#" + curFragment : cur}
-          inMap={inMap}
-          data={flowsData}
-          onSelectFile={setCur}
-          onNavigateHash={(h) => {
-            location.hash = h;
-          }}
-          onSyncAction={syncAction}
-        />
         <div id="stage" ref={stageRef}>
           <div className="dev" id="d1" ref={d1Ref}>
             <iframe id="fr" ref={fr1Ref} onLoad={(e) => onFrameLoad(e.currentTarget)} />
@@ -1366,15 +1373,7 @@ export function App() {
         </div>
       </main>
 
-      {mob && (!leftHidden || barOpen) && (
-        <div
-          id="mob-backdrop"
-          onClick={() => {
-            setMobHideLeft(true);
-            setBarOpen(false);
-          }}
-        />
-      )}
+      {mob && !leftHidden && <div id="mob-backdrop" onClick={() => setMobHideLeft(true)} />}
 
       <div id="pick">
         {currentProject === null && (

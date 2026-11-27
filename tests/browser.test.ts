@@ -63,150 +63,128 @@ async function runBrowserChecks(mapsOnly = false) {
     if (mapsOnly) {
       put("design/pages/Unassigned.html", "<main><h1>Unassigned page</h1></main>");
       put("design/pages/AnotherFlow.html", "<main><h1>Another flow</h1></main>");
-      put("design/wireframe/Home.tsx", "export default function Home(){return <main>Home wireframe</main>}");
       put("design/components/ui/FilterDialog.tsx", "export function Preview(){return <dialog open>Filters</dialog>}");
       put("design/flows/home.json", JSON.stringify({
         title: "Home",
-        steps: ["home", "next", "done", "option-one", "option-two"].map((id) => ({
-          id, title: id, page: id === "option-one" ? "design/components/ui/FilterDialog.tsx" : "design/pages/Home.tsx",
-          wireframe: id === "home" ? "design/wireframe/Home.tsx" : undefined,
-        })),
-        links: [
-          {from: "home", to: "next"}, {from: "next", to: "done"},
-          {from: "home", to: "option-one"}, {from: "option-one", to: "home"},
-          {from: "home", to: "option-two"}, {from: "option-two", to: "home"},
+        frames: [
+          {id: "home", title: "Home", page: "design/pages/Home.tsx", x: 0, y: 0, w: 402, h: 874},
+          {id: "filters", page: "design/components/ui/FilterDialog.tsx", x: 600, y: 100, w: 402, h: 874},
         ],
       }));
+      // An old step/link flow still opens, as frames of its pages.
       put("design/flows/other.json", JSON.stringify({
         title: "Other Flow",
-        steps: [{id: "start", page: "design/pages/AnotherFlow.html"}],
+        steps: [{id: "start", page: "design/pages/AnotherFlow.html"}, {id: "q", decision: "?"}],
+        links: [{from: "start", to: "q"}],
       }));
-      for (const route of ["map:pages", "flow:home"]) {
-        await navigate("/#" + route, "#map .thumb");
-        expect(await ev("!!document.querySelector('#views [data-v=pages]')")).toBe(false);
-        expect(await ev("!!document.querySelector('.flow-body')")).toBe(true);
-        if (route === "flow:home") {
-          // Tree growing right: home's destinations (next, option-one, option-two) stack in the next column, done follows next.
-          const [home, next, done, one, two] = await ev(`Array.from(document.querySelectorAll(".flow-body .screen"), n => ({x: n.offsetLeft, y: n.offsetTop}))`);
-          expect([one.x, two.x]).toEqual([next.x, next.x]);
-          expect(next.x).toBeGreaterThan(home.x);
-          expect(done.x).toBeGreaterThan(next.x);
-          expect(done.y).toBe(next.y);
-          expect(next.y < one.y && one.y < two.y).toBe(true);
-          expect(Math.abs(home.y - one.y)).toBeLessThan(2);
-          // Links back to the opener are ↩ badges, not dashed arrows.
-          expect(await ev('document.querySelectorAll(".edges > path[stroke-dasharray]").length')).toBe(0);
-          expect(await ev('document.querySelectorAll(".flow-body .badge.ret").length')).toBe(2);
-          // Clicking an arrow's line fits the screen at its end (the app frame) to the canvas.
-          const fitted = await ev(`(() => {
-            const hit = [...document.querySelectorAll(".edges > path.hit")].find((p) => p.textContent === "Go to done");
-            hit.dispatchEvent(new MouseEvent("click", {bubbles: true, detail: 1}));
-            const frame = document.querySelector('[data-step="done"] .thumb').getBoundingClientRect();
-            const vp = document.querySelector('.map-viewport').getBoundingClientRect();
-            return {
-              cx: Math.abs(frame.left + frame.width / 2 - vp.left - vp.width / 2),
-              cy: Math.abs(frame.top + frame.height / 2 - vp.top - vp.height / 2),
-              fill: Math.max(frame.width / (vp.width - 32), frame.height / (vp.height - 32)),
-              selected: document.querySelector('.board-selected')?.dataset.step,
-            };
-          })()`);
-          expect(fitted.cx).toBeLessThan(2);
-          expect(fitted.cy).toBeLessThan(2);
-          expect(Math.abs(fitted.fill - 1)).toBeLessThan(0.01);
-          await until(() => ev(`document.querySelector('.board-selected')?.dataset.step === "done"`));
-        }
-        const key = (key: string, code: string, shiftKey = false) => ev(`window.dispatchEvent(new KeyboardEvent("keydown", ${JSON.stringify({key, code, shiftKey, cancelable: true})}))`);
-        const camera = () => ev("document.querySelector('.map-position').style.translate");
-        const zoom = () => ev("document.querySelector('.map-canvas').style.zoom");
-        const before = await camera();
-        expect(Number(await zoom())).toBeLessThan(1);
-        await key("ArrowLeft", "ArrowLeft");
-        expect(await camera()).not.toBe(before);
-        await key(")", "Digit0", true);
-        expect(await zoom()).toBe("1");
-        const anchorError = await ev(`(() => {
-          const viewport = document.querySelector('.map-viewport');
-          const canvas = document.querySelector('.map-canvas');
-          const {left, top} = viewport.getBoundingClientRect();
-          const x = Math.round(left + 100), y = Math.round(top + 100);
-          const before = canvas.getBoundingClientRect();
-          viewport.dispatchEvent(new WheelEvent('wheel', {
-            clientX: x, clientY: y, deltaY: -60, ctrlKey: true, cancelable: true
-          }));
-          const after = canvas.getBoundingClientRect();
-          return Math.abs((x - before.left) - (x - after.left) / Number(canvas.style.zoom));
-        })()`);
-        expect(anchorError).toBeLessThan(1);
-        expect(Number(await zoom())).toBeGreaterThan(1);
-        // A plain vertical two-finger scroll pans down without zooming.
-        const zoomBefore = await zoom(), yBefore = await camera();
-        await ev(`document.querySelector('.map-viewport').dispatchEvent(new WheelEvent('wheel', {deltaY: 80, cancelable: true}))`);
-        expect(await zoom()).toBe(zoomBefore);
-        expect(await camera()).not.toBe(yBefore);
-        await ev("document.querySelector('#map .thumb').click()");
-        await until(() => ev("!!document.querySelector('.board-selected')"));
-        await key("@", "Digit2", true);
-        const centered = await ev(`(() => {
-          const {left, width} = document.querySelector('.board-selected').getBoundingClientRect();
-          const viewport = document.querySelector('.map-viewport').getBoundingClientRect();
-          return Math.abs(left + width / 2 - viewport.left - viewport.width / 2);
-        })()`);
-        expect(centered).toBeLessThan(1);
-        await key("h", "KeyH");
-        await until(() => ev("!!document.querySelector('.map-viewport.hand')"));
-        await key("v", "KeyV");
-        await until(() => ev("!document.querySelector('.map-viewport.hand')"));
-        await key("!", "Digit1", true);
-        const {x, y} = await ev(`(() => {
-          const r = document.querySelector('.map-viewport').getBoundingClientRect();
-          return {x: Math.round(r.left + Math.min(80, r.width / 4)), y: Math.round(r.top + Math.min(100, r.height / 4))};
-        })()`);
-        const beforeDrag = await camera();
-        await cmd("Input.dispatchKeyEvent", {type: "keyDown", key: " ", code: "Space"});
-        expect(await ev("!!document.querySelector('.map-viewport.hand')")).toBe(true);
-        expect(await ev(`document.elementFromPoint(${x}, ${y})?.closest('.map-viewport')?.className ?? document.elementFromPoint(${x}, ${y})?.outerHTML.slice(0, 100)`)).toBe("map-viewport hand");
-        await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x, y});
-        await cmd("Input.dispatchMouseEvent", {type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1});
-        await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x: x + 20, y: y + 10, buttons: 1});
-        await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x: x + 45, y: y + 25, buttons: 1});
-        await cmd("Input.dispatchMouseEvent", {type: "mouseReleased", x: x + 45, y: y + 25, button: "left", clickCount: 1});
-        await cmd("Input.dispatchKeyEvent", {type: "keyUp", key: " ", code: "Space"});
-        await until(async () => (await camera()) !== beforeDrag);
-        const beforeScroll = await camera();
-        await cmd("Input.dispatchMouseEvent", {type: "mouseWheel", x, y, deltaX: 30, deltaY: 50});
-        await until(async () => (await camera()) !== beforeScroll);
-        const fitZoom = Number(await zoom());
-        await cmd("Input.dispatchTouchEvent", {type: "touchStart", touchPoints: [{x, y, id: 1}, {x: x + 60, y, id: 2}]});
-        await cmd("Input.dispatchTouchEvent", {type: "touchMove", touchPoints: [{x, y, id: 1}, {x: x + 100, y, id: 2}]});
-        await cmd("Input.dispatchTouchEvent", {type: "touchEnd", touchPoints: []});
-        expect(Number(await zoom())).toBeGreaterThan(fitZoom);
-        const savedPosition = await camera(), savedZoom = await zoom();
-        await ev("window.beforeCameraReload = true");
-        await cmd("Page.reload");
-        await until(() => ev(`!window.beforeCameraReload && location.hash === ${JSON.stringify("#" + route)} && !!document.querySelector('#map .thumb')`));
-        expect(await camera()).toBe(savedPosition);
-        expect(await zoom()).toBe(savedZoom);
-      }
+      const flowFile = () => JSON.parse(readFileSync(join(root, "design/flows/home.json"), "utf8"));
+      await navigate("/#flow:home", "#map .frame iframe");
+      expect(await ev(`[...document.querySelectorAll(".tabs .tab")].map(t => t.textContent)`)).toEqual(["Home", "Other Flow"]);
+      expect(await ev(`document.querySelector(".tab.on").textContent`)).toBe("Home");
+      expect(await ev(`[...document.querySelectorAll("#map [data-screen]")].map(f => f.dataset.screen)`)).toEqual(["design/pages/Home.tsx", "design/components/ui/FilterDialog.tsx"]);
+      expect(await ev(`[...document.querySelectorAll(".frame-name")].map(n => n.textContent)`)).toEqual(["Home", "FilterDialog"]);
 
-      const firstScreen = ".flow-body .screen:first-of-type";
-      const fileOfFirstScreen = () => ev(`document.querySelector(${JSON.stringify(firstScreen)})?.dataset.screen`);
-      expect(await fileOfFirstScreen()).toBe("design/wireframe/Home.tsx");
-      await ev(`[...document.querySelectorAll(".map-head button")].find(b => b.textContent === "Screens & Components").click()`);
-      await until(async () => await fileOfFirstScreen() === "design/pages/Home.tsx");
-      const boardFiles = () => ev(`[...document.querySelectorAll("#map [data-screen]")].map(card => card.dataset.screen)`);
-      expect(await boardFiles()).toEqual([
-        "design/pages/Home.tsx", "design/pages/Home.tsx", "design/pages/Home.tsx",
-        "design/components/ui/FilterDialog.tsx", "design/pages/Home.tsx",
-      ]);
+      const key = (key: string, code: string, shiftKey = false) => ev(`window.dispatchEvent(new KeyboardEvent("keydown", ${JSON.stringify({key, code, shiftKey, cancelable: true})}))`);
+      const camera = () => ev("document.querySelector('.cv-position').style.translate");
+      const zoom = () => ev("document.querySelector('.cv-canvas').style.zoom");
+      const before = await camera();
+      expect(Number(await zoom())).toBeLessThan(1);
+      await key("ArrowLeft", "ArrowLeft");
+      expect(await camera()).not.toBe(before);
+      await key("0", "Digit0");
+      expect(await zoom()).toBe("1");
+      const anchorError = await ev(`(() => {
+        const viewport = document.querySelector('.cv-viewport');
+        const canvas = document.querySelector('.cv-canvas');
+        const {left, top} = viewport.getBoundingClientRect();
+        const x = Math.round(left + 100), y = Math.round(top + 100);
+        const before = canvas.getBoundingClientRect();
+        viewport.dispatchEvent(new WheelEvent('wheel', {clientX: x, clientY: y, deltaY: -60, ctrlKey: true, cancelable: true}));
+        const after = canvas.getBoundingClientRect();
+        return Math.abs((x - before.left) - (x - after.left) / Number(canvas.style.zoom));
+      })()`);
+      expect(anchorError).toBeLessThan(1);
+      expect(Number(await zoom())).toBeGreaterThan(1);
+      // A plain vertical two-finger scroll pans without zooming.
+      const zoomBefore = await zoom(), yBefore = await camera();
+      await ev(`document.querySelector('.cv-viewport').dispatchEvent(new WheelEvent('wheel', {deltaY: 80, cancelable: true}))`);
+      expect(await zoom()).toBe(zoomBefore);
+      expect(await camera()).not.toBe(yBefore);
+      await key("h", "KeyH");
+      await until(() => ev("!!document.querySelector('.cv-viewport.hand')"));
+      await key("v", "KeyV");
+      await until(() => ev("!document.querySelector('.cv-viewport.hand')"));
+      await key("!", "Digit1", true);
+      const fitZoom = Number(await zoom());
+      const {x, y} = await ev(`(() => { const r = document.querySelector('.cv-viewport').getBoundingClientRect(); return {x: Math.round(r.left + 40), y: Math.round(r.top + 60)}; })()`);
+      // Dragging the empty canvas pans it; a two-finger pinch zooms.
+      const beforeDrag = await camera();
+      await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x, y});
+      await cmd("Input.dispatchMouseEvent", {type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1});
+      await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x: x + 20, y: y + 10, buttons: 1});
+      await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x: x + 45, y: y + 25, buttons: 1});
+      await cmd("Input.dispatchMouseEvent", {type: "mouseReleased", x: x + 45, y: y + 25, button: "left", clickCount: 1});
+      await until(async () => (await camera()) !== beforeDrag);
+      await cmd("Input.dispatchTouchEvent", {type: "touchStart", touchPoints: [{x, y, id: 1}, {x: x + 60, y, id: 2}]});
+      await cmd("Input.dispatchTouchEvent", {type: "touchMove", touchPoints: [{x, y, id: 1}, {x: x + 100, y, id: 2}]});
+      await cmd("Input.dispatchTouchEvent", {type: "touchEnd", touchPoints: []});
+      expect(Number(await zoom())).toBeGreaterThan(fitZoom);
+      const savedPosition = await camera(), savedZoom = await zoom();
+      await ev("window.beforeCameraReload = true");
+      await cmd("Page.reload");
+      await until(() => ev(`!window.beforeCameraReload && location.hash === "#flow:home" && !!document.querySelector('#map .frame iframe')`));
+      expect(await camera()).toBe(savedPosition);
+      expect(await zoom()).toBe(savedZoom);
+      await key("!", "Digit1", true);
 
-      // Fit one frame so the element remains hit-testable at the board's scaled coordinates.
-      await ev(`document.querySelector(".flow-body .thumb").click()`);
-      await until(() => ev(`!!document.querySelector(".board-selected")`));
-      await ev(`window.dispatchEvent(new KeyboardEvent("keydown", {key:"@", code:"Digit2", shiftKey:true, cancelable:true}))`);
-      await until(() => ev(`!!document.querySelector(".flow-body iframe").contentDocument?.querySelector("button[data-cd-id]")`));
+      // Drag a frame by its label: the new position is saved to the flow file.
+      const rect = (sel: string) => ev(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return {x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height}; })()`);
+      const drag = async (from: {x: number; y: number}, dx: number, dy: number) => {
+        await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", ...from});
+        await cmd("Input.dispatchMouseEvent", {type: "mousePressed", ...from, button: "left", buttons: 1, clickCount: 1});
+        for (let i = 1; i <= 5; i++) await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x: from.x + dx * i / 5, y: from.y + dy * i / 5, buttons: 1});
+        await cmd("Input.dispatchMouseEvent", {type: "mouseReleased", x: from.x + dx, y: from.y + dy, button: "left", clickCount: 1});
+      };
+      const z = Number(await zoom());
+      await drag(await rect('[data-frame="filters"] .frame-name'), 100, 50);
+      await until(() => flowFile().frames[1].x !== 600);
+      expect(Math.abs(flowFile().frames[1].x - (600 + 100 / z))).toBeLessThan(2);
+      expect(Math.abs(flowFile().frames[1].y - (100 + 50 / z))).toBeLessThan(2);
+      expect(await ev(`document.querySelector(".frame.sel")?.dataset.frame`)).toBe("filters");
+      // Resize the selected frame from its corner handle (zoomed to it so the handle is on screen).
+      await key("@", "Digit2", true);
+      const z2 = Number(await zoom());
+      await drag(await rect('[data-frame="filters"] .rz.se'), 40, -60);
+      await until(() => flowFile().frames[1].w !== 402);
+      expect(Math.abs(flowFile().frames[1].w - (402 + 40 / z2))).toBeLessThan(2);
+      expect(Math.abs(flowFile().frames[1].h - (874 - 60 / z2))).toBeLessThan(2);
+      expect(await ev(`document.querySelector(".cv-size").value`)).toBe("mixed");
+      // The size picker resizes every frame of the tab.
+      await ev(`(() => { const s = document.querySelector(".cv-size"); s.value = "Tablet"; s.dispatchEvent(new Event("change", {bubbles: true})); })()`);
+      await until(() => flowFile().frames.every((f: any) => f.w === 768 && f.h === 1024));
+      expect(await ev(`document.querySelector(".cv-size").value`)).toBe("Tablet");
+      expect(flowFile().frames[1].x).toBeGreaterThanOrEqual(768);
+      // A layout save does not reload the previews.
+      await ev(`document.querySelector('[data-frame="home"] iframe').contentWindow.__kept = 1`);
+      await Bun.sleep(400);
+      expect(await ev(`document.querySelector('[data-frame="home"] iframe').contentWindow.__kept`)).toBe(1);
+
+      // Preview hands the pointer to the pages; Design takes it back.
+      await key("p", "KeyP");
+      await until(() => ev(`getComputedStyle(document.querySelector('#map iframe')).pointerEvents === "auto"`));
+      expect(await ev(`document.querySelector('[data-frame="home"] iframe').contentDocument.documentElement.classList.contains("__cd-live")`)).toBe(true);
+      await ev(`[...document.querySelectorAll(".cv-modes button")].find(b => b.textContent.includes("Design")).click()`);
+      await until(() => ev(`getComputedStyle(document.querySelector('#map iframe')).pointerEvents === "none"`));
+
+      // Focus one frame so the element remains hit-testable at the canvas's scaled coordinates.
+      await ev(`document.querySelector('[data-frame="home"] .frame-name').dispatchEvent(new PointerEvent("pointerdown", {bubbles: true, button: 0, pointerId: 1}))`);
+      await ev(`document.querySelector('[data-frame="home"] .frame-name').dispatchEvent(new PointerEvent("pointerup", {bubbles: true, button: 0, pointerId: 1}))`);
+      await until(() => ev(`document.querySelector(".frame.sel")?.dataset.frame === "home"`));
+      await key("@", "Digit2", true);
+      await until(() => ev(`!!document.querySelector('[data-frame="home"] iframe').contentDocument?.querySelector("button[data-cd-id]")`));
       // A page's unsaved-changes guard is muted in previews, so the viewer can swap frames without a leave prompt.
       expect(await ev(`(() => {
-        const w = document.querySelector(".flow-body iframe").contentWindow;
+        const w = document.querySelector('[data-frame="home"] iframe').contentWindow;
         w.addEventListener("beforeunload", (e) => e.preventDefault());
         w.onbeforeunload = () => "unsaved";
         const e = new w.Event("beforeunload", {cancelable: true});
@@ -214,12 +192,12 @@ async function runBrowserChecks(mapsOnly = false) {
         return e.defaultPrevented || w.onbeforeunload !== null;
       })()`)).toBe(false);
       const point = await ev(`(() => {
-        const f = document.querySelector(".flow-body iframe");
+        const f = document.querySelector('[data-frame="home"] iframe');
         const frame = f.getBoundingClientRect(), button = f.contentDocument.querySelector("button").getBoundingClientRect();
         return {x: frame.left + frame.width * (button.left + button.width / 2) / f.clientWidth,
           y: frame.top + frame.height * (button.top + button.height / 2) / f.clientHeight};
       })()`);
-      expect(await ev(`document.elementFromPoint(${point.x}, ${point.y})?.matches(".flow-body .thumb")`)).toBe(true);
+      expect(await ev(`document.elementFromPoint(${point.x}, ${point.y})?.matches('[data-frame="home"] .frame-body')`)).toBe(true);
       const clickElement = async () => {
         await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", ...point});
         await cmd("Input.dispatchMouseEvent", {type: "mousePressed", ...point, button: "left", buttons: 1, clickCount: 1});
@@ -229,36 +207,45 @@ async function runBrowserChecks(mapsOnly = false) {
       const selection = await until(async () => (await (await fetch(base + "/__cd/page")).json() as any).selection);
       expect(selection.file).toBe("design/components/ui/Button.tsx");
       expect(selection.page).toBe("design/pages/Home.tsx");
-      expect(await ev(`document.querySelector(".flow-body iframe").contentDocument.querySelector("button.__cd-sel")?.textContent`)).toBe("Count 0");
+      expect(await ev(`document.querySelector('[data-frame="home"] iframe').contentDocument.querySelector("button.__cd-sel")?.textContent`)).toBe("Count 0");
+      expect(flowFile().frames[0].x).toBe(0); // a click is not a drag
 
-      await ev(`document.querySelector('.map-head button[title="Comment (C)"]').click()`);
+      await ev(`document.querySelector('.cv-toolbar button[aria-label="Comment"]').click()`);
       await clickElement();
       await until(() => ev(`!!document.querySelector(".board-comment textarea")`));
-      const beforeWheel = await ev(`document.querySelector(".map-canvas").style.zoom`);
+      const beforeWheel = await zoom();
       await cmd("Input.dispatchMouseEvent", {type: "mouseWheel", ...point, deltaY: -50, deltaX: 0, modifiers: 2});
-      await until(() => ev(`document.querySelector(".map-canvas").style.zoom !== ${JSON.stringify(beforeWheel)}`));
+      await until(async () => (await zoom()) !== beforeWheel);
       await ev(`document.querySelector(".board-comment textarea").value = "Review this flow element";
         document.querySelector(".board-comment").requestSubmit()`);
       const comment = await until(async () => (await (await fetch(base + "/__cd/comments")).json() as any[])[0]);
       expect(comment).toMatchObject({file: selection.file, cdId: selection.cdId, uses: selection.uses, status: "draft", text: "Review this flow element"});
-      await until(() => ev(`!!document.querySelector(".flow-body iframe").contentDocument.querySelector(".__cd-pin")`));
-      const position = () => ev(`document.querySelector(".map-position").style.translate`);
-      const beforeTouch = await position();
+      await until(() => ev(`!!document.querySelector('[data-frame="home"] iframe').contentDocument.querySelector(".__cd-pin")`));
+      const beforeTouch = await camera();
       await cmd("Input.dispatchTouchEvent", {type: "touchStart", touchPoints: [{...point, id: 1}]});
       await cmd("Input.dispatchTouchEvent", {type: "touchMove", touchPoints: [{x: point.x + 40, y: point.y + 35, id: 1}]});
       await cmd("Input.dispatchTouchEvent", {type: "touchEnd", touchPoints: []});
-      await until(async () => (await position()) !== beforeTouch);
+      await until(async () => (await camera()) !== beforeTouch);
       expect(await ev(`!!document.querySelector(".board-comment")`)).toBe(false);
-      const screenPosition = await position();
-      await ev(`[...document.querySelectorAll(".map-head button")].find(b => b.textContent === "Wireframes").click()`);
-      await until(async () => await fileOfFirstScreen() === "design/wireframe/Home.tsx");
-      expect(await position()).not.toBe(screenPosition);
-      await ev(`[...document.querySelectorAll(".map-head button")].find(b => b.textContent === "Screens & Components").click()`);
-      await until(async () => await fileOfFirstScreen() === "design/pages/Home.tsx");
-      expect(await position()).toBe(screenPosition);
-      await ev(`[...document.querySelectorAll(".map-head .chips button")].find(b => b.textContent === "Other Flow").click()`);
-      await until(async () => await fileOfFirstScreen() === "design/pages/AnotherFlow.html");
-      expect(await boardFiles()).toEqual(["design/pages/AnotherFlow.html"]);
+      await ev(`document.querySelector('.cv-toolbar button[aria-label="Select"]').click()`);
+
+      // A frame opens as a full page; Back returns to its tab.
+      await ev(`document.querySelector('[data-frame="home"] .frame-acts button[title^="Open"]').click()`);
+      await until(() => ev(`location.hash === "#design/pages/Home.tsx" && getComputedStyle(document.querySelector("main")).display !== "none" && document.querySelector("#map").hidden`));
+      await ev(`document.querySelector("#back").click()`);
+      await until(() => ev(`location.hash === "#flow:home" && !document.querySelector("#map").hidden`));
+
+      // Add a page from the toolbar, remove it with Delete, and switch tabs.
+      await ev(`document.querySelector(".cv-toolbar .add").click()`);
+      await until(() => ev(`!!document.querySelector(".cv-add input")`));
+      await ev(`[...document.querySelectorAll(".cv-add .f")].find(b => b.title === "design/pages/Unassigned.html").click()`);
+      await until(() => flowFile().frames.length === 3);
+      expect(flowFile().frames[2]).toMatchObject({page: "design/pages/Unassigned.html", w: 768, h: 1024});
+      await until(() => ev(`document.querySelector(".frame.sel")?.dataset.screen === "design/pages/Unassigned.html"`));
+      await key("Delete", "Delete");
+      await until(() => flowFile().frames.length === 2);
+      await ev(`[...document.querySelectorAll(".tabs .tab")].find(t => t.textContent === "Other Flow").click()`);
+      await until(() => ev(`location.hash === "#flow:other" && [...document.querySelectorAll("#map [data-screen]")].map(f => f.dataset.screen).join() === "design/pages/AnotherFlow.html"`));
       return;
     }
     await navigate("/p/design/pages/Home.tsx", "button");
@@ -331,7 +318,7 @@ async function runBrowserChecks(mapsOnly = false) {
     expect(multi.note).toContain("mobile 390px");
     expect(multi.data.length).toBeGreaterThan(inlineShot.data.length);
     // Page history belongs to the viewer, including its initial page and both split frames.
-    await navigate("/", "#fr");
+    await navigate("/#design/components/ui/Button.tsx", "#fr");
     await until(() => ev("!!document.querySelector('#fr').contentDocument?.querySelector('button')"));
     const initial = await ev("location.hash.slice(1)");
     expect(initial).toBe("design/components/ui/Button.tsx");
@@ -417,7 +404,7 @@ async function runBrowserChecks(mapsOnly = false) {
       }
       expect(captures[1]).toBe(captures[0]); expect(captures[2]).toBe(captures[0]);
     }
-    await navigate("/", "#fr");
+    await navigate("/#design/components/ui/Button.tsx", "#fr");
     expect(await ev("document.querySelector('.viewer-bar .update-app').hidden")).toBe(true);
     const runtimeSource = readFileSync(runtimeCli, "utf8");
     appendFileSync(runtimeCli, "\nconst = broken;\n");
@@ -457,5 +444,5 @@ async function runBrowserChecks(mapsOnly = false) {
   }
 }
 
-test.skipIf(!chrome)("browser: unified Flow canvas navigation, layers and element comments", () => runBrowserChecks(true), 60000);
+test.skipIf(!chrome)("browser: canvas tabs, frame drag/resize/size, Design and Preview modes, element comments", () => runBrowserChecks(true), 60000);
 test.skipIf(!chrome)("browser: React hooks, styling, original source comments, reloads, errors, screenshots and conversion parity", () => runBrowserChecks(), 60000);

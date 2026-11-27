@@ -43,14 +43,15 @@ test.skipIf(!chrome)("browser: Chat/Files tabs, resize/collapse, Codex send with
     const cmd = (method: string, params = {}) => send(method, params, sessionId);
     const ev = async (expression: string) => { const r = await cmd("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }); if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description); return r.result.value; };
     await cmd("Page.enable");
-    await cmd("Page.navigate", { url: `http://${projectId(root)}.localhost:${port}/` });
+    await cmd("Page.navigate", { url: `http://${projectId(root)}.localhost:${port}/#design/pages/Home.tsx` });
     await until(() => ev("document.readyState==='complete' && !!document.querySelector('#chat textarea') && !!document.querySelector('#fr').contentDocument?.querySelector('main')"));
 
     await cmd("Emulation.setDeviceMetricsOverride", { width: 760, height: 800, deviceScaleFactor: 1, mobile: false });
     expect(await ev("document.querySelector('#mode').getBoundingClientRect().right <= innerWidth")).toBe(true);
     await cmd("Emulation.setDeviceMetricsOverride", { width: 390, height: 700, deviceScaleFactor: 1, mobile: true });
     await ev("document.querySelector('#pl').click()");
-    expect(await ev("document.querySelector('#bar').scrollWidth > document.querySelector('#bar').clientWidth && document.querySelector('#project-tools-toggle').offsetHeight >= 44 && document.querySelector('#theme').offsetTop === document.querySelector('#mode').offsetTop")).toBe(true);
+    // the top bar fits the phone: no page overflow, project tools and theme stay reachable
+    expect(await ev("document.documentElement.scrollWidth <= innerWidth && ['#project-tools-toggle', '#theme'].every((s) => { const r = document.querySelector(s).getBoundingClientRect(); return r.width >= 40 && r.height >= 40 && r.right <= innerWidth; })")).toBe(true);
     await ev("document.querySelector('#project-tools-toggle').click()");
     expect(await ev("document.querySelector('#project-tools').matches(':popover-open')")).toBe(true);
     await ev("document.querySelector('#tunnel').click()");
@@ -120,7 +121,7 @@ test.skipIf(!chrome)("browser: Chat/Files tabs, resize/collapse, Codex send with
     await until(() => ev("[...document.querySelectorAll('.cc-msg.message')].at(-1)?.textContent==='Hello from' && document.querySelector('.cc-note')?.textContent.startsWith('Stopped')"));
 
     // after a reload the idle snapshot has no turn id: Stop must still work on the next turn
-    await cmd("Page.navigate", { url: `http://${projectId(root)}.localhost:${port}/` });
+    await cmd("Page.navigate", { url: `http://${projectId(root)}.localhost:${port}/#design/pages/Home.tsx` });
     await until(() => ev("document.readyState==='complete' && !!document.querySelector('#chat textarea') && !!document.querySelector('.cc-msg.user') && document.querySelector('.cc-pick-name')?.textContent.startsWith('Codex')"));
     expect(await ev("document.querySelector('.cc-tool') === null")).toBe(true);
     await ev("{const t=document.querySelector('#chat textarea');t.value='slow again';t.dispatchEvent(new Event('input'));document.querySelector('.cc-form .go').click()}");

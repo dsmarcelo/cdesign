@@ -8,7 +8,7 @@ Scope the review to the requested target. Use `cdesign page` for a vague locatio
 
 Read `design/cdesign.json` to identify React TSX versus HTML mode and Tailwind versus plain CSS. React entries must use TSX; component contracts use JSDoc and typed props. Component previews preferably use a same-file named `Preview` export; separate default-export `previews/Name.preview.tsx` entries remain supported. Verify the effective preview (inline takes precedence when opening a component) and supported variants/states. HTML contracts/previews retain their existing conventions.
 
-Files under `design/wireframe/` are lo-fi wireframes: review them for structure, content and flow (against `cdesign flows show <id>`), not visual polish or tokens. A wireframe that differs from its page is not a defect by itself; report pairs the user should look at with `cdesign sync`.
+When a page belongs to a flow (`cdesign flows show <id>`), review it in the context of the screens around it: consistent navigation, titles and states across the journey.
 
 Run `cdesign check` for undefined tokens/components, missing previews, contract documentation and broken guidance file links. Its success does not prove visual consistency or accessibility.
 
