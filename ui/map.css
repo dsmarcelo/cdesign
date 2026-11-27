@@ -7,7 +7,7 @@
 #back[hidden]{display:none}
 
 #map{grid-area:2/2;display:none;position:relative;overflow:auto;background:#000;background-image:radial-gradient(#1c1c1c 1px,transparent 1px);background-size:20px 20px}
-body.map #map{display:block}
+body.map #map{display:flex;flex-direction:column;overflow:hidden;min-height:0;min-width:0}
 body.map main{display:none}
 body.map :is(#w,#devs,#full-page){display:none!important}
 .map-head{position:sticky;top:0;left:0;z-index:3;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 16px;background:#000d;backdrop-filter:blur(6px);border-bottom:1px solid var(--line)}
@@ -47,7 +47,6 @@ html[data-theme=dark] .thumb{background:#111}
 .thumb iframe{position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none;background:inherit}
 body.picking #map .thumb iframe{pointer-events:auto}
 body.picking #map .thumb{cursor:crosshair}
-#map.panning,#map.panning *{cursor:grabbing!important}
 .node.fallback .thumb{opacity:.55}
 .thumb.empty{display:grid;place-items:center;background:#111;color:var(--mut);font-size:calc(13px / var(--z,1));outline:calc(1.5px / var(--z,1)) dashed #404040}
 .node.hub .thumb{outline-color:#737373}
@@ -96,3 +95,13 @@ main>#stage{flex:1 1 0;height:auto;min-height:0}
   .sync-panel{top:auto!important;width:100%;height:60vh;border-left:0;border-top:1px solid var(--line)}
   #map.panel{padding-right:0}
 }
+
+.map-head{flex:none}
+.map-viewport{position:relative;flex:1;min-height:0;overflow:clip;touch-action:none;overscroll-behavior:none;user-select:none;-webkit-user-select:none}
+.map-viewport .map-canvas{position:absolute;top:0;left:0;min-width:0}
+.map-viewport.hand,.map-viewport.hand *{cursor:grab!important}
+.map-viewport.panning,.map-viewport.panning *{cursor:grabbing!important}
+.map-viewport.hand iframe{pointer-events:none!important}
+.board-selected .thumb{outline:2px solid #5da9ff}
+
+.map-position{position:absolute;inset:0 auto auto 0}

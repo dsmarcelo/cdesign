@@ -16,7 +16,7 @@ async function until<T>(fn: () => T | Promise<T>, timeout = 15000): Promise<NonN
   throw new Error("Timed out waiting for browser state");
 }
 
-test.skipIf(!chrome)("browser: React hooks, styling, original source comments, reloads, errors, screenshots and conversion parity", async () => {
+async function runBrowserChecks(mapsOnly = false) {
   const root = mkdtempSync(join(tmpdir(), "cdesign-browser-"));
   const home = join(root, ".cdesign/home"), profile = join(root, ".cdesign/chrome");
   mkdirSync(home, {recursive: true});
@@ -60,6 +60,77 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
       await until(async () => ev(`document.readyState==='complete' && document.querySelector(${JSON.stringify(selector)}) && window.__cdReady!==false`));
     };
     await cmd("Page.enable");
+    if (mapsOnly) {
+      put("design/flows/home.json", JSON.stringify({title: "Home", steps: [{id: "home", title: "Home", page: "design/pages/Home.tsx"}]}));
+      for (const route of ["map:pages", "flow:home"]) {
+        await navigate("/#" + route, "#map .thumb");
+        const key = (key: string, code: string, shiftKey = false) => ev(`window.dispatchEvent(new KeyboardEvent("keydown", ${JSON.stringify({key, code, shiftKey, cancelable: true})}))`);
+        const camera = () => ev("document.querySelector('.map-position').style.translate");
+        const zoom = () => ev("document.querySelector('.map-canvas').style.zoom");
+        const before = await camera();
+        expect(Number(await zoom())).toBeLessThan(1);
+        await key("ArrowLeft", "ArrowLeft");
+        expect(await camera()).not.toBe(before);
+        await key(")", "Digit0", true);
+        expect(await zoom()).toBe("1");
+        const anchorError = await ev(`(() => {
+          const viewport = document.querySelector('.map-viewport');
+          const canvas = document.querySelector('.map-canvas');
+          const {left, top} = viewport.getBoundingClientRect();
+          const x = Math.round(left + 100), y = Math.round(top + 100);
+          const before = canvas.getBoundingClientRect();
+          viewport.dispatchEvent(new WheelEvent('wheel', {
+            clientX: x, clientY: y, deltaY: -60, cancelable: true
+          }));
+          const after = canvas.getBoundingClientRect();
+          return Math.abs((x - before.left) - (x - after.left) / Number(canvas.style.zoom));
+        })()`);
+        expect(anchorError).toBeLessThan(1);
+        expect(Number(await zoom())).toBeGreaterThan(1);
+        await ev("document.querySelector('#map .thumb').click()");
+        await until(() => ev("!!document.querySelector('.board-selected')"));
+        await key("@", "Digit2", true);
+        const centered = await ev(`(() => {
+          const {left, width} = document.querySelector('.board-selected').getBoundingClientRect();
+          const viewport = document.querySelector('.map-viewport').getBoundingClientRect();
+          return Math.abs(left + width / 2 - viewport.left - viewport.width / 2);
+        })()`);
+        expect(centered).toBeLessThan(1);
+        await key("h", "KeyH");
+        await until(() => ev("!!document.querySelector('.map-viewport.hand')"));
+        await key("v", "KeyV");
+        await until(() => ev("!document.querySelector('.map-viewport.hand')"));
+        await key("!", "Digit1", true);
+        const {x, y} = await ev(`(() => {
+          const r = document.querySelector('.map-viewport').getBoundingClientRect();
+          return {x: Math.round(r.left + Math.min(80, r.width / 4)), y: Math.round(r.top + Math.min(100, r.height / 4))};
+        })()`);
+        const beforeDrag = await camera();
+        await cmd("Input.dispatchKeyEvent", {type: "keyDown", key: " ", code: "Space"});
+        expect(await ev("!!document.querySelector('.map-viewport.hand')")).toBe(true);
+        expect(await ev(`document.elementFromPoint(${x}, ${y})?.closest('.map-viewport')?.className ?? document.elementFromPoint(${x}, ${y})?.outerHTML.slice(0, 100)`)).toBe("map-viewport hand");
+        await cmd("Input.dispatchMouseEvent", {type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1});
+        await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x: x + 45, y: y + 25, buttons: 1});
+        await until(async () => (await camera()) !== beforeDrag);
+        await cmd("Input.dispatchMouseEvent", {type: "mouseReleased", x: x + 45, y: y + 25, button: "left", clickCount: 1});
+        await cmd("Input.dispatchKeyEvent", {type: "keyUp", key: " ", code: "Space"});
+        const beforeScroll = await camera();
+        await cmd("Input.dispatchMouseEvent", {type: "mouseWheel", x, y, deltaX: 30, deltaY: 50});
+        await until(async () => (await camera()) !== beforeScroll);
+        const fitZoom = Number(await zoom());
+        await cmd("Input.dispatchTouchEvent", {type: "touchStart", touchPoints: [{x, y, id: 1}, {x: x + 60, y, id: 2}]});
+        await cmd("Input.dispatchTouchEvent", {type: "touchMove", touchPoints: [{x, y, id: 1}, {x: x + 100, y, id: 2}]});
+        await cmd("Input.dispatchTouchEvent", {type: "touchEnd", touchPoints: []});
+        expect(Number(await zoom())).toBeGreaterThan(fitZoom);
+        const savedPosition = await camera(), savedZoom = await zoom();
+        await ev("window.beforeCameraReload = true");
+        await cmd("Page.reload");
+        await until(() => ev(`!window.beforeCameraReload && location.hash === ${JSON.stringify("#" + route)} && !!document.querySelector('#map .thumb')`));
+        expect(await camera()).toBe(savedPosition);
+        expect(await zoom()).toBe(savedZoom);
+      }
+      return;
+    }
     await navigate("/p/design/pages/Home.tsx", "button");
     expect(await ev("getComputedStyle(document.querySelector('button')).padding")).toBe("16px");
     expect(await ev("document.querySelectorAll('button').length")).toBe(2);
@@ -254,4 +325,7 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
     socket?.close(); browser?.kill(); daemon.kill();
     await Promise.all([browser?.exited, daemon.exited]); rmSync(root,{recursive:true,force:true});
   }
-}, 60000);
+}
+
+test.skipIf(!chrome)("browser: pan and zoom on Pages and Flows with mouse, keyboard, wheel and touch", () => runBrowserChecks(true), 60000);
+test.skipIf(!chrome)("browser: React hooks, styling, original source comments, reloads, errors, screenshots and conversion parity", () => runBrowserChecks(), 60000);

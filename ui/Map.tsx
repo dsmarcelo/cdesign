@@ -3,6 +3,8 @@ import {
   baseName,
   MAP_DEVICE,
   previewPath,
+  lsGet,
+  lsSet,
   ssGet,
   ssSet,
   SYNC_STATE,
@@ -157,7 +159,6 @@ function ScreenCard({
   item,
   style,
   mode,
-  draggedRef,
   onOpen,
   onFrameLoad,
   registerFrame,
@@ -170,7 +171,6 @@ function ScreenCard({
   item?: SyncItem;
   style?: React.CSSProperties;
   mode: ViewerMode;
-  draggedRef: React.MutableRefObject<boolean>;
   onOpen: (file: string) => void;
   onFrameLoad: (f: HTMLIFrameElement) => void;
   registerFrame: (el: HTMLIFrameElement | null) => void;
@@ -178,7 +178,7 @@ function ScreenCard({
   const [w, h] = MAP_DEVICE[device];
   const st = item ? SYNC_STATE[item.state] : null;
   return (
-    <div className={`node screen ${device}${cls ? " " + cls : ""}`} style={style}>
+    <div data-screen={file ?? undefined} className={`node screen ${device}${cls ? " " + cls : ""}`} style={style}>
       <div className="cap">
         <button
           type="button"
@@ -202,8 +202,8 @@ function ScreenCard({
       <div
         className={`thumb ${device}${!file ? " empty" : ""}`}
         style={{ width: w, height: h }}
-        onClick={() => {
-          if (file && !mode && !draggedRef.current) onOpen(file);
+        onDoubleClick={() => {
+          if (file && !mode) onOpen(file);
         }}
       >
         {!file ? (
@@ -244,11 +244,16 @@ export function ProjectMap({
   onNavigateHash: (h: string) => void;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const headRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
-  const draggedRef = useRef(false);
-  const zoomsRef = useRef<Record<string, number>>({});
-  const seenRef = useRef<Set<string>>(new Set());
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const position = useRef({ x: 0, y: 0 });
+  const cameras = useRef<Record<string, { x: number; y: number; zoom: number }>>({});
+  const space = useRef(false);
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const dragged = useRef(false);
+  const [hand, setHand] = useState(false);
+  const [spaceHeld, setSpaceHeld] = useState(false);
+  const [selection, setSelection] = useState<HTMLElement | null>(null);
   const zoomRef = useRef(1);
   const obsRef = useRef<IntersectionObserver | null>(null);
   const iframesRef = useRef<Set<HTMLIFrameElement>>(new Set());
@@ -258,6 +263,7 @@ export function ProjectMap({
   const [panelOpen, setPanelOpen] = useState(false);
   const [zoomPct, setZoomPct] = useState(100);
 
+  const cameraKey = `cd-map-camera:${route}`;
   const isPages = route === "map:pages";
   const flowId = route.startsWith("flow:") ? route.slice(5) : null;
   const activeFlow = useMemo(
@@ -269,7 +275,6 @@ export function ProjectMap({
 
   const applyZoom = (z: number) => {
     zoomRef.current = z;
-    zoomsRef.current[route] = z;
     const canvas = canvasRef.current;
     if (canvas) {
       (canvas.style as CSSStyleDeclaration & { zoom: string }).zoom = String(z);
@@ -278,44 +283,77 @@ export function ProjectMap({
     setZoomPct(Math.round(z * 100));
   };
 
-  const setZoomAt = (z: number, cx?: number, cy?: number) => {
-    const root = rootRef.current;
-    if (!root) return;
-    const old = zoomRef.current || 1;
-    const next = Math.max(0.08, Math.min(2, z));
-    const r = root.getBoundingClientRect();
-    const x = cx ?? r.width / 2, y = cy ?? r.height / 2;
-    const px = (root.scrollLeft + x) / old, py = (root.scrollTop + y) / old;
-    applyZoom(next);
-    root.scrollLeft = px * next - x;
-    root.scrollTop = py * next - y;
+  const panTo = (x: number, y: number, save = true) => {
+    position.current = { x, y };
+    if (save) {
+      const camera = cameras.current[route] = { x, y, zoom: zoomRef.current };
+      lsSet(cameraKey, JSON.stringify(camera));
+    }
+    if (canvasRef.current?.parentElement) canvasRef.current.parentElement.style.translate = `${x}px ${y}px`;
   };
 
-  const computeFit = (both = true) => {
-    const root = rootRef.current, canvas = canvasRef.current, head = headRef.current;
-    if (!root || !canvas) return 1;
-    (canvas.style as CSSStyleDeclaration & { zoom: string }).zoom = "1";
-    const w = canvas.scrollWidth || 1, ht = canvas.scrollHeight || 1;
-    const fw = (root.clientWidth - 16) / w;
-    return Math.max(0.08, Math.min(1, fw, both ? (root.clientHeight - (head?.offsetHeight ?? 0) - 16) / ht : fw));
+  const setZoomAt = (z: number, x?: number, y?: number, dx = 0, dy = 0) => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const next = Math.max(0.02, Math.min(16, z));
+    const ratio = next / zoomRef.current;
+    const cx = x ?? viewport.clientWidth / 2, cy = y ?? viewport.clientHeight / 2;
+    const from = position.current;
+    applyZoom(next);
+    panTo(cx + (from.x - cx) * ratio + dx, cy + (from.y - cy) * ratio + dy);
+  };
+
+  const fit = (target?: HTMLElement, save = true) => {
+    const viewport = viewportRef.current, canvas = canvasRef.current;
+    if (!viewport || !canvas) return;
+    const bounds = (target ?? canvas).getBoundingClientRect();
+    const origin = canvas.getBoundingClientRect();
+    const old = zoomRef.current;
+    const width = Math.max(1, bounds.width / old), height = Math.max(1, bounds.height / old);
+    const z = Math.max(0.02, Math.min(target ? 16 : 1, (viewport.clientWidth - 32) / width,
+      (viewport.clientHeight - 32) / height));
+    applyZoom(z);
+    panTo((viewport.clientWidth - width * z) / 2 - (bounds.left - origin.left) / old * z,
+      (viewport.clientHeight - height * z) / 2 - (bounds.top - origin.top) / old * z, save);
   };
 
   useLayoutEffect(() => {
     if (!visible) return;
-    const initial = zoomsRef.current[route] ?? computeFit(false);
-    applyZoom(initial);
-    if (!seenRef.current.has(route)) {
-      seenRef.current.add(route);
-      requestAnimationFrame(() => {
-        applyZoom(computeFit(false));
-        rootRef.current?.scrollTo(0, 0);
-      });
+    let saved = cameras.current[route];
+    const raw = lsGet(cameraKey);
+    if (!saved && raw) {
+      try {
+        const camera = JSON.parse(raw);
+        if (Number.isFinite(camera?.x) && Number.isFinite(camera?.y) &&
+          Number.isFinite(camera.zoom) && camera.zoom >= 0.02 && camera.zoom <= 16) {
+          saved = cameras.current[route] = camera;
+        }
+      } catch { /* Invalid saved views fall back to Fit. */ }
     }
+    applyZoom(saved?.zoom ?? 1);
+    panTo(saved?.x ?? 0, saved?.y ?? 0, false);
+    const viewport = viewportRef.current;
+    if (saved || !viewport) return;
+    fit(undefined, false);
+    const observer = new ResizeObserver(() => {
+      if (!cameras.current[route]) fit(undefined, false);
+    });
+    observer.observe(viewport);
+    return () => observer.disconnect();
   }, [visible, route, device, layer, data, pages]);
 
   useEffect(() => {
-    if (!visible || !rootRef.current) return;
-    const root = rootRef.current;
+    setSelection(null);
+    pointers.current.clear();
+    viewportRef.current?.classList.remove("panning");
+    dragged.current = false;
+    space.current = false;
+    setSpaceHeld(false);
+  }, [visible, route, device, layer, mode]);
+
+  useEffect(() => {
+    if (!visible || !viewportRef.current) return;
+    const root = viewportRef.current;
     const obs = new IntersectionObserver(
       (es) =>
         es.forEach((e) => {
@@ -345,33 +383,126 @@ export function ProjectMap({
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    const root = rootRef.current;
-    if (!root || e.button !== 0 || mode || (e.target as HTMLElement).closest(".map-head,.sync-panel,button")) return;
-    const x0 = e.clientX, y0 = e.clientY, l0 = root.scrollLeft, t0 = root.scrollTop;
-    draggedRef.current = false;
-    const move = (m: PointerEvent) => {
-      if (!draggedRef.current && Math.hypot(m.clientX - x0, m.clientY - y0) < 5) return;
-      draggedRef.current = true;
-      root.classList.add("panning");
-      root.scrollLeft = l0 - (m.clientX - x0);
-      root.scrollTop = t0 - (m.clientY - y0);
-    };
-    const up = () => {
-      removeEventListener("pointermove", move);
-      removeEventListener("pointerup", up);
-      root.classList.remove("panning");
-      setTimeout(() => { draggedRef.current = false; }, 0);
-    };
-    addEventListener("pointermove", move);
-    addEventListener("pointerup", up);
+    const touch = e.pointerType === "touch";
+    const pan = e.button === 1 || (e.button === 0 && (space.current || hand || touch));
+    if (!pointers.current.size) dragged.current = false;
+    if (!pan) return;
+    if (!touch) e.preventDefault();
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    // Defer capture on touch so a stationary tap still reaches its original target.
+    if (!touch || pointers.current.size > 1) {
+      for (const id of pointers.current.keys()) e.currentTarget.setPointerCapture(id);
+      dragged.current = !touch || pointers.current.size > 1;
+    }
   };
 
-  const onWheel = (e: React.WheelEvent<HTMLDivElement>) => {
-    if (!e.ctrlKey && !e.metaKey) return;
-    e.preventDefault();
-    const r = rootRef.current!.getBoundingClientRect();
-    setZoomAt(zoomRef.current * Math.exp(-e.deltaY / 300), e.clientX - r.left, e.clientY - r.top);
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const points = pointers.current;
+    const previous = points.get(e.pointerId);
+    if (!previous) return;
+    const current = { x: e.clientX, y: e.clientY };
+    const dx = current.x - previous.x, dy = current.y - previous.y;
+    if (!dragged.current && Math.hypot(dx, dy) < 5) return;
+    dragged.current = true;
+    if (!e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.setPointerCapture(e.pointerId);
+    e.currentTarget.classList.add("panning");
+    points.set(e.pointerId, current);
+    const other = [...points].find(([id]) => id !== e.pointerId)?.[1];
+    if (other && points.size === 2) {
+      const before = Math.hypot(previous.x - other.x, previous.y - other.y);
+      const after = Math.hypot(current.x - other.x, current.y - other.y);
+      const r = e.currentTarget.getBoundingClientRect();
+      setZoomAt(zoomRef.current * after / Math.max(1, before),
+        (previous.x + other.x) / 2 - r.left, (previous.y + other.y) / 2 - r.top, dx / 2, dy / 2);
+    } else if (points.size === 1) {
+      panTo(position.current.x + dx, position.current.y + dy);
+    }
   };
+
+  const endPointer = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.type === "lostpointercapture" && e.target !== e.currentTarget) return;
+    pointers.current.delete(e.pointerId);
+    if (!pointers.current.size) e.currentTarget.classList.remove("panning");
+  };
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!visible || !viewport) return;
+    const wheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? viewport.clientHeight : 1;
+      if (e.ctrlKey || e.metaKey || (!e.shiftKey && e.deltaX === 0)) {
+        const r = viewport.getBoundingClientRect();
+        setZoomAt(zoomRef.current * Math.exp(-e.deltaY * unit / 300), e.clientX - r.left, e.clientY - r.top);
+      } else {
+        const sideways = e.shiftKey && !e.deltaX;
+        panTo(position.current.x - (sideways ? e.deltaY : e.deltaX) * unit,
+          position.current.y - (sideways ? 0 : e.deltaY) * unit);
+      }
+    };
+    let previousScale = 1;
+    const gestureStart = (e: Event) => {
+      e.preventDefault();
+      previousScale = 1;
+    };
+    const gestureChange = (e: Event) => {
+      e.preventDefault();
+      const { scale, clientX, clientY } = e as MouseEvent & { scale: number };
+      const r = viewport.getBoundingClientRect();
+      setZoomAt(zoomRef.current * scale / previousScale, clientX - r.left, clientY - r.top);
+      previousScale = scale;
+    };
+    const keyDown = (e: KeyboardEvent) => {
+      const target = e.target;
+      if (e.defaultPrevented || e.isComposing || e.altKey || document.querySelector("dialog[open]") ||
+        (target instanceof HTMLElement && (target.isContentEditable || target.closest("input,textarea,select,.sync-panel")))) return;
+      const modified = e.ctrlKey || e.metaKey;
+      const key = e.key.toLowerCase();
+      if (!modified && key === "escape" && selection && !mode) setSelection(null);
+      else if (!modified && e.code === "Space") {
+        if (target instanceof Element && target.closest("button,a")) return;
+        space.current = true;
+        setSpaceHeld(true);
+      } else if (!modified && key === "h") setHand(true);
+      else if (!modified && key === "v") setHand(false);
+      else if (!modified && e.shiftKey && (e.code === "Digit1" || key === "!")) fit();
+      else if (!modified && e.shiftKey && (e.code === "Digit2" || key === "@")) {
+        if (selection && viewport.contains(selection)) fit(selection);
+      } else if (!modified && (key === "0" || (e.shiftKey && e.code === "Digit0"))) setZoomAt(1);
+      else if (key === "+" || key === "=") setZoomAt(zoomRef.current * 1.25);
+      else if (key === "-" || key === "_") setZoomAt(zoomRef.current / 1.25);
+      else if (!modified && ["arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key)) {
+        const step = e.shiftKey ? 100 : 20;
+        panTo(position.current.x + (key === "arrowleft" ? step : key === "arrowright" ? -step : 0),
+          position.current.y + (key === "arrowup" ? step : key === "arrowdown" ? -step : 0));
+      } else return;
+      e.preventDefault();
+    };
+    const releaseSpace = () => {
+      space.current = false;
+      setSpaceHeld(false);
+    };
+    const keyUp = (e: KeyboardEvent) => { if (e.code === "Space") releaseSpace(); };
+    viewport.addEventListener("wheel", wheel, { passive: false });
+    viewport.addEventListener("gesturestart", gestureStart);
+    viewport.addEventListener("gesturechange", gestureChange);
+    window.addEventListener("keydown", keyDown, true);
+    window.addEventListener("keyup", keyUp);
+    window.addEventListener("blur", releaseSpace);
+    return () => {
+      viewport.removeEventListener("wheel", wheel);
+      viewport.removeEventListener("gesturestart", gestureStart);
+      viewport.removeEventListener("gesturechange", gestureChange);
+      window.removeEventListener("keydown", keyDown, true);
+      window.removeEventListener("keyup", keyUp);
+      window.removeEventListener("blur", releaseSpace);
+    };
+  }, [visible, route, selection, mode]);
+
+  useEffect(() => {
+    selection?.classList.add("board-selected");
+    return () => selection?.classList.remove("board-selected");
+  }, [selection]);
 
   const pageGroups = useMemo(() => {
     const groups = new Map<string, string[]>();
@@ -407,12 +538,10 @@ export function ProjectMap({
       ref={rootRef}
       aria-label="Project map"
       className={panelOpen ? "panel" : undefined}
-      onPointerDown={onPointerDown}
-      onWheel={onWheel}
     >
       {visible && (
         <>
-          <div className="map-head" ref={headRef}>
+          <div className="map-head">
             {isPages ? (
               <>
                 <h2>Pages</h2>
@@ -483,8 +612,10 @@ export function ProjectMap({
                   aria-pressed={device === v}
                   title={tip}
                   onClick={() => {
+                    if (device === v) return;
                     ssSet("cd-map-device", v);
-                    delete zoomsRef.current[route];
+                    delete cameras.current[route];
+                    lsSet(cameraKey, "");
                     setDevice(v);
                   }}
                 >
@@ -494,6 +625,7 @@ export function ProjectMap({
             </div>
 
             <div className="zoom grp">
+              <button type="button" aria-pressed={hand} title="Hand tool (H) · Select (V)" onClick={() => setHand(!hand)}>Hand</button>
               <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => setZoomAt(zoomRef.current / 1.25)}>
                 −
               </button>
@@ -507,131 +639,149 @@ export function ProjectMap({
                 type="button"
                 aria-label="Fit to window"
                 title="Fit to window"
-                onClick={() => {
-                  applyZoom(computeFit(true));
-                  rootRef.current?.scrollTo(0, 0);
-                }}
+                onClick={() => fit()}
               >
                 Fit
               </button>
             </div>
           </div>
 
-          <div className={`map-canvas${isPages ? " groups" : ""}`} ref={canvasRef}>
-            {isPages ? (
-              !pages.length ? (
-                <p className="empty-map">No pages in design/pages yet.</p>
-              ) : (
-                pageGroups.map(([g, files]) => {
-                  const hub = files.find((f) => baseName(f) === g) ?? files.find((f) => baseName(f) === "index") ?? files[0];
-                  const rest = files.filter((f) => f !== hub).sort();
-                  const [W, H] = MAP_DEVICE[device], GAP = 120, DOWN = 260;
-                  const rowW = Math.max(W, rest.length * W + Math.max(0, rest.length - 1) * GAP);
-                  const hx = (rowW - W) / 2;
-                  const paths = rest.map((_, i) => {
-                    const x = i * (W + GAP), y = H + DOWN;
-                    const sx = hx + W / 2, sy = H, tx = x + W / 2, ty = y - 8;
-                    return { d: `M${sx} ${sy} C${sx} ${sy + DOWN / 2},${tx} ${ty - DOWN / 2},${tx} ${ty}` };
-                  });
-                  return (
-                    <section key={g || "__root"} className="group">
-                      <h3>{g || "design/pages"}</h3>
-                      <div className="group-body" style={{ width: rowW, height: rest.length ? 2 * H + DOWN : H }}>
-                        <EdgeSvg paths={paths} />
-                        <ScreenCard
-                          file={hub}
-                          title={baseName(hub)}
-                          device={device}
-                          cls="hub"
-                          item={itemOf(hub)}
-                          style={{ left: hx, top: 0 }}
-                          mode={mode}
-                          draggedRef={draggedRef}
-                          onOpen={onOpen}
-                          onFrameLoad={onFrameLoad}
-                          registerFrame={registerFrame}
-                        />
-                        {rest.map((f, i) => (
-                          <ScreenCard
-                            key={f}
-                            file={f}
-                            title={baseName(f)}
-                            device={device}
-                            item={itemOf(f)}
-                            style={{ left: i * (W + GAP), top: H + DOWN }}
-                            mode={mode}
-                            draggedRef={draggedRef}
-                            onOpen={onOpen}
-                            onFrameLoad={onFrameLoad}
-                            registerFrame={registerFrame}
-                          />
-                        ))}
-                      </div>
-                    </section>
-                  );
-                })
-              )
-            ) : !activeFlow ? (
-              <div className="empty-map">
-                <p>
-                  No flows yet. A flow is one file, <code>design/flows/&lt;id&gt;.json</code>, listing screens (wireframe + page) and decisions joined by labeled arrows.
-                </p>
-                <p>
-                  Ask your agent: <em>“create the flow for …”</em>, or run <code>cdesign flows new &lt;id&gt;</code>.
-                </p>
-              </div>
-            ) : (
-              <>
-                {activeFlow.errors.length > 0 && <div className="flow-errors">{activeFlow.errors.join("\n")}</div>}
-                {flowLayout && (
-                  <div className="flow-body" style={{ width: flowLayout.width, height: flowLayout.height }}>
-                    <EdgeSvg paths={flowLayout.edges} />
-                    {flowLayout.edges.map(
-                      (e, i) =>
-                        e.label && (
-                          <span key={i} className="elabel" style={{ left: e.mid[0], top: e.mid[1] }}>
-                            {e.label}
-                          </span>
-                        )
-                    )}
-                    {activeFlow.steps.map((s) => {
-                      const p = flowLayout.pos[s.id];
-                      if (s.decision) {
-                        return (
-                          <div
-                            key={s.id}
-                            className="node decision"
-                            title={s.decision}
-                            style={{ left: p.x, top: p.y, width: p.w, height: p.h }}
-                          >
-                            <div className="dia" />
-                            <span>{s.decision}</span>
-                          </div>
-                        );
-                      }
-                      const v = flowLayout.views[s.id];
+          <div
+            ref={viewportRef}
+            className={`map-viewport${hand || spaceHeld ? " hand" : ""}`}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={endPointer}
+            onPointerCancel={endPointer}
+            onLostPointerCapture={endPointer}
+            onAuxClick={(e) => { if (e.button === 1) e.preventDefault(); }}
+            onDoubleClickCapture={(e) => {
+              if (dragged.current || hand || space.current) e.stopPropagation();
+            }}
+            onClickCapture={(e) => {
+              if (e.detail > 0 && (dragged.current || hand || space.current)) {
+                e.preventDefault();
+                e.stopPropagation();
+              } else if (!mode) {
+                setSelection((e.target as Element).closest<HTMLElement>("[data-screen]"));
+              }
+            }}
+          >
+            <div className="map-position">
+              <div className={`map-canvas${isPages ? " groups" : ""}`} ref={canvasRef}>
+                {isPages ? (
+                  !pages.length ? (
+                    <p className="empty-map">No pages in design/pages yet.</p>
+                  ) : (
+                    pageGroups.map(([g, files]) => {
+                      const hub = files.find((f) => baseName(f) === g) ?? files.find((f) => baseName(f) === "index") ?? files[0];
+                      const rest = files.filter((f) => f !== hub).sort();
+                      const [W, H] = MAP_DEVICE[device], GAP = 120, DOWN = 260;
+                      const rowW = Math.max(W, rest.length * W + Math.max(0, rest.length - 1) * GAP);
+                      const hx = (rowW - W) / 2;
+                      const paths = rest.map((_, i) => {
+                        const x = i * (W + GAP), y = H + DOWN;
+                        const sx = hx + W / 2, sy = H, tx = x + W / 2, ty = y - 8;
+                        return { d: `M${sx} ${sy} C${sx} ${sy + DOWN / 2},${tx} ${ty - DOWN / 2},${tx} ${ty}` };
+                      });
                       return (
-                        <ScreenCard
-                          key={s.id}
-                          file={v.file}
-                          title={s.title ?? s.id}
-                          device={v.device}
-                          cls={v.fallback ? "fallback" : ""}
-                          sub={v.sub}
-                          item={data.sync.find((i) => i.wireframe === s.wireframe && i.page === s.page)}
-                          style={{ left: p.x, top: p.y }}
-                          mode={mode}
-                          draggedRef={draggedRef}
-                          onOpen={onOpen}
-                          onFrameLoad={onFrameLoad}
-                          registerFrame={registerFrame}
-                        />
+                        <section key={g || "__root"} className="group">
+                          <h3>{g || "design/pages"}</h3>
+                          <div className="group-body" style={{ width: rowW, height: rest.length ? 2 * H + DOWN : H }}>
+                            <EdgeSvg paths={paths} />
+                            <ScreenCard
+                              file={hub}
+                              title={baseName(hub)}
+                              device={device}
+                              cls="hub"
+                              item={itemOf(hub)}
+                              style={{ left: hx, top: 0 }}
+                              mode={mode}
+                              onOpen={onOpen}
+                              onFrameLoad={onFrameLoad}
+                              registerFrame={registerFrame}
+                            />
+                            {rest.map((f, i) => (
+                              <ScreenCard
+                                key={f}
+                                file={f}
+                                title={baseName(f)}
+                                device={device}
+                                item={itemOf(f)}
+                                style={{ left: i * (W + GAP), top: H + DOWN }}
+                                mode={mode}
+                                onOpen={onOpen}
+                                onFrameLoad={onFrameLoad}
+                                registerFrame={registerFrame}
+                              />
+                            ))}
+                          </div>
+                        </section>
                       );
-                    })}
+                    })
+                  )
+                ) : !activeFlow ? (
+                  <div className="empty-map">
+                    <p>
+                      No flows yet. A flow is one file, <code>design/flows/&lt;id&gt;.json</code>, listing screens (wireframe + page) and decisions joined by labeled arrows.
+                    </p>
+                    <p>
+                      Ask your agent: <em>“create the flow for …”</em>, or run <code>cdesign flows new &lt;id&gt;</code>.
+                    </p>
                   </div>
+                ) : (
+                  <>
+                    {activeFlow.errors.length > 0 && <div className="flow-errors">{activeFlow.errors.join("\n")}</div>}
+                    {flowLayout && (
+                      <div className="flow-body" style={{ width: flowLayout.width, height: flowLayout.height }}>
+                        <EdgeSvg paths={flowLayout.edges} />
+                        {flowLayout.edges.map(
+                          (e, i) =>
+                            e.label && (
+                              <span key={i} className="elabel" style={{ left: e.mid[0], top: e.mid[1] }}>
+                                {e.label}
+                              </span>
+                            )
+                        )}
+                        {activeFlow.steps.map((s) => {
+                          const p = flowLayout.pos[s.id];
+                          if (s.decision) {
+                            return (
+                              <div
+                                key={s.id}
+                                className="node decision"
+                                title={s.decision}
+                                style={{ left: p.x, top: p.y, width: p.w, height: p.h }}
+                              >
+                                <div className="dia" />
+                                <span>{s.decision}</span>
+                              </div>
+                            );
+                          }
+                          const v = flowLayout.views[s.id];
+                          return (
+                            <ScreenCard
+                              key={s.id}
+                              file={v.file}
+                              title={s.title ?? s.id}
+                              device={v.device}
+                              cls={v.fallback ? "fallback" : ""}
+                              sub={v.sub}
+                              item={data.sync.find((i) => i.wireframe === s.wireframe && i.page === s.page)}
+                              style={{ left: p.x, top: p.y }}
+                              mode={mode}
+                              onOpen={onOpen}
+                              onFrameLoad={onFrameLoad}
+                              registerFrame={registerFrame}
+                            />
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
                 )}
-              </>
-            )}
+              </div>
+            </div>
           </div>
 
           {panelOpen && !isPages && data.flows.length > 0 && (

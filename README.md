@@ -79,6 +79,11 @@ In the viewer, press `C`, click an element, and save your comment with **Add** o
 
 The viewer toolbar switches between **Flows**, **Pages** and **Files** (`M` toggles the map; `Esc` or the back arrow returns from an opened page).
 
+Both maps open fitted to the window on first visit and remember your zoom and position across reloads. Hold `Space` and drag, middle-drag, or press `H` for the Hand tool and `V` to return to selection. Horizontal and diagonal trackpad swipes pan. Hold `Shift` while scrolling to pan horizontally. On a touchscreen, drag with one finger or pinch and pan with two.
+
+Scroll vertically, pinch on a trackpad, or press `+` / `−` to zoom. Press `Shift+1` to fit the board, `Shift+2` to fit the selected screen, or `Shift+0` for 100%. Arrow keys pan, and holding `Shift` increases the distance. Click a thumbnail to select it. Double-click it or activate its title to open the screen.
+
+
 - **Pages** groups `design/pages/` by first-level folder, with the file named like the folder (or `index`) as the hub, and live thumbnails.
 - **Flows** draws each `design/flows/<id>.json` left to right: screens, decision diamonds and labeled arrows (`Sim`/`Não`), with loops dashed. A **Wireframes | Screens** toggle shows each step's wireframe (`design/wireframe/…`) or its real page.
 - Every screen is a live preview at real device size (phone 402×874, desktop 1280×800); zoom with Ctrl/⌘ + wheel or the −/+/Fit buttons and drag the background to pan. A **Phone | Desktop** toggle picks the device. Wireframes are responsive by default; `name.phone.tsx` / `name.desktop.tsx` siblings give separate layouts per device. Wireframes should fill the viewport and not draw their own device frame.

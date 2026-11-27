@@ -649,6 +649,7 @@ export function App() {
       if (h && h !== curRef.current) setCur(h);
     };
     const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return;
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "b") {
         e.preventDefault();
         toggleLeft();
