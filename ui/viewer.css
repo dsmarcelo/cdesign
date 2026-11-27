@@ -79,32 +79,34 @@ body.nop #pick{display:grid} body.nop #root>:not(#pick):not(#toast):not(#update-
 #update-dialog{max-width:min(420px,calc(100vw - 32px));max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--bg);color:var(--fg,#fafafa);padding:20px}
 #update-dialog::backdrop{background:#0008}
 #update-message{overflow-wrap:anywhere;white-space:pre-wrap}
-#bar{display:contents} .viewer-bar #more,.viewer-bar #bb,#pill{display:none}
+#bar{display:contents} .viewer-bar #more,.viewer-bar #bb,#pill,#mob-back{display:none}
 @media (max-width:700px){
-  body{grid-template-columns:1fr;grid-template-rows:1fr}
-  .viewer-bar{grid-column:1;padding:0;height:0;border:0}
-  .viewer-bar>:not(#bar){display:none}
-  #bar{display:none;position:fixed;left:12px;right:12px;bottom:calc(72px + env(safe-area-inset-bottom));z-index:20;align-items:center;gap:6px;padding:8px;overflow-x:auto;overscroll-behavior:contain;background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 24px #0006}
+  body{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr);padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+  .viewer-bar{grid-column:1;grid-row:1;padding:4px 8px;min-height:44px;border-bottom:1px solid var(--line);position:relative;z-index:25;overflow:visible}
+  .viewer-bar>:not(#bar,#pill,#mob-back,b){display:none}
+  #pill{display:inline-flex;align-items:center}
+  #pill button{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;padding:0;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:inherit}
+  #pill button svg{width:18px;height:18px} #pill .x,#pill button.on .o{display:none} #pill button.on .x{display:block}
+  #pill button.on{background:var(--acc);border-color:var(--acc);color:var(--acc-fg)}
+  #mob-back{display:inline-flex;align-items:center;justify-content:center;gap:4px;margin-left:auto;height:34px;padding:0 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:inherit;font-size:12px}
+  #mob-back[hidden]{display:none}
+  #mob-backdrop{position:fixed;inset:0;top:calc(45px + env(safe-area-inset-top));z-index:15;background:#0008}
+  #bar{display:none;position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));z-index:22;align-items:center;gap:6px;padding:8px;overflow-x:auto;overscroll-behavior:contain;background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 8px 24px #0006}
   body.bar #bar{display:flex}
   .bar-context{flex:0 0 auto}
   #bar #proj{width:112px;font-size:16px}
   #bar :is(button,select),#bar #w button{height:44px}
   #bar button.ic{width:44px}
-  aside.l{position:fixed;top:env(safe-area-inset-top);bottom:env(safe-area-inset-bottom);z-index:10;width:min(300px,85vw);padding-bottom:72px}
-  aside.l{left:env(safe-area-inset-left)}
-  main{grid-area:1/1;padding:0}
+  aside.l{position:fixed;top:calc(45px + env(safe-area-inset-top));bottom:env(safe-area-inset-bottom);left:env(safe-area-inset-left);z-index:20;width:min(340px,88vw);padding-bottom:72px}
+  main{grid-area:2/1;padding:0}
   iframe{border:0;border-radius:0}
-  body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
-  #pill{display:flex;position:fixed;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));z-index:30;gap:2px;padding:4px;border-radius:999px;background:#000;border:1px solid #404040;box-shadow:0 6px 20px #0006}
-  #pill button{background:none;border:0;border-radius:999px;padding:14px 16px;line-height:0;color:#fafafa}
-  #pill button svg{width:20px;height:20px} #pill .x,#pill button.on .o{display:none} #pill button.on .x{display:block}
   summary{font-size:15px;padding:12px 10px;gap:8px} .f{font-size:15px;padding:12px 10px;line-height:1.3} .kids{margin-left:12px;padding-left:8px}
-  aside.l{width:min(340px,88vw)}
-  #pill{touch-action:none;cursor:grab} body.pdrag #pill{cursor:grabbing} body.pdrag iframe{pointer-events:none}
-  #pill button.on{background:var(--acc);color:var(--acc-fg)}
-  html[data-theme=light] #pill{background:#fff;border-color:#d4d4d4;box-shadow:0 6px 20px #0003}
-  html[data-theme=light] #pill button{color:#000}
-  html[data-theme=light] #pill button.on{background:#e5e5e5}
+}
+@media (max-width:480px){
+  main{overflow:hidden}
+  body.phone #d1,body.tablet #d1,body.resp #d1,body.split #d1{width:100%!important;height:100%!important;flex:1 1 auto!important;margin:0!important}
+  body.phone #fr,body.tablet #fr{width:100%!important;height:100%!important;transform:none!important}
+  body.split #d2{display:none!important}
 }
 #project-tools{position:fixed;inset:auto;margin:0;width:184px;max-width:calc(100vw - 16px);padding:4px;background:var(--panel);color:inherit;border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 20px #0004}
 #project-tools button{width:100%;display:flex;align-items:center;gap:8px;text-align:left;background:none;border:0;padding:8px}

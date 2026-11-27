@@ -116,7 +116,6 @@ export function App() {
   const mainRef = useRef<HTMLElement>(null);
   const lsideRef = useRef<HTMLElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
-  const pillRef = useRef<HTMLDivElement>(null);
   const toolsPopoverRef = useRef<HTMLDivElement>(null);
   const toolsToggleRef = useRef<HTMLButtonElement>(null);
   const updateDialogRef = useRef<HTMLDialogElement>(null);
@@ -413,6 +412,14 @@ export function App() {
   const applySize = useCallback(() => {
     const d = d1Ref.current, f = fr1Ref.current;
     if (!d || !f) return;
+    if (innerWidth <= 480) {
+      f.style.removeProperty("--dw");
+      f.style.removeProperty("--dh");
+      f.style.removeProperty("--ds");
+      d.style.width = "100%";
+      d.style.height = "100%";
+      return;
+    }
     if (view === "phone") {
       const [w, h] = rot ? [...DEVICES[dev]].reverse() : DEVICES[dev];
       const s = fit ? Math.min(1, ((mainRef.current?.clientHeight ?? innerHeight) - 24) / h) : 1;
@@ -436,42 +443,10 @@ export function App() {
   }, [applySize]);
 
   useEffect(() => {
-    const onResize = () => {
-      if (view === "phone" && fit) applySize();
-      if (mob) placePill();
-    };
+    const onResize = () => applySize();
     addEventListener("resize", onResize);
-    return () => addEventListener("resize", onResize);
-  }, [view, fit, mob, applySize]);
-
-  // Mobile pill placement
-  const placeBar = () => {
-    const p = pillRef.current, b = barRef.current;
-    if (!p || !b) return;
-    const r = p.getBoundingClientRect();
-    if (r.top + r.height / 2 > innerHeight / 2) Object.assign(b.style, { bottom: innerHeight - r.top + 8 + "px", top: "auto" });
-    else Object.assign(b.style, { top: r.bottom + 8 + "px", bottom: "auto" });
-  };
-
-  const placePill = () => {
-    const p = pillRef.current;
-    if (!p) return;
-    let pos: { x: number; y: number } | null = null;
-    try {
-      pos = JSON.parse(lsGet("cd-pill") || "null");
-    } catch {}
-    const r = p.getBoundingClientRect(), W = innerWidth, H = innerHeight;
-    if (pos) {
-      const x = Math.max(4, Math.min(W - r.width - 4, pos.x * W - r.width / 2));
-      const y = Math.max(4, Math.min(H - r.height - 4, pos.y * H - r.height / 2));
-      Object.assign(p.style, { left: x + "px", top: y + "px", bottom: "auto", transform: "none" });
-    }
-    placeBar();
-  };
-
-  useEffect(() => {
-    placePill();
-  }, []);
+    return () => removeEventListener("resize", onResize);
+  }, [applySize]);
 
   // Project tools popover positioning
   useEffect(() => {
@@ -882,7 +857,42 @@ export function App() {
             <path d="M6 3v10" />
           </svg>
         </button>
+        <div id="pill">
+          <button
+            id="pl"
+            type="button"
+            className={!leftHidden || barOpen ? "on" : undefined}
+            title="Files and tools"
+            aria-label="Files and tools"
+            aria-expanded={!leftHidden || barOpen}
+            onClick={() => {
+              const open = !leftHidden || barOpen;
+              setMobHideLeft(open);
+              setBarOpen(!open);
+            }}
+          >
+            <svg className="o" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+              <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" />
+              <path d="M6 3v10" />
+            </svg>
+            <svg className="x" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
+              <path d="M4 4l8 8M12 4l-8 8" />
+            </svg>
+          </button>
+        </div>
         <b>cdesign</b>
+        <button
+          id="mob-back"
+          type="button"
+          title="Back to flows"
+          hidden={inMap}
+          onClick={() => goMap()}
+        >
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10 3 5 8l5 5" />
+          </svg>
+          Flows
+        </button>
         <button
           id="more"
           className={`ic${barOpen ? " on" : ""}`}
@@ -1244,61 +1254,15 @@ export function App() {
         </div>
       </main>
 
-      <div
-        id="pill"
-        ref={pillRef}
-        onPointerDown={(e) => {
-          const p = pillRef.current;
-          if (!p) return;
-          const r = p.getBoundingClientRect();
-          const dx = e.clientX - r.left, dy = e.clientY - r.top, x0 = e.clientX, y0 = e.clientY;
-          let moved = false;
-          p.setPointerCapture(e.pointerId);
-          const onMove = (m: PointerEvent) => {
-            if (!moved && Math.hypot(m.clientX - x0, m.clientY - y0) < 6) return;
-            moved = true;
-            document.body.classList.add("pdrag");
-            const x = Math.max(4, Math.min(innerWidth - r.width - 4, m.clientX - dx));
-            const y = Math.max(4, Math.min(innerHeight - r.height - 4, m.clientY - dy));
-            Object.assign(p.style, { left: x + "px", top: y + "px", bottom: "auto", transform: "none" });
-            placeBar();
-          };
-          const onUp = () => {
-            p.removeEventListener("pointermove", onMove);
-            p.removeEventListener("pointerup", onUp);
-            p.removeEventListener("pointercancel", onUp);
-            document.body.classList.remove("pdrag");
-            if (!moved) return;
-            const b = p.getBoundingClientRect();
-            lsSet("cd-pill", JSON.stringify({ x: (b.left + b.width / 2) / innerWidth, y: (b.top + b.height / 2) / innerHeight }));
-            const eat = (c: Event) => c.stopPropagation();
-            p.addEventListener("click", eat, true);
-            setTimeout(() => p.removeEventListener("click", eat, true), 0);
-          };
-          p.addEventListener("pointermove", onMove);
-          p.addEventListener("pointerup", onUp);
-          p.addEventListener("pointercancel", onUp);
-        }}
-      >
-        <button
-          id="pl"
-          className={!leftHidden || barOpen ? "on" : undefined}
-          title="Files and tools"
+      {mob && (!leftHidden || barOpen) && (
+        <div
+          id="mob-backdrop"
           onClick={() => {
-            const open = !leftHidden || barOpen;
-            setMobHideLeft(open);
-            setBarOpen(!open);
+            setMobHideLeft(true);
+            setBarOpen(false);
           }}
-        >
-          <svg className="o" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
-            <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2" />
-            <path d="M6 3v10" />
-          </svg>
-          <svg className="x" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round">
-            <path d="M4 4l8 8M12 4l-8 8" />
-          </svg>
-        </button>
-      </div>
+        />
+      )}
 
       <div id="pick">
         {currentProject === null && (

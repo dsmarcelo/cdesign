@@ -52,10 +52,8 @@
 .cc-send{flex:none;width:30px;height:30px;padding:0;border-radius:50%;display:inline-flex;align-items:center;justify-content:center}
 .cc-send[hidden]{display:none}
 @media (max-width:700px){
-  #tab-chat,#chat,#lrs{display:none!important}
-  #lside:not([data-tab=comments]) #files{display:block!important}
-  #files,#cm{padding-bottom:72px}
-  #lside[data-tab=chat] #tab-files{background:var(--line);color:#fafafa}
+  #lrs{display:none!important}
+  #files,#cm,#chat{padding-bottom:72px}
 }
 body.hl #lside{display:none}
 .cc-approval{border:1px solid #fbbf2466;border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;font-size:12px}
