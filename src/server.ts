@@ -683,10 +683,16 @@ export async function serveDaemon(preferred = DEFAULT_PORT) {
             #__cd-return:focus-visible{outline:2px solid #fff;outline-offset:2px;box-shadow:0 0 0 5px #171717}
           </style><a id="__cd-return" href="${href}" aria-label="Return to cdesign" title="Return to cdesign"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.75" y="2.75" width="12.5" height="10.5" rx="2"/><path d="M6 3v10"/></svg></a>
           <script>
-            (async function heartbeat() {
-              // Keep the daemon available without a persistent connection or automatic navigation.
-              try { await fetch("/__cd/preview-heartbeat"); } catch {}
-              setTimeout(heartbeat, ${Math.max(100, Math.min(30000, Math.floor(idleMs / 3) || 30000))});
+            (function() {
+              var timer = 0, stopped = false;
+              addEventListener("pagehide", function() { stopped = true; clearTimeout(timer); });
+              async function heartbeat() {
+                if (stopped) return;
+                // Keep the daemon available without a persistent connection or automatic navigation.
+                try { await fetch("/__cd/preview-heartbeat", { keepalive: true, cache: "no-store" }); } catch {}
+                if (!stopped) timer = setTimeout(heartbeat, ${Math.max(100, Math.min(30000, Math.floor(idleMs / 3) || 30000))});
+              }
+              heartbeat();
             })();
             try {
               document.documentElement.dataset.theme = localStorage.getItem("cd-theme") ||

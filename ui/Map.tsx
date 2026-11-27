@@ -570,11 +570,18 @@ export function ProjectMap({
     const viewport = viewportRef.current;
     if (saved || !viewport) return;
     fit(undefined, false);
+    let raf = 0;
     const observer = new ResizeObserver(() => {
-      if (!cameras.current[cameraKey]) fit(undefined, false);
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        if (!cameras.current[cameraKey]) fit(undefined, false);
+      });
     });
     observer.observe(viewport);
-    return () => observer.disconnect();
+    return () => {
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+    };
   }, [visible, route, device, layer, data, cameraKey]);
 
   useEffect(() => {

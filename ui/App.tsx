@@ -41,6 +41,7 @@ function FileTree({
   prefix,
   cur,
   opened,
+  forceOpen,
   onToggle,
   onSelect,
 }: {
@@ -48,6 +49,7 @@ function FileTree({
   prefix: string;
   cur: string | null;
   opened: Set<string>;
+  forceOpen?: boolean;
   onToggle: (key: string, open: boolean) => void;
   onSelect: (path: string) => void;
 }) {
@@ -67,7 +69,7 @@ function FileTree({
           return (
             <details
               key={key}
-              open={opened.has(key)}
+              open={forceOpen || opened.has(key)}
               onToggle={(e) => onToggle(key, e.currentTarget.open)}
             >
               <summary>{label}</summary>
@@ -77,6 +79,7 @@ function FileTree({
                   prefix={key + "/"}
                   cur={cur}
                   opened={opened}
+                  forceOpen={forceOpen}
                   onToggle={onToggle}
                   onSelect={onSelect}
                 />
@@ -128,6 +131,7 @@ export function App() {
   const [remote, setRemote] = useState(false);
 
   const [files, setFiles] = useState<string[]>([]);
+  const [fileFilter, setFileFilter] = useState("");
   const [cur, setCurState] = useState<string | null>(() => {
     const h = pageHash();
     return isMapHash(h) ? null : h || null;
@@ -203,6 +207,7 @@ export function App() {
   const mapRouteRef = useRef(mapRoute);
   mapRouteRef.current = mapRoute;
   const boardPageRef = useRef<string | null>(null);
+  const pendingFocusRef = useRef<{ file: string; cdId: string } | null>(null);
   const remoteRef = useRef(remote);
   remoteRef.current = remote;
 
@@ -469,7 +474,10 @@ export function App() {
   }, [applySize]);
 
   useEffect(() => {
-    const onResize = () => applySize();
+    const onResize = () => {
+      setMob(matchMedia("(max-width:700px)").matches);
+      applySize();
+    };
     addEventListener("resize", onResize);
     let raf = 0;
     const ro = stageRef.current
@@ -849,7 +857,11 @@ export function App() {
     }
   };
 
-  const fileTree = useMemo(() => buildTree(files), [files]);
+  const filteredFiles = useMemo(() => {
+    const q = fileFilter.trim().toLowerCase();
+    return q ? files.filter((f) => f.toLowerCase().includes(q)) : files;
+  }, [files, fileFilter]);
+  const fileTree = useMemo(() => buildTree(filteredFiles), [filteredFiles]);
 
   const recent = (a: CommentItem, b: CommentItem) => (b.createdAt || "").localeCompare(a.createdAt || "");
   const openComments = useMemo(() => comments.filter((c) => c.status !== "done").sort(recent), [comments]);
@@ -870,8 +882,29 @@ export function App() {
       applyThemeToFrame(f, document.documentElement.dataset.theme || theme);
       setFrameMode(f);
       f.contentWindow?.postMessage({ cd: "pins" }, "*");
+      if (f === fr1Ref.current && pendingFocusRef.current) {
+        f.contentWindow?.postMessage({ cd: "focus", ...pendingFocusRef.current }, "*");
+        pendingFocusRef.current = null;
+      }
     },
     [applyThemeToFrame, setFrameMode, theme]
+  );
+
+  const jumpToComment = useCallback(
+    (c: CommentItem) => {
+      pendingFocusRef.current = { file: c.file, cdId: c.cdId };
+      if (!inMap && curRef.current && (c.file === curRef.current || !files.includes(c.file))) {
+        fr1Ref.current?.contentWindow?.postMessage({ cd: "focus", file: c.file, cdId: c.cdId }, "*");
+        pendingFocusRef.current = null;
+      } else {
+        setCur(c.file);
+      }
+      if (mob) {
+        setMobHideLeft(true);
+        setBarOpen(false);
+      }
+    },
+    [files, inMap, mob, setCur]
   );
 
   const renderCommentCard = (c: CommentItem) => (
@@ -879,13 +912,18 @@ export function App() {
       key={c.id}
       className={`c ${c.status}`}
       onClick={(e) => {
-        if ((e.target as HTMLElement).tagName !== "BUTTON" && c.file !== cur) setCur(c.file);
+        if (!(e.target as HTMLElement).closest("button")) jumpToComment(c);
       }}
     >
       <span className="st">{c.status}</span>
-      <small>
+      <button
+        type="button"
+        className="c-loc link"
+        title={`Jump to ${c.file}:${c.cdId}`}
+        onClick={() => jumpToComment(c)}
+      >
         {c.file}:{c.cdId}
-      </small>
+      </button>
       <div>{c.text}</div>
       <button onClick={() => fetch(`/__cd/comments/${c.id}/${c.status === "done" ? "open" : "done"}`, { method: "POST" })}>
         {c.status === "done" ? "Reopen" : "Done"}
@@ -920,7 +958,9 @@ export function App() {
             aria-label="Files and tools"
             aria-expanded={!leftHidden || barOpen}
             onClick={() => {
-              const open = !leftHidden || barOpen;
+              const isMob = matchMedia("(max-width:700px)").matches;
+              if (isMob && !mob) setMob(true);
+              const open = !(isMob ? mobHideLeft : deskHideLeft) || barOpen;
               setMobHideLeft(open);
               setBarOpen(!open);
             }}
@@ -979,9 +1019,9 @@ export function App() {
               Flows
             </button>
             <button
-              data-v="files"
+              data-v="preview"
               aria-pressed={!inMap}
-              title="Open page with the file list"
+              title="Open page preview"
               onClick={() => {
                 if (cur) {
                   if (pageHash() !== cur) location.hash = pagePath(cur);
@@ -989,11 +1029,9 @@ export function App() {
                 } else {
                   setMapRoute(null);
                 }
-                selectTab("files");
-                if (leftHidden) toggleLeft();
               }}
             >
-              Files
+              Preview
             </button>
           </span>
 
@@ -1223,25 +1261,40 @@ export function App() {
           {!files.length ? (
             "No preview entries. Add a page or component preview."
           ) : (
-            <FileTree
-              node={fileTree}
-              prefix="design/"
-              cur={cur}
-              opened={openedDirs}
-              onToggle={(key, open) => {
-                setOpenedDirs((prev) => {
-                  const next = new Set(prev);
-                  if (open) next.add(key);
-                  else next.delete(key);
-                  ssSet("cd-opened", JSON.stringify([...next]));
-                  return next;
-                });
-              }}
-              onSelect={(path) => {
-                setCur(path);
-                if (mob) setMobHideLeft(true);
-              }}
-            />
+            <>
+              <input
+                type="search"
+                className="file-filter"
+                placeholder="Filter files…"
+                aria-label="Filter files"
+                value={fileFilter}
+                onChange={(e) => setFileFilter(e.target.value)}
+              />
+              {!filteredFiles.length ? (
+                <small style={{ color: "var(--mut)" }}>No files match “{fileFilter.trim()}”.</small>
+              ) : (
+                <FileTree
+                  node={fileTree}
+                  prefix="design/"
+                  cur={cur}
+                  opened={openedDirs}
+                  forceOpen={Boolean(fileFilter.trim())}
+                  onToggle={(key, open) => {
+                    setOpenedDirs((prev) => {
+                      const next = new Set(prev);
+                      if (open) next.add(key);
+                      else next.delete(key);
+                      ssSet("cd-opened", JSON.stringify([...next]));
+                      return next;
+                    });
+                  }}
+                  onSelect={(path) => {
+                    setCur(path);
+                    if (mob) setMobHideLeft(true);
+                  }}
+                />
+              )}
+            </>
           )}
         </div>
 

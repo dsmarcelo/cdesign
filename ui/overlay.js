@@ -460,6 +460,7 @@
     });
   }
 
+  let focusTimer = 0;
   addEventListener("message", (e) => {
     if (e.data?.cd === "mode") {
       mode = e.data.mode;
@@ -471,6 +472,16 @@
     if (e.data?.cd === "clear" && (picked || tab)) { unpick(); post(null); }
     if (e.data?.cd === "pins") { pins(); restore(); }
     if (e.data?.cd === "unpick") unpick();
+    if (e.data?.cd === "focus") {
+      const el = [...document.querySelectorAll(`[data-cd-id="${CSS.escape(String(e.data.cdId))}"]`)].find((n) => fileOf(n) === e.data.file);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+        clearHl();
+        el.classList.add("__cd-hl");
+        clearTimeout(focusTimer);
+        focusTimer = setTimeout(() => el.classList.remove("__cd-hl"), 1500);
+      }
+    }
   });
   addEventListener("load", pins);
   if (!onBoard) {

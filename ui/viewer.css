@@ -61,7 +61,9 @@ body.resp #stage{justify-content:flex-start;align-items:flex-start} body.resp #d
 body.drag{user-select:none} body.drag iframe{pointer-events:none}
 html[data-theme=dark] iframe{background:#000}
 .c{border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px}
-.c small{display:block;color:var(--mut);font-size:11px;margin-bottom:4px;word-break:break-all}
+.c .c-loc{display:block;padding:0;border:0;background:none;color:var(--mut);font-size:11px;margin:0 0 4px;text-align:left;word-break:break-all}
+.c .c-loc:hover{color:#fafafa;text-decoration:underline}
+.file-filter{width:100%;padding:6px 8px;margin-bottom:8px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:inherit;font:inherit}
 .c.done{opacity:.6}
 .cdone{margin-top:12px;border-top:1px solid var(--line);padding-top:8px} .cdone>summary{cursor:pointer;color:var(--mut);font-size:11px;text-transform:uppercase;margin-bottom:8px}
 .c button{padding:2px 8px;margin-top:6px;margin-right:4px;font-size:11px}
