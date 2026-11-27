@@ -10,7 +10,7 @@ import { ensureDataDir } from "./store";
 
 export type WebsiteOptions = { name: string; start: string; pages?: string[]; locked?: boolean };
 export type WebsiteManifest = WebsiteOptions & { routes: Record<string, string>; builtAt: string };
-const forbidden = (file: string) => file.split(/[\\/]/).some(p => p.startsWith(".") || ["prototype", "prototypes", "wireframe", "previews", "node_modules"].includes(p));
+const forbidden = (file: string) => file.split(/[\\/]/).some(p => p.startsWith(".") || ["prototype", "prototypes", "previews", "node_modules"].includes(p));
 export function websiteName(value: string) {
   if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(value)) throw new Error("Website name must use 1–63 lowercase letters, numbers or hyphens");
   return value;
@@ -92,7 +92,7 @@ export async function exportWebsite(root: string, options: WebsiteOptions, desti
   const validate = (path: string) => {
     const rel = relative(root, realpathSync(path));
     if (rel.startsWith("..") && !path.includes(`${sep}node_modules${sep}`)) throw new Error(`Export dependency is outside the project: ${path}`);
-    if (rel.split(sep).some(p => ["prototype", "prototypes", "wireframe", "previews", ".cdesign"].includes(p))) throw new Error(`Excluded export dependency: ${rel}`);
+    if (rel.split(sep).some(p => ["prototype", "prototypes", "previews", ".cdesign"].includes(p))) throw new Error(`Excluded export dependency: ${rel}`);
   };
   const copied = new Map<string, string>();
   const asset = async (value: string, from: string): Promise<string> => {

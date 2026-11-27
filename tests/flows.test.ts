@@ -1,9 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listFlows, readFlow, syncItems, markOutdated, markSynced, clearOutdated, syncReport, pageFlowNote, newFlow, variantsOf } from "../src/flows";
-import { listPages } from "../src/modes";
+import { listFlows, readFlow, newFlow, createFlow, updateFlow, deleteFlow, addFrame, removeFrame, pageFlowNote } from "../src/flows";
 import { configure } from "../src/project";
 import { projectId } from "../src/store";
 
@@ -17,104 +16,93 @@ function project() {
   const put = (f: string, s: string) => { mkdirSync(join(root, f, ".."), { recursive: true }); writeFileSync(join(root, f), s); };
   configure(root, { mode: "react", tailwind: false });
   put("design/design-system.md", "# DS\n");
-  put("design/wireframe/vendas/cliente.tsx", "export default function W(){return <main>wire cliente</main>}");
-  put("design/wireframe/vendas/itens.tsx", "export default function W(){return <main>wire itens</main>}");
   put("design/pages/vendas/nova-venda.tsx", "export default function P(){return <main>page</main>}");
+  put("design/pages/vendas/lista.tsx", "export default function P(){return <main>lista</main>}");
   put("design/flows/nova-venda.json", JSON.stringify({
     title: "Nova venda",
-    steps: [
-      { id: "cliente", title: "Cliente", wireframe: "design/wireframe/vendas/cliente.tsx", page: "design/pages/vendas/nova-venda.tsx" },
-      { id: "ok", decision: "Encontrado?" },
-      { id: "itens", title: "Itens", wireframe: "design/wireframe/vendas/itens.tsx" },
+    frames: [
+      { id: "lista", title: "Vendas", page: "design/pages/vendas/lista.tsx", x: 0, y: 0, w: 402, h: 874 },
+      { id: "cliente", page: "design/pages/vendas/nova-venda.tsx#venda/cliente", x: 500, y: 40, w: 402, h: 874 },
     ],
-    links: [{ from: "cliente", to: "ok" }, { from: "ok", to: "itens", label: "Sim" }, { from: "itens", to: "cliente", label: "Voltar", dashed: true }],
   }));
   return { root, put };
 }
 
-test("flows parse, validate and list wireframes as React previews", () => {
+test("flows parse frames, validate pages and fill in missing positions", () => {
   const { root, put } = project();
   const [f] = listFlows(root);
-  expect(f.id).toBe("nova-venda");
+  expect(f.title).toBe("Nova venda");
+  expect(f.frames.map((x) => [x.id, x.x, x.y])).toEqual([["lista", 0, 0], ["cliente", 500, 40]]);
   expect(f.errors).toEqual([]);
-  expect(f.steps.map((s) => s.id)).toEqual(["cliente", "ok", "itens"]);
-  expect(f.links[2]).toEqual({ from: "itens", to: "cliente", label: "Voltar", dashed: true });
-  expect(listPages(root)).toContain("design/wireframe/vendas/cliente.tsx");
 
-  put("design/flows/bad.json", JSON.stringify({ steps: [{ id: "a", wireframe: "design/wireframe/missing.tsx" }, { id: "a", decision: "x" }, { id: "Bad Id" }, { id: "d", decision: "q", page: "design/pages/vendas/nova-venda.tsx" }], links: [{ from: "a", to: "zzz" }] }));
-  const bad = readFlow(root, "bad").errors.join("\n");
-  expect(bad).toContain("wireframe file not found: design/wireframe/missing.tsx");
-  expect(bad).toContain('duplicate step id "a"');
-  expect(bad).toContain("lowercase");
-  expect(bad).toContain("a decision has no wireframe or page");
-  expect(bad).toContain("unknown step id");
+  put("design/flows/bad.json", JSON.stringify({ frames: [{ id: "a", page: "design/pages/missing.tsx#x" }, { id: "a", page: "design/pages/vendas/lista.tsx" }, { id: "Bad Id", page: "x" }, { id: "n" }, { page: "design/pages/vendas/lista.tsx", w: 1280, h: 800 }] }));
+  const bad = readFlow(root, "bad");
+  expect(bad.errors.join("\n")).toContain('frame "a": page file not found: design/pages/missing.tsx');
+  expect(bad.errors.join("\n")).toContain('duplicate frame id "a"');
+  expect(bad.errors.join("\n")).toContain("frame id must be lowercase");
+  expect(bad.errors.join("\n")).toContain('frame "n": needs a page');
+  // A frame without a position goes after the others; one without an id gets one from its page.
+  expect(bad.frames.at(-1)).toEqual({ id: "lista", page: "design/pages/vendas/lista.tsx", x: 402 + 80, y: 0, w: 1280, h: 800 });
+
   put("design/flows/broken.json", "{");
   expect(readFlow(root, "broken").errors[0]).toContain("invalid JSON");
+});
 
+test("old step/link flows open as frames of their pages", () => {
+  const { root, put } = project();
+  put("design/flows/old.json", JSON.stringify({
+    title: "Old",
+    steps: [
+      { id: "cliente", title: "Cliente", wireframe: "design/wireframe/c.tsx", page: "design/pages/vendas/nova-venda.tsx" },
+      { id: "ok", decision: "Encontrado?" },
+      { id: "itens", title: "Itens", wireframe: "design/wireframe/i.tsx" },
+      { id: "lista", page: "design/pages/vendas/lista.tsx" },
+    ],
+    links: [{ from: "cliente", to: "ok" }],
+  }));
+  const f = readFlow(root, "old");
+  expect(f.errors).toEqual([]);
+  expect(f.frames.map((x) => [x.id, x.title, x.x])).toEqual([["cliente", "Cliente", 0], ["lista", undefined, 482]]);
+  updateFlow(root, "old", { title: "Old flow" });
+  const saved = JSON.parse(readFileSync(join(root, "design/flows/old.json"), "utf8"));
+  expect(saved.steps).toBeUndefined();
+  expect(saved.frames).toHaveLength(2);
+});
+
+test("tabs are created, renamed, laid out and deleted", () => {
+  const { root } = project();
   expect(newFlow(root, "cadastro", "Cadastro")).toBe("design/flows/cadastro.json");
   expect(() => newFlow(root, "cadastro")).toThrow("already exists");
   expect(() => newFlow(root, "No")).toThrow("lowercase");
+  expect(createFlow(root, "Cadastro").id).toBe("cadastro-2");
+  expect(createFlow(root, "Revisão de pedido").id).toBe("revisao-de-pedido");
+
+  const f = updateFlow(root, "cadastro", { title: "Cadastro novo", frames: [{ page: "design/pages/vendas/lista.tsx", x: 10.4, y: -20, w: 50, h: 9000 }] });
+  expect(f.title).toBe("Cadastro novo");
+  expect(f.frames).toEqual([{ id: "lista", page: "design/pages/vendas/lista.tsx", x: 10, y: -20, w: 200, h: 4000 }]);
+  expect(() => updateFlow(root, "cadastro", { frames: [{ page: "design/pages/nope.tsx" }] })).toThrow("page file not found");
+  expect(() => updateFlow(root, "nope", { title: "x" })).toThrow("does not exist");
+
+  const added = addFrame(root, "cadastro", "design/pages/vendas/nova-venda.tsx#venda/cliente", "Cliente");
+  expect(added).toEqual({ id: "cliente", title: "Cliente", page: "design/pages/vendas/nova-venda.tsx#venda/cliente", x: 290, y: -20, w: 200, h: 4000 });
+  expect(pageFlowNote(root, "design/pages/vendas/nova-venda.tsx")).toBe("Flow: shown as cadastro/cliente, nova-venda/cliente.");
+  expect(removeFrame(root, "cadastro", "cliente")).toBe(true);
+  expect(removeFrame(root, "cadastro", "cliente")).toBe(false);
+
+  deleteFlow(root, "cadastro");
+  expect(existsSync(join(root, "design/flows/cadastro.json"))).toBe(false);
+  expect(() => deleteFlow(root, "cadastro")).toThrow("does not exist");
 });
 
-test("sync states follow content hashes; only explicit marks mean outdated", () => {
-  const { root } = project();
-  const page = "design/pages/vendas/nova-venda.tsx", wire = "design/wireframe/vendas/cliente.tsx";
-  const pair = () => syncItems(root).find((i) => i.page === page)!;
-  expect(pair().state).toBe("never-synced");
-  expect(syncItems(root).find((i) => i.wireframe === "design/wireframe/vendas/itens.tsx")!.state).toBe("no-page");
-
-  markSynced(root, page);
-  expect(pair().state).toBe("in-sync");
-  appendFileSync(join(root, wire), "\n// changed");
-  expect(pair().state).toBe("wireframe-changed");
-  expect(pair().outdated).toEqual([]); // drift alone is not "outdated"
-  appendFileSync(join(root, page), "\n// changed");
-  expect(pair().state).toBe("both-changed");
-
-  markOutdated(root, page, "add CPF search");
-  expect(pair().outdated).toMatchObject([{ file: page, side: "page", note: "add CPF search" }]);
-  expect(syncReport(root)).toContain(`page ${page} must follow ${wire} — add CPF search`);
-  expect(pageFlowNote(root, wire)).toContain("wireframe of nova-venda/cliente; counterpart: design/pages/vendas/nova-venda.tsx");
-  expect(JSON.parse(readFileSync(join(root, "design/sync.json"), "utf8")).outdated[page].note).toBe("add CPF search");
-
-  markSynced(root, wire); // either side confirms the pair and clears both marks
-  expect(pair()).toMatchObject({ state: "in-sync", outdated: [] });
-  markOutdated(root, wire);
-  expect(clearOutdated(root, wire)).toBe(true);
-  expect(clearOutdated(root, wire)).toBe(false);
-  expect(() => markOutdated(root, "design/pages/other.tsx")).toThrow("not a wireframe or page of any flow");
-  expect(() => markSynced(root, "design/wireframe/vendas/itens.tsx")).toThrow("nothing to sync");
-});
-
-test("wireframe device variants are discovered and hashed together", () => {
-  const { root, put } = project();
-  expect(variantsOf(root, "design/wireframe/vendas/cliente.tsx")).toEqual({ phone: "design/wireframe/vendas/cliente.tsx", desktop: "design/wireframe/vendas/cliente.tsx" });
-  put("design/wireframe/vendas/itens.phone.tsx", "export default function W(){return <main>phone</main>}");
-  expect(variantsOf(root, "design/wireframe/vendas/itens.phone.tsx")).toEqual({ phone: "design/wireframe/vendas/itens.phone.tsx", desktop: undefined });
-  put("design/wireframe/vendas/itens.desktop.tsx", "export default function W(){return <main>desktop</main>}");
-  expect(variantsOf(root, "design/wireframe/vendas/itens.phone.tsx").desktop).toBe("design/wireframe/vendas/itens.desktop.tsx");
-  expect(variantsOf(root, "design/wireframe/vendas/itens.tsx")).toEqual({ phone: "design/wireframe/vendas/itens.phone.tsx", desktop: "design/wireframe/vendas/itens.desktop.tsx" });
-  expect(readFlow(root, "nova-venda").steps[2].wireframes?.desktop).toBe("design/wireframe/vendas/itens.desktop.tsx");
-
-  put("design/wireframe/vendas/cliente.desktop.tsx", "export default function W(){return <main>d</main>}");
-  const page = "design/pages/vendas/nova-venda.tsx";
-  markSynced(root, page);
-  const pair = () => syncItems(root).find((i) => i.page === page)!;
-  expect(pair().state).toBe("in-sync");
-  appendFileSync(join(root, "design/wireframe/vendas/cliente.desktop.tsx"), "\n// changed");
-  expect(pair().state).toBe("wireframe-changed"); // a variant edit counts as a wireframe change
-});
-
-test("CLI and daemon expose flows and sync", async () => {
+test("CLI and daemon expose flows", async () => {
   const { root } = project();
   const run = (...a: string[]) => { const p = Bun.spawnSync([process.execPath, cli, ...a], { cwd: root, env: { ...process.env, CDESIGN_HOME: join(root, ".home") } }); return p.stdout.toString() + p.stderr.toString(); };
-  expect(run("flows")).toContain("nova-venda  Nova venda  (2 screens, 1 decisions, 3 links)");
+  expect(run("flows")).toContain("nova-venda  Nova venda  (2 frames)");
   expect(run("flows", "check")).toContain("flows ok");
-  expect(run("flows", "show", "nova-venda")).toContain('ok -> itens "Sim"');
-  expect(run("sync", "outdated", "design/pages/vendas/nova-venda.tsx", "--note", "follow the wireframe")).toContain("marked outdated");
-  expect(run("sync")).toContain("Marked outdated (1)");
-  expect(JSON.parse(run("sync", "--json"))[0].outdated[0].note).toBe("follow the wireframe");
-  expect(run("sync", "done", "design/pages/vendas/nova-venda.tsx")).toContain("in sync:");
+  expect(run("flows", "show", "nova-venda")).toContain('lista "Vendas": design/pages/vendas/lista.tsx at 0,0 size 402×874');
+  expect(run("flows", "add", "nova-venda", "design/pages/vendas/lista.tsx", "--title", "Outra")).toContain("added frame outra");
+  expect(run("flows", "rm", "nova-venda", "outra")).toContain("removed outra");
+  expect(run("sync")).not.toContain("wireframe"); // the sync command is gone
 
   const home = join(root, ".home");
   const daemon = Bun.spawn([process.execPath, cli, "serve", root, "--port", "0"], { env: { ...process.env, CDESIGN_HOME: home, CDESIGN_IDLE_SECONDS: "300" }, stdout: "ignore", stderr: "ignore" });
@@ -124,11 +112,13 @@ test("CLI and daemon expose flows and sync", async () => {
     const url = (p: string) => `http://127.0.0.1:${port}/__cd/${p}?project=${projectId(root)}`;
     const data = await (await fetch(url("flows"))).json() as any;
     expect(data.flows[0].title).toBe("Nova venda");
-    expect(data.sync.find((i: any) => i.page).state).toBe("in-sync");
-    const r = await fetch(url("sync"), { method: "POST", body: JSON.stringify({ action: "outdated", file: "design/wireframe/vendas/itens.tsx", note: "x" }) });
-    expect(r.status).toBe(200);
-    expect(((await r.json()) as any).sync.find((i: any) => i.wireframe === "design/wireframe/vendas/itens.tsx").outdated[0].note).toBe("x");
-    expect((await fetch(url("sync"), { method: "POST", body: JSON.stringify({ action: "nope", file: "a" }) })).status).toBe(400);
+    const created = await (await fetch(url("flows"), { method: "POST", body: JSON.stringify({ title: "Checkout" }) })).json() as any;
+    expect(created.flow.id).toBe("checkout");
+    const moved = await (await fetch(url("flows/checkout"), { method: "POST", body: JSON.stringify({ frames: [{ id: "a", page: "design/pages/vendas/lista.tsx", x: 5, y: 6, w: 768, h: 1024 }] }) })).json() as any;
+    expect(moved.flow.frames[0]).toEqual({ id: "a", page: "design/pages/vendas/lista.tsx", x: 5, y: 6, w: 768, h: 1024 });
+    expect((await fetch(url("flows/checkout"), { method: "POST", body: JSON.stringify({ frames: [{ page: "../x.tsx" }] }) })).status).toBe(400);
+    expect((await fetch(url("flows/checkout/delete"), { method: "POST", body: "{}" })).status).toBe(200);
+    expect(existsSync(join(root, "design/flows/checkout.json"))).toBe(false);
     expect((await fetch(url("app/main.js").replace(/\?.*/, ""))).status).toBe(200);
     expect((await fetch(url("app/main.css").replace(/\?.*/, ""))).status).toBe(200);
   } finally { daemon.kill(); await daemon.exited; }

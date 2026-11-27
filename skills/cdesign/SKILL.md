@@ -17,48 +17,41 @@ Prototypes are structured references for later implementation in the app's frame
 
 ## Folder organization
 
-Group related pages by feature or screen type under design/pages/ (for example, design/pages/settings/). Put lo-fi wireframes under design/wireframe/ (grouped like the pages) and describe each user flow in design/flows/<id>.json; put other experiments in a named folder under design/prototype/. Group reusable components by family under design/components/ and feature-specific components under design/features/. Use short, descriptive folder names and reuse existing groups.
+Group related pages by feature or screen type under design/pages/ (for example, design/pages/settings/). Describe each user flow in design/flows/<id>.json; put other experiments in a named folder under design/prototype/. Group reusable components by family under design/components/ and feature-specific components under design/features/. Use short, descriptive folder names and reuse existing groups.
 
-## Flows, wireframes and sync
+## Flows (canvas tabs)
 
-The project is planned as **flows** of **wireframes** first; real **pages** come later. The viewer shows this as a map (Flows | Pages | Files in the toolbar; `M` toggles the map, `Esc` returns from an opened page).
+The viewer opens on a free canvas. Each tab across the top is one flow; its pages sit on the canvas as live frames the user drags, resizes and arranges freely. **Design** mode selects and comments on elements and moves frames; **Preview** (`P`) makes every frame interactive (scroll, click, type). Opening a frame shows the page by itself (full page); `Esc` returns to the canvas.
 
 **Files**
-- `design/wireframe/**.tsx|html`: lo-fi screens (grayscale boxes, real control shapes, skeleton text). They are prototypes: render, select and comment on them like any page. Group them like the pages (`design/wireframe/vendas/…`).
-  - **Devices.** A wireframe can exist for phone, desktop or both. One unsuffixed file (`cliente.tsx`) is responsive and is shown on both. For separate layouts add siblings `cliente.phone.tsx` and `cliente.desktop.tsx` (point the flow step at either one; the other is found automatically). There are no tablet wireframes. The map draws each screen at real device size (phone 402×874, iPhone 18; desktop 1280×800) and has a Phone/Desktop toggle; a screen missing on the chosen device falls back to the other one, labeled "Phone only"/"Desktop only".
-  - **Fill the viewport.** The map already draws the device frame. A wireframe must render the screen itself edge to edge (`min-h-screen w-full`), never its own phone bezel, fixed `w-[390px]` box, rounded device border or gray page padding around it.
-- `design/pages/**`: the real screens. The Pages map groups them by first-level folder; the hub is the file named like the folder (or `index`).
-- `design/flows/<id>.json`: one file per user flow. `id` = lowercase letters, digits, dashes. Arrows exist **only** here (never inferred from page links):
+- `design/pages/**`: the real screens. Put a page in a flow as a frame. For a dialog, sheet, drawer, filter overlay or other state of a page, show it on the page it opens from (see **Page states in the URL hash** below) and point the frame at `page.tsx#state`, e.g. `design/pages/vendas/nova-venda.tsx#venda/cliente`. Only when a component has no host page yet, use its `Preview` export or preview sidecar as the frame's `page`. The **Files** view holds the project-wide preview inventory.
+- `design/flows/<id>.json`: one file per tab. `id` = lowercase letters, digits, dashes. The viewer writes `x`, `y`, `w`, `h` when the user moves or resizes a frame, so read the file before editing it and keep positions you did not mean to change:
 ```json
-{ "title": "Nova venda", "description": "Do cliente ao pagamento.",
-  "steps": [
-    { "id": "cliente", "title": "Buscar cliente", "wireframe": "design/wireframe/vendas/cliente.tsx", "page": "design/pages/vendas/nova-venda.tsx" },
-    { "id": "encontrado", "decision": "Cliente encontrado?" },
-    { "id": "cadastro", "title": "Cadastrar cliente", "wireframe": "design/wireframe/vendas/cadastro.tsx", "note": "optional context" } ],
-  "links": [
-    { "from": "cliente", "to": "encontrado" },
-    { "from": "encontrado", "to": "cadastro", "label": "Não" },
-    { "from": "cadastro", "to": "cliente", "label": "Voltar", "dashed": true } ] }
+{ "title": "Nova venda", "description": "Da lista de vendas à confirmação.",
+  "frames": [
+    { "id": "lista", "title": "Vendas", "page": "design/pages/vendas/lista.tsx", "x": 0, "y": 0, "w": 402, "h": 874 },
+    { "id": "cliente", "title": "Selecionar cliente", "page": "design/pages/vendas/nova-venda.tsx#venda/cliente", "x": 482, "y": 0, "w": 402, "h": 874 } ] }
 ```
-  A screen step has a `wireframe`, a `page`, or both (paths project-relative, the files must exist). A decision step has only `decision` (the question); label its outgoing links (`Sim`/`Não`…). The map shows every screen live, so the user can zoom out to see the whole flow and use the Select tool (`S`) on elements inside any screen without opening it; `cdesign page` then reports that file and element. Layout is automatic (left to right; the first link out of a step stays on the main row, later ones branch below; loops are drawn dashed). Run `cdesign flows check` after editing a flow.
-- `design/sync.json`: written by `cdesign sync`; never edit it by hand. It stores, per page, the content hashes of the pair when it was last confirmed in sync, and explicit `outdated` marks with notes. Commit it with the design.
+  Use existing, project-relative paths. `w`×`h` is the frame's device size (phone 402×874, tablet 768×1024, desktop 1280×800 or 1440×900); the size menu in the canvas toolbar resizes every frame of the tab. Omit `x`/`y` and the frame goes to the right of the others.
+- Prefer the CLI over hand edits: `cdesign flows new <id> --title "Nova venda"`, `cdesign flows add <id> <page[#state]> [--title t]` (placed after the last frame, sized like it), `cdesign flows rm <id> <frame|page>`, `cdesign flows show <id>`, `cdesign flows check`. MCP `flows` has the same actions.
+- Order frames in reading order (entry screen first, left to right). There are no arrows: the arrangement on the canvas is the flow.
 
-**Sync rules**
-- A wireframe change does **not** require a page change: wireframes are a prototype until the user decides to build or update the page. Do not touch the page unless asked.
-- "Changed since last sync" (hash drift) is informational. Only explicit **outdated** marks mean "this file must be updated".
-- After you change one side of a pair, decide whether the other side must follow. If yes (or the user says so), mark the side that is now behind: `cdesign sync outdated <that file> --note "what must change"`. If it is a pure prototype exploration, leave it.
-- After you bring a pair in line (page updated from its wireframe, or the wireframe updated to match a shipped page), run `cdesign sync done <either file>`: it records both hashes and clears the marks on both sides. `cdesign sync clear <file>` drops a mark without confirming sync (the user decided not to apply it).
-- When the user asks what needs syncing / updating / is outdated, run `cdesign sync` (MCP `sync`) and answer from it: marked outdated first (with notes), then pairs changed since last sync, never-synced pairs, and wireframes without a page yet. `cdesign sync --json` gives the raw pairs. `cdesign flows show <id>` gives one flow with each step's state; `cdesign page` also prints the open file's flow, counterpart and sync state.
+**Page states in the URL hash**
+- A frame's `page` may end in `#state`. cdesign validates the file before `#` and loads the frame with that URL hash; it does not open anything itself. The page must read `location.hash` on load (and on `hashchange`/`popstate`) and render the state, otherwise the frame silently shows the plain page and `flows check` still passes.
+- Make overlays hash-driven rather than local state: opening one writes the hash (`history.pushState`, so Back closes it), closing removes it. Use segments joined by `/`, innermost last, each `name` or `name=arg`: `#produto=p3/estoque=p3` is the stock dialog over the product sheet. Name states in the product's language, and let a missing arg mean "the first item" so frames need no real ids. Reuse the project's hash-route helper if it has one (look for `location.hash` in `design/components/shared/`); otherwise add one small shared hook and document its format in its header.
+- A state opened directly by link must show content: if it needs data the user would have entered first (items in a cart, a customer with addresses), fill sample data when the page opens on that hash with an empty draft. Never write to persistent demo data from a link.
+- A nested state implies its parent: `#venda/item` must also show the screen the item editor opens over (for example mobile step 2), with the editor on top.
+- Verify every state renders with `cdesign shot page.tsx#state` (add `--width 1280` for desktop) before finishing.
+
+Run `cdesign flows check`, then review the tab in the viewer. The user can select or comment on an element directly on a frame; `cdesign page` returns the selection and the page it came from.
 
 **What to update when**
 | You changed | Also update |
 |---|---|
-| Added a screen to a flow | create its wireframe, add the step and its links in `design/flows/<id>.json`, `flows check` |
-| A wireframe | nothing required; if the page must follow, `sync outdated <page> --note …` |
-| A page built from a wireframe | set the step's `page`, then `sync done <page>` once it matches |
-| A page (shipped behavior changed) | if the wireframe should reflect it, `sync outdated <wireframe> --note …` |
-| Renamed or moved a wireframe/page | update every flow step that points to it, `flows check`, then `sync done` if the pair is still aligned |
-| Removed a screen | remove its step and links from the flow |
+| Added a screen to a flow | `flows add <id> <page>`, `flows check` |
+| Added a dialog/sheet state | make the page open it from its URL hash, `flows add <id> page.tsx#state`, `shot page.tsx#state` |
+| Renamed or moved a page | update every frame that points to it, `flows check` |
+| Removed a screen | `flows rm <id> <frame>` |
 
 ## Mode and React components
 - Read `design/cdesign.json`: new projects default to `{ "version": 1, "mode": "react", "tailwind": true }`. Existing unconfigured HTML projects retain HTML behavior. `cdesign init|open --mode react|html --tailwind|--no-tailwind` persists an explicit choice; changing it does not convert files. CLI interactive setup offers the choices; noninteractive setup uses defaults.

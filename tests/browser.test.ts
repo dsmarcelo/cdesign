@@ -16,7 +16,7 @@ async function until<T>(fn: () => T | Promise<T>, timeout = 15000): Promise<NonN
   throw new Error("Timed out waiting for browser state");
 }
 
-test.skipIf(!chrome)("browser: React hooks, styling, original source comments, reloads, errors, screenshots and conversion parity", async () => {
+async function runBrowserChecks(mapsOnly = false) {
   const root = mkdtempSync(join(tmpdir(), "cdesign-browser-"));
   const home = join(root, ".cdesign/home"), profile = join(root, ".cdesign/chrome");
   mkdirSync(home, {recursive: true});
@@ -60,6 +60,221 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
       await until(async () => ev(`document.readyState==='complete' && document.querySelector(${JSON.stringify(selector)}) && window.__cdReady!==false`));
     };
     await cmd("Page.enable");
+    if (mapsOnly) {
+      put("design/pages/Unassigned.html", "<main><h1>Unassigned page</h1></main>");
+      put("design/pages/AnotherFlow.html", "<main><h1>Another flow</h1></main>");
+      put("design/components/ui/FilterDialog.tsx", "export function Preview(){return <dialog open>Filters</dialog>}");
+      put("design/flows/home.json", JSON.stringify({
+        title: "Home",
+        frames: [
+          {id: "home", title: "Home", page: "design/pages/Home.tsx", x: 0, y: 0, w: 402, h: 874},
+          {id: "filters", page: "design/components/ui/FilterDialog.tsx", x: 600, y: 100, w: 402, h: 874},
+        ],
+      }));
+      // An old step/link flow still opens, as frames of its pages.
+      put("design/flows/other.json", JSON.stringify({
+        title: "Other Flow",
+        steps: [{id: "start", page: "design/pages/AnotherFlow.html"}, {id: "q", decision: "?"}],
+        links: [{from: "start", to: "q"}],
+      }));
+      const flowFile = () => JSON.parse(readFileSync(join(root, "design/flows/home.json"), "utf8"));
+      await navigate("/#flow:home", "#map .frame iframe");
+      expect(await ev(`[...document.querySelectorAll(".tabs .tab")].map(t => t.textContent)`)).toEqual(["Home", "Other Flow"]);
+      expect(await ev(`document.querySelector(".tab.on").textContent`)).toBe("Home");
+      expect(await ev(`[...document.querySelectorAll("#map [data-screen]")].map(f => f.dataset.screen)`)).toEqual(["design/pages/Home.tsx", "design/components/ui/FilterDialog.tsx"]);
+      expect(await ev(`[...document.querySelectorAll(".frame-name")].map(n => n.textContent)`)).toEqual(["Home", "FilterDialog"]);
+
+      const key = (key: string, code: string, shiftKey = false) => ev(`window.dispatchEvent(new KeyboardEvent("keydown", ${JSON.stringify({key, code, shiftKey, cancelable: true})}))`);
+      const camera = () => ev("document.querySelector('.cv-position').style.translate");
+      const zoom = () => ev("document.querySelector('.cv-canvas').style.zoom");
+      const before = await camera();
+      expect(Number(await zoom())).toBeLessThan(1);
+      await key("ArrowLeft", "ArrowLeft");
+      expect(await camera()).not.toBe(before);
+      await key("0", "Digit0");
+      expect(await zoom()).toBe("1");
+      const anchorError = await ev(`(() => {
+        const viewport = document.querySelector('.cv-viewport');
+        const canvas = document.querySelector('.cv-canvas');
+        const {left, top} = viewport.getBoundingClientRect();
+        const x = Math.round(left + 100), y = Math.round(top + 100);
+        const before = canvas.getBoundingClientRect();
+        viewport.dispatchEvent(new WheelEvent('wheel', {clientX: x, clientY: y, deltaY: -60, ctrlKey: true, cancelable: true}));
+        const after = canvas.getBoundingClientRect();
+        return Math.abs((x - before.left) - (x - after.left) / Number(canvas.style.zoom));
+      })()`);
+      expect(anchorError).toBeLessThan(1);
+      expect(Number(await zoom())).toBeGreaterThan(1);
+      // A plain vertical two-finger scroll pans without zooming.
+      const zoomBefore = await zoom(), yBefore = await camera();
+      await ev(`document.querySelector('.cv-viewport').dispatchEvent(new WheelEvent('wheel', {deltaY: 80, cancelable: true}))`);
+      expect(await zoom()).toBe(zoomBefore);
+      expect(await camera()).not.toBe(yBefore);
+      await key("h", "KeyH");
+      await until(() => ev("!!document.querySelector('.cv-viewport.hand')"));
+      await key("v", "KeyV");
+      await until(() => ev("!document.querySelector('.cv-viewport.hand')"));
+      await key("!", "Digit1", true);
+      const fitZoom = Number(await zoom());
+      const {x, y} = await ev(`(() => { const r = document.querySelector('.cv-viewport').getBoundingClientRect(); return {x: Math.round(r.left + 40), y: Math.round(r.top + 60)}; })()`);
+      // Dragging the empty canvas pans it; a two-finger pinch zooms.
+      const beforeDrag = await camera();
+      await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x, y});
+      await cmd("Input.dispatchMouseEvent", {type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1});
+      await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x: x + 20, y: y + 10, buttons: 1});
+      await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x: x + 45, y: y + 25, buttons: 1});
+      await cmd("Input.dispatchMouseEvent", {type: "mouseReleased", x: x + 45, y: y + 25, button: "left", clickCount: 1});
+      await until(async () => (await camera()) !== beforeDrag);
+      await cmd("Input.dispatchTouchEvent", {type: "touchStart", touchPoints: [{x, y, id: 1}, {x: x + 60, y, id: 2}]});
+      await cmd("Input.dispatchTouchEvent", {type: "touchMove", touchPoints: [{x, y, id: 1}, {x: x + 100, y, id: 2}]});
+      await cmd("Input.dispatchTouchEvent", {type: "touchEnd", touchPoints: []});
+      expect(Number(await zoom())).toBeGreaterThan(fitZoom);
+      const savedPosition = await camera(), savedZoom = await zoom();
+      await ev("window.beforeCameraReload = true");
+      await cmd("Page.reload");
+      await until(() => ev(`!window.beforeCameraReload && location.hash === "#flow:home" && !!document.querySelector('#map .frame iframe')`));
+      expect(await camera()).toBe(savedPosition);
+      expect(await zoom()).toBe(savedZoom);
+      await key("!", "Digit1", true);
+
+      // Drag a frame by its label: the new position is saved to the flow file.
+      const rect = (sel: string) => ev(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return {x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height}; })()`);
+      const drag = async (from: {x: number; y: number}, dx: number, dy: number) => {
+        await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", ...from});
+        await cmd("Input.dispatchMouseEvent", {type: "mousePressed", ...from, button: "left", buttons: 1, clickCount: 1});
+        for (let i = 1; i <= 5; i++) await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x: from.x + dx * i / 5, y: from.y + dy * i / 5, buttons: 1});
+        await cmd("Input.dispatchMouseEvent", {type: "mouseReleased", x: from.x + dx, y: from.y + dy, button: "left", clickCount: 1});
+      };
+      const z = Number(await zoom());
+      await drag(await rect('[data-frame="filters"] .frame-name'), 100, 50);
+      await until(() => flowFile().frames[1].x !== 600);
+      expect(Math.abs(flowFile().frames[1].x - (600 + 100 / z))).toBeLessThan(2);
+      expect(Math.abs(flowFile().frames[1].y - (100 + 50 / z))).toBeLessThan(2);
+      expect(await ev(`document.querySelector(".frame.sel")?.dataset.frame`)).toBe("filters");
+      // Resize the selected frame from its corner handle (zoomed to it so the handle is on screen).
+      await key("@", "Digit2", true);
+      const z2 = Number(await zoom());
+      await drag(await rect('[data-frame="filters"] .rz.se'), 40, -60);
+      await until(() => flowFile().frames[1].w !== 402);
+      expect(Math.abs(flowFile().frames[1].w - (402 + 40 / z2))).toBeLessThan(2);
+      expect(Math.abs(flowFile().frames[1].h - (874 - 60 / z2))).toBeLessThan(2);
+      expect(await ev(`document.querySelector(".cv-size").value`)).toBe("mixed");
+      // The size picker resizes every frame of the tab.
+      await ev(`(() => { const s = document.querySelector(".cv-size"); s.value = "Tablet"; s.dispatchEvent(new Event("change", {bubbles: true})); })()`);
+      await until(() => flowFile().frames.every((f: any) => f.w === 768 && f.h === 1024));
+      expect(await ev(`document.querySelector(".cv-size").value`)).toBe("Tablet");
+      expect(flowFile().frames[1].x).toBeGreaterThanOrEqual(768);
+      // A layout save does not reload the previews.
+      await ev(`document.querySelector('[data-frame="home"] iframe').contentWindow.__kept = 1`);
+      await Bun.sleep(400);
+      expect(await ev(`document.querySelector('[data-frame="home"] iframe').contentWindow.__kept`)).toBe(1);
+
+      // Preview hands the pointer to the pages; Design takes it back.
+      await key("p", "KeyP");
+      await until(() => ev(`getComputedStyle(document.querySelector('#map iframe')).pointerEvents === "auto"`));
+      expect(await ev(`document.querySelector('[data-frame="home"] iframe').contentDocument.documentElement.classList.contains("__cd-live")`)).toBe(true);
+      await ev(`[...document.querySelectorAll(".cv-modes button")].find(b => b.textContent.includes("Design")).click()`);
+      await until(() => ev(`getComputedStyle(document.querySelector('#map iframe')).pointerEvents === "none"`));
+
+      // Focus one frame so the element remains hit-testable at the canvas's scaled coordinates.
+      await ev(`document.querySelector('[data-frame="home"] .frame-name').dispatchEvent(new PointerEvent("pointerdown", {bubbles: true, button: 0, pointerId: 1}))`);
+      await ev(`document.querySelector('[data-frame="home"] .frame-name').dispatchEvent(new PointerEvent("pointerup", {bubbles: true, button: 0, pointerId: 1}))`);
+      await until(() => ev(`document.querySelector(".frame.sel")?.dataset.frame === "home"`));
+      await key("@", "Digit2", true);
+      await until(() => ev(`!!document.querySelector('[data-frame="home"] iframe').contentDocument?.querySelector("button[data-cd-id]")`));
+      // A page's unsaved-changes guard is muted in previews, so the viewer can swap frames without a leave prompt.
+      expect(await ev(`(() => {
+        const w = document.querySelector('[data-frame="home"] iframe').contentWindow;
+        w.addEventListener("beforeunload", (e) => e.preventDefault());
+        w.onbeforeunload = () => "unsaved";
+        const e = new w.Event("beforeunload", {cancelable: true});
+        w.dispatchEvent(e);
+        return e.defaultPrevented || w.onbeforeunload !== null;
+      })()`)).toBe(false);
+      const buttonPoint = () => ev(`(() => {
+        const f = document.querySelector('[data-frame="home"] iframe');
+        const frame = f.getBoundingClientRect(), button = f.contentDocument.querySelector("button").getBoundingClientRect();
+        return {x: frame.left + frame.width * (button.left + button.width / 2) / f.clientWidth,
+          y: frame.top + frame.height * (button.top + button.height / 2) / f.clientHeight};
+      })()`);
+      let point = await buttonPoint();
+      expect(await ev(`document.elementFromPoint(${point.x}, ${point.y})?.matches('[data-frame="home"] .frame-body')`)).toBe(true);
+      const clickElement = async () => {
+        await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", ...point});
+        await cmd("Input.dispatchMouseEvent", {type: "mousePressed", ...point, button: "left", buttons: 1, clickCount: 1});
+        await cmd("Input.dispatchMouseEvent", {type: "mouseReleased", ...point, button: "left", clickCount: 1});
+      };
+      await clickElement();
+      const selection = await until(async () => (await (await fetch(base + "/__cd/page")).json() as any).selection);
+      expect(selection.file).toBe("design/components/ui/Button.tsx");
+      expect(selection.page).toBe("design/pages/Home.tsx");
+      expect(await ev(`document.querySelector('[data-frame="home"] iframe').contentDocument.querySelector("button.__cd-sel")?.textContent`)).toBe("Count 0");
+      expect(flowFile().frames[0].x).toBe(0); // a click is not a drag
+      // Figma-style: the pick is outlined by the canvas, the frame itself is not selected, and a double-click does not open the page.
+      expect(await ev(`document.querySelector('[data-frame="home"] .cv-pick-tag')?.textContent`)).toMatch(/^button · \d+ × \d+$/);
+      expect(await ev(`document.querySelector(".frame.sel")`)).toBe(null);
+      await cmd("Input.dispatchMouseEvent", {type: "mousePressed", ...point, button: "left", buttons: 1, clickCount: 2});
+      await cmd("Input.dispatchMouseEvent", {type: "mouseReleased", ...point, button: "left", clickCount: 2});
+      await Bun.sleep(200);
+      expect(await ev("location.hash")).toBe("#flow:home");
+      await key("Delete", "Delete"); // removes frames only, never the frame of a picked element
+      await Bun.sleep(200);
+      expect(flowFile().frames.length).toBe(2);
+      // Hovering another element (the second button) outlines it.
+      const title = await ev(`(() => {
+        const f = document.querySelector('[data-frame="home"] iframe'), r = f.getBoundingClientRect();
+        const el = f.contentDocument.querySelectorAll("button")[1];
+        const b = el.getBoundingClientRect();
+        return {x: r.left + r.width * (b.left + b.width / 2) / f.clientWidth, y: r.top + r.height * (b.top + b.height / 2) / f.clientHeight};
+      })()`);
+      await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", ...title});
+      await until(() => ev(`!!document.querySelector('[data-frame="home"] .cv-hover')`));
+
+      await ev(`document.querySelector('.cv-toolbar button[aria-label="Comment"]').click()`);
+      await clickElement();
+      await until(() => ev(`!!document.querySelector(".board-comment textarea")`));
+      const beforeWheel = await zoom();
+      await cmd("Input.dispatchMouseEvent", {type: "mouseWheel", ...point, deltaY: -50, deltaX: 0, modifiers: 2});
+      await until(async () => (await zoom()) !== beforeWheel);
+      await ev(`document.querySelector(".board-comment textarea").value = "Review this flow element";
+        document.querySelector(".board-comment").requestSubmit()`);
+      const comment = await until(async () => (await (await fetch(base + "/__cd/comments")).json() as any[])[0]);
+      expect(comment).toMatchObject({file: selection.file, cdId: selection.cdId, uses: selection.uses, status: "draft", text: "Review this flow element"});
+      await until(() => ev(`!!document.querySelector('[data-frame="home"] iframe').contentDocument.querySelector(".__cd-pin")`));
+      const beforeTouch = await camera();
+      await cmd("Input.dispatchTouchEvent", {type: "touchStart", touchPoints: [{...point, id: 1}]});
+      await cmd("Input.dispatchTouchEvent", {type: "touchMove", touchPoints: [{x: point.x + 40, y: point.y + 35, id: 1}]});
+      await cmd("Input.dispatchTouchEvent", {type: "touchEnd", touchPoints: []});
+      await until(async () => (await camera()) !== beforeTouch);
+      expect(await ev(`!!document.querySelector(".board-comment")`)).toBe(false);
+      await ev(`document.querySelector('.cv-toolbar button[aria-label="Select"]').click()`);
+
+      // Enter opens the picked element's page; Back returns to its tab. The label button opens it too.
+      point = await buttonPoint(); // the touch pan above moved the camera
+      await clickElement();
+      await until(() => ev(`!!document.querySelector('[data-frame="home"] .cv-pick')`));
+      await key("Enter", "Enter");
+      await until(() => ev(`location.hash === "#design/pages/Home.tsx"`));
+      await ev(`document.querySelector("#back").click()`);
+      await until(() => ev(`location.hash === "#flow:home" && !document.querySelector("#map").hidden`));
+      await ev(`document.querySelector('[data-frame="home"] .frame-acts button[title^="Open"]').click()`);
+      await until(() => ev(`location.hash === "#design/pages/Home.tsx" && getComputedStyle(document.querySelector("main")).display !== "none" && document.querySelector("#map").hidden`));
+      await ev(`document.querySelector("#back").click()`);
+      await until(() => ev(`location.hash === "#flow:home" && !document.querySelector("#map").hidden`));
+
+      // Add a page from the toolbar, remove it with Delete, and switch tabs.
+      await ev(`document.querySelector(".cv-toolbar .add").click()`);
+      await until(() => ev(`!!document.querySelector(".cv-add input")`));
+      await ev(`[...document.querySelectorAll(".cv-add .f")].find(b => b.title === "design/pages/Unassigned.html").click()`);
+      await until(() => flowFile().frames.length === 3);
+      expect(flowFile().frames[2]).toMatchObject({page: "design/pages/Unassigned.html", w: 768, h: 1024});
+      await until(() => ev(`document.querySelector(".frame.sel")?.dataset.screen === "design/pages/Unassigned.html"`));
+      await key("Delete", "Delete");
+      await until(() => flowFile().frames.length === 2);
+      await ev(`[...document.querySelectorAll(".tabs .tab")].find(t => t.textContent === "Other Flow").click()`);
+      await until(() => ev(`location.hash === "#flow:other" && [...document.querySelectorAll("#map [data-screen]")].map(f => f.dataset.screen).join() === "design/pages/AnotherFlow.html"`));
+      return;
+    }
     await navigate("/p/design/pages/Home.tsx", "button");
     expect(await ev("getComputedStyle(document.querySelector('button')).padding")).toBe("16px");
     expect(await ev("document.querySelectorAll('button').length")).toBe(2);
@@ -130,7 +345,7 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
     expect(multi.note).toContain("mobile 390px");
     expect(multi.data.length).toBeGreaterThan(inlineShot.data.length);
     // Page history belongs to the viewer, including its initial page and both split frames.
-    await navigate("/", "#fr");
+    await navigate("/#design/components/ui/Button.tsx", "#fr");
     await until(() => ev("!!document.querySelector('#fr').contentDocument?.querySelector('button')"));
     const initial = await ev("location.hash.slice(1)");
     expect(initial).toBe("design/components/ui/Button.tsx");
@@ -216,7 +431,7 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
       }
       expect(captures[1]).toBe(captures[0]); expect(captures[2]).toBe(captures[0]);
     }
-    await navigate("/", "#fr");
+    await navigate("/#design/components/ui/Button.tsx", "#fr");
     expect(await ev("document.querySelector('.viewer-bar .update-app').hidden")).toBe(true);
     const runtimeSource = readFileSync(runtimeCli, "utf8");
     appendFileSync(runtimeCli, "\nconst = broken;\n");
@@ -239,7 +454,7 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
     await until(() => ev("!document.querySelector('#update-dialog').open && document.querySelector('.viewer-bar .update-app:not([hidden])')?.offsetWidth > 0"));
     writeFileSync(runtimeCli, runtimeSource + "\n// reload browser fixture\n");
     await click(".viewer-bar .update-app");
-    await until(() => ev("window.beforeUpdate === undefined && location.hash === '#design/pages/Roundtrip.html' && !!document.querySelector('#fr').contentDocument?.querySelector('button')")).catch(async (error) => {
+    await until(() => ev("window.beforeUpdate === undefined && location.hash === '#design/pages/Roundtrip.html' && !!document.querySelector('#fr')?.contentDocument?.querySelector('button')")).catch(async (error) => {
       const state = await ev("({ beforeUpdate: window.beforeUpdate, url: location.href, message: document.querySelector('#update-message')?.textContent, frame: document.querySelector('#fr')?.src })");
       const daemonState = readFileSync(join(home, "daemon.json"), "utf8");
       const status = await fetch(base + "/__cd/update").then((r) => r.text()).catch(String);
@@ -254,4 +469,7 @@ test.skipIf(!chrome)("browser: React hooks, styling, original source comments, r
     socket?.close(); browser?.kill(); daemon.kill();
     await Promise.all([browser?.exited, daemon.exited]); rmSync(root,{recursive:true,force:true});
   }
-}, 60000);
+}
+
+test.skipIf(!chrome)("browser: canvas tabs, frame drag/resize/size, Design and Preview modes, element comments", () => runBrowserChecks(true), 60000);
+test.skipIf(!chrome)("browser: React hooks, styling, original source comments, reloads, errors, screenshots and conversion parity", () => runBrowserChecks(), 60000);

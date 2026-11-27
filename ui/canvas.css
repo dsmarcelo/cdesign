@@ -1,0 +1,123 @@
+/* Top bar: project, one tab per flow, global actions. */
+.viewer-bar{gap:2px;padding:0 6px;height:40px;overflow:hidden;background:#0b0b0b}
+.bar-proj{flex:none;display:flex;align-items:center}
+.viewer-bar #proj{width:auto;max-width:160px;border-color:transparent;background:none;font-weight:600}
+@media (hover:hover){.viewer-bar #proj:hover{background:var(--line)}}
+.tabs{flex:1 1 auto;min-width:0;display:flex;align-items:stretch;align-self:stretch;gap:1px;overflow-x:auto;scrollbar-width:none;padding:6px 4px 0}
+.tabs::-webkit-scrollbar{display:none}
+.tab{position:relative;flex:0 1 200px;min-width:96px;display:flex;align-items:center;gap:4px;padding:0 4px 0 12px;border-radius:8px 8px 0 0;color:var(--mut);font-size:12px;cursor:default;user-select:none;outline:0}
+.tab>span{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tab:not(.on)+.tab:not(.on)::before{content:"";position:absolute;left:-1px;top:8px;bottom:8px;width:1px;background:var(--line)}
+@media (hover:hover){.tab:not(.on):hover{background:#161616;color:#e5e5e5}}
+.tab.on{background:#1c1c1c;color:#fafafa}
+.tab.last{color:#d4d4d4}
+.tab.bad>span{color:#fca5a5}
+.tab:focus-visible{box-shadow:inset 0 0 0 2px var(--acc)}
+.tab input{flex:1 1 auto;min-width:0;height:22px;padding:0 4px;border:1px solid #525252;border-radius:4px;background:#000;color:#fafafa;font:inherit}
+.viewer-bar .tab .x{width:20px;height:20px;padding:0;border-radius:4px;opacity:0;flex:none}
+.viewer-bar .tab .x svg{width:12px;height:12px}
+.tab.on .x,.tab:hover .x,.tab:focus-within .x{opacity:1}
+.viewer-bar .tab-add{align-self:center;margin:0 4px 6px}
+.bar-right{flex:none;display:flex;align-items:center;gap:2px}
+
+/* The canvas */
+#map{grid-area:2/2;position:relative;display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;background:#1c1c1c}
+#map[hidden]{display:none}
+#map:not([hidden])~main{display:none}
+.cv-head{flex:none;display:flex;justify-content:center;align-items:center;height:40px;border-bottom:1px solid #262626;background:#141414}
+.cv-modes{display:inline-flex;gap:2px}
+.cv-modes button{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 12px;border:0;border-radius:6px;background:none;color:var(--mut);font-size:12px;font-weight:500}
+.cv-modes button svg{width:14px;height:14px}
+.cv-modes button[aria-pressed=true]{color:#fafafa;background:#262626}
+@media (hover:hover){.cv-modes button:hover{color:#fafafa}}
+.cv-viewport{position:relative;flex:1;min-height:0;overflow:clip;touch-action:none;overscroll-behavior:none;user-select:none;-webkit-user-select:none;outline:0}
+.cv-position{position:absolute;inset:0 auto auto 0}
+.cv-canvas{position:absolute;top:0;left:0}
+.cv-viewport.hand,.cv-viewport.hand *{cursor:grab!important}
+.cv-viewport.panning,.cv-viewport.panning *{cursor:grabbing!important}
+.cv-viewport.hand iframe{pointer-events:none!important}
+
+.frame{position:absolute}
+.frame.sel{z-index:1}
+.frame-label{position:absolute;left:0;right:0;bottom:100%;display:flex;align-items:center;gap:.4em;height:calc(28px / var(--z,1));padding-bottom:calc(6px / var(--z,1));font-size:calc(12px / var(--z,1));color:#a3a3a3;cursor:grab;white-space:nowrap}
+.frame-name{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+.frame.sel .frame-label{color:#4ade80}
+.frame-acts{display:none;margin-left:auto;gap:.15em}
+.frame:hover .frame-acts,.frame.sel .frame-acts{display:inline-flex}
+.frame-acts button{width:1.9em;height:1.9em;padding:0;border:0;border-radius:.4em;background:none;color:inherit;display:inline-grid;place-items:center}
+.frame-acts button svg{width:1.25em;height:1.25em}
+@media (hover:hover){.frame-acts button:hover{background:#ffffff14;color:#fafafa}}
+.frame-rename{flex:1 1 auto;min-width:0;height:1.8em;padding:0 .4em;border:1px solid #525252;border-radius:.3em;background:#000;color:#fafafa;font:inherit;user-select:text}
+.frame-body{position:absolute;inset:0;overflow:hidden;background:#fff;outline:calc(1px / var(--z,1)) solid #ffffff14}
+html[data-theme=dark] .frame-body{background:#000}
+.frame-body iframe{position:absolute;inset:0;width:100%;height:100%;border:0;background:inherit}
+.cv.design .frame-body iframe{pointer-events:none}
+.cv.design .frame-body{cursor:default}
+.cv.design .commenting .frame-body{cursor:crosshair}
+@media (hover:hover){.cv.design .frame:hover .frame-body{outline:calc(1.5px / var(--z,1)) solid #737373}}
+.frame.sel .frame-body,.frame.sel:hover .frame-body{outline:calc(2px / var(--z,1)) solid #4ade80!important}
+.rz{position:absolute;z-index:2;touch-action:none}
+.rz.e{top:0;bottom:0;right:calc(-6px / var(--z,1));width:calc(12px / var(--z,1));cursor:ew-resize}
+.rz.s{left:0;right:0;bottom:calc(-6px / var(--z,1));height:calc(12px / var(--z,1));cursor:ns-resize}
+.rz.se{right:calc(-7px / var(--z,1));bottom:calc(-7px / var(--z,1));width:calc(14px / var(--z,1));height:calc(14px / var(--z,1));cursor:nwse-resize;background:#fff;border:calc(2px / var(--z,1)) solid #4ade80;border-radius:calc(3px / var(--z,1))}
+.frame-size{position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:calc(8px / var(--z,1));padding:.15em .6em;border-radius:.4em;background:#4ade80;color:#052e16;font-size:calc(11px / var(--z,1));font-variant-numeric:tabular-nums;white-space:nowrap;pointer-events:none}
+body.drag .frame-body iframe{pointer-events:none!important}
+/* Figma-style element hover and selection, drawn over the frame so they show on any page colour */
+.cv-hover,.cv-pick{position:absolute;z-index:2;box-sizing:border-box;pointer-events:none}
+.cv-hover{outline:calc(1.5px / var(--z,1)) solid #0d99ff}
+.cv-pick{outline:calc(2px / var(--z,1)) solid #0d99ff;background:#0d99ff0f}
+.cv-pick-tag{position:absolute;left:calc(-2px / var(--z,1));top:100%;margin-top:calc(4px / var(--z,1));padding:calc(1px / var(--z,1)) calc(5px / var(--z,1));border-radius:calc(3px / var(--z,1));background:#0d99ff;color:#fff;font:500 calc(11px / var(--z,1))/1.4 system-ui,sans-serif;white-space:nowrap}
+.frame.pick .frame-label{color:#e5e5e5}
+body.drag .cv-hover{display:none}
+
+.cv-empty{position:absolute;inset:0;display:grid;place-content:center;justify-items:center;gap:12px;color:var(--mut);text-align:center;pointer-events:none}
+.cv-empty>*{pointer-events:auto}
+.cv-empty p{margin:0;max-width:360px;line-height:1.5}
+.cv-errors{position:absolute;top:12px;left:12px;max-width:min(560px,calc(100% - 24px));padding:8px 12px;border:1px solid var(--bad);border-radius:8px;background:#1c0a0a;color:#fca5a5;white-space:pre-wrap;font-size:12px}
+
+.cv-toolbar{position:absolute;left:0;right:0;margin:0 auto;width:max-content;bottom:16px;z-index:4;display:flex;align-items:center;gap:2px;max-width:calc(100% - 24px);overflow-x:auto;scrollbar-width:none;padding:4px;border:1px solid #2e2e2e;border-radius:12px;background:#111;box-shadow:0 8px 24px #0008}
+.cv-toolbar button{display:inline-flex;align-items:center;justify-content:center;gap:6px;flex:none;min-width:32px;height:32px;padding:0 8px;border:0;border-radius:8px;background:none;color:#d4d4d4;font-size:12px}
+.cv-toolbar button svg{width:16px;height:16px}
+.cv-toolbar button.on{background:#262626;color:#fafafa}
+@media (hover:hover){.cv-toolbar button:not(.on):hover{background:#1f1f1f;color:#fafafa}}
+.cv-toolbar .pct{min-width:52px;font-variant-numeric:tabular-nums}
+.cv-toolbar .sep{flex:none;width:1px;height:20px;margin:0 4px;background:#2e2e2e}
+.cv-toolbar .cv-size{height:32px;max-width:200px;border:0;border-radius:8px;background:none;font-size:12px;padding:0 6px}
+@media (hover:hover){.cv-toolbar .cv-size:not(:disabled):hover{background:#1f1f1f}}
+.cv-add{position:absolute;left:0;right:0;margin:0 auto;bottom:68px;z-index:5;display:grid;gap:6px;width:min(360px,calc(100% - 24px));max-height:min(420px,60%);padding:8px;border:1px solid #2e2e2e;border-radius:12px;background:#111;box-shadow:0 8px 24px #0008}
+.cv-add input{width:100%;padding:8px;border:1px solid #333;border-radius:8px;background:#000;color:inherit;font:inherit}
+.cv-add-list{overflow:auto;min-height:0}
+.cv-add small{display:block;padding:8px;color:var(--mut)}
+
+.board-comment{position:absolute;bottom:72px;right:16px;z-index:6;display:grid;gap:8px;width:min(340px,calc(100% - 32px));max-height:calc(100% - 120px);overflow:auto;overscroll-behavior:contain;padding:12px;border:1px solid #404040;border-radius:12px;background:#111;box-shadow:0 8px 24px #0008}
+.board-comment label{font-size:13px;font-weight:600}
+.board-comment small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mut)}
+.board-comment textarea{width:100%;min-height:80px;padding:8px;border:1px solid #525252;border-radius:6px;background:#000;color:#fafafa;font:inherit;user-select:text;resize:vertical}
+.board-comment .grp{justify-content:flex-end}
+.board-comment p{margin:0;color:#fca5a5}
+
+/* Full-page mode: one page with the device and inspection tools. */
+main{flex-direction:column;justify-content:flex-start}
+main>#stage{flex:1 1 0;height:auto;min-height:0}
+.page-bar{flex:none;display:flex;align-items:center;gap:4px;width:100%;min-height:40px;padding:0 8px;border-bottom:1px solid var(--line);background:#141414;overflow-x:auto;scrollbar-width:none}
+.page-bar button{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:28px;padding:0 8px;border:0;border-radius:6px;background:none;white-space:nowrap;flex:none}
+.page-bar button.ic{width:28px;padding:0}
+.page-bar button svg{width:16px;height:16px;flex:none}
+.page-bar button.on{background:var(--line);color:#fafafa}
+@media (hover:hover){.page-bar button:not(:disabled):hover{background:var(--line)}}
+.page-bar #back{color:#d4d4d4}
+.page-bar .page-name{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mut);font-size:12px}
+.page-bar .page-name small{color:#737373}
+.page-bar select{height:28px;padding:0 6px}
+.page-bar #dev{max-width:150px}
+.page-bar .grp{flex:none;gap:2px}
+
+@media (max-width:700px){
+  #map{grid-area:2/1}
+  .tab{min-width:84px}
+  .cv-toolbar{bottom:calc(12px + env(safe-area-inset-bottom))}
+  .cv-toolbar .add span{display:none}
+  .cv-toolbar button{min-width:40px;height:40px}
+  .page-bar #w,.page-bar #devs{display:none}
+}
+@media (pointer:coarse){.board-comment textarea,.cv-add input{font-size:16px}}

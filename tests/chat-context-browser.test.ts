@@ -67,7 +67,8 @@ test.skipIf(!chrome)("browser: comments stack in the composer, Send delivers the
     // Saving a comment in the preview only stacks it in the composer: nothing is sent until Send is pressed.
     await ev("{const t=document.querySelector('#chat textarea');t.value='Please do these';t.dispatchEvent(new Event('input'));document.querySelector('#mode').click()}");
     const addComment = async (text: string) => {
-      await ev("{const d=document.querySelector('#fr').contentDocument;d.querySelector('h1').click();d.querySelector('.__cd-pop textarea').value=" + JSON.stringify(text) + ";d.querySelector('.__cd-pop .go').click()}");
+      await until(() => ev("{const d=document.querySelector('#fr').contentDocument;d.querySelector('h1').click();!!d.querySelector('.__cd-pop textarea')}"));
+      await ev("{const d=document.querySelector('#fr').contentDocument;d.querySelector('.__cd-pop textarea').value=" + JSON.stringify(text) + ";d.querySelector('.__cd-pop .go').click()}");
     };
     await addComment("design-edit now");
     const comments = () => fetch(`${base}/__cd/comments`).then((r) => r.json()) as Promise<any[]>;

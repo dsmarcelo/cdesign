@@ -57,7 +57,7 @@ In the viewer, press `C`, click an element, and save your comment with **Add** o
 | `tunnel [dir]` / `tunnel stop [dir]` | Share the whole viewer (every open project, switchable in the header; `dir` picks the one visitors land on) through a [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) quick tunnel. Prints a random link; there is no other authentication, so anyone with the link can view and comment while the tunnel runs |
 | `tunnel set --provider ngrok --domain <name.ngrok-free.dev>` / `tunnel set --provider cloudflare --hostname <host> --token <token> [--port n]` | Make `tunnel` use a **fixed domain** (stored in `~/.cdesign/tunnel.json`). The link is just the domain, with no authentication: anyone who knows it can view your open projects and send comments to your agent while the tunnel runs. **ngrok** is the free route: one static domain per free account (install ngrok, run `ngrok config add-authtoken …`, claim the domain at dashboard.ngrok.com > Domains). **cloudflare** needs a domain on your Cloudflare account and a named tunnel whose public hostname points to `http://localhost:<port>` (default 4748). `tunnel show` prints it, `tunnel unset` returns to random quick-tunnel URLs |
 | `close [dir] [--all]` | Close the project in the viewer; `--all` stops the viewer for every project |
-| `shot [page] [--selected\|--selector css] [--responsive\|--width n] [--theme light\|dark] [--format webp\|jpeg\|png] [--full] [--y n]` | Screenshot a page or one element with headless Chrome; `--responsive` captures mobile (390px), tablet portrait (768px) and desktop (1280px) side by side in one image (needs Chrome/Chromium; `CDESIGN_CHROME` overrides the path). Small WebP, long side <= 1568px, so agents spend far fewer tokens than with browser screenshots |
+| `shot [page[#state]] [--selected\|--selector css] [--responsive\|--width n] [--theme light\|dark] [--format webp\|jpeg\|png] [--full] [--y n]` | Screenshot a page or one element with headless Chrome; `--responsive` captures mobile (390px), tablet portrait (768px) and desktop (1280px) side by side in one image (needs Chrome/Chromium; `CDESIGN_CHROME` overrides the path). Small WebP, long side <= 1568px, so agents spend far fewer tokens than with browser screenshots |
 | `page` | Print the page open in the viewer (most recently active tab) and the element selected with the pointer button (`S`) |
 | `review` | Print the batch the user sent from the viewer (run when asked to apply comments) |
 | `wait [--timeout s]` | Run in the background: exits with the next batch of queued comments, which wakes the agent (the viewer no longer queues comments; its Send delivers them through the chat) |
@@ -66,8 +66,7 @@ In the viewer, press `C`, click an element, and save your comment with **Add** o
 | `mcp` | MCP server (stdio) that teaches agents how to use cdesign |
 | `resolve <id...>` | Mark comments done |
 | `comments [--all]` | List pending comments |
-| `flows [list\|show <id>\|check\|new <id> [--title t]]` | User flows in `design/flows/<id>.json`: screens (wireframe + page pairs) and decisions joined by labeled links, drawn as the viewer's flow map |
-| `sync [status\|outdated <file> [--note t]\|done <file>\|clear <file>] [--json]` | What needs syncing between wireframes and pages: marked outdated, changed since last sync, never synced, wireframes without a page. Marks live in `design/sync.json` |
+| `flows [list\|show <id>\|check\|new <id> [--title t]\|add <id> <page[#state]> [--title t]\|rm <id> <frame\|page>]` | Canvas tabs in `design/flows/<id>.json`: each is a set of page frames with a position and device size |
 | `init [dir]` | Scaffold the `design/` structure |
 | `tokens <sub>` | Search, show, set, remove, build and export tokens |
 | `check` | Verify tokens and components are defined and documented |
@@ -75,18 +74,17 @@ In the viewer, press `C`, click an element, and save your comment with **Add** o
 | `context [list\|find <words>\|get <id>\|for <path>] [--offset n]` | Discover guidance, read a topic/contract, or map direct dependencies. `--full` opts into legacy inventories |
 | `serve [dir] [--port n]` | Run the viewer in the foreground (it normally starts by itself) |
 
-## Map, flows and wireframes
+## Canvas and flows
 
-The viewer toolbar switches between **Flows**, **Pages** and **Files** (`M` toggles the map; `Esc` or the back arrow returns from an opened page).
+The viewer opens on a free canvas. Each tab in the top bar is a flow (`design/flows/<id>.json`); `+` adds a tab, double-click renames it. A tab's pages are live frames you place anywhere: drag a frame by its label (or its body in Design mode), and drag the handles on the selected frame to resize it. The size menu in the bottom toolbar (Phone, Tablet, Laptop, Desktop…) resizes every frame in the tab at once. **Add page** puts another page or `page.tsx#state` in the tab. Positions and sizes are saved to the flow file.
 
-- **Pages** groups `design/pages/` by first-level folder, with the file named like the folder (or `index`) as the hub, and live thumbnails.
-- **Flows** draws each `design/flows/<id>.json` left to right: screens, decision diamonds and labeled arrows (`Sim`/`Não`), with loops dashed. A **Wireframes | Screens** toggle shows each step's wireframe (`design/wireframe/…`) or its real page.
-- Every screen is a live preview at real device size (phone 402×874, desktop 1280×800); zoom with Ctrl/⌘ + wheel or the −/+/Fit buttons and drag the background to pan. A **Phone | Desktop** toggle picks the device. Wireframes are responsive by default; `name.phone.tsx` / `name.desktop.tsx` siblings give separate layouts per device. Wireframes should fill the viewport and not draw their own device frame.
-- The Select tool (`S`) works inside map screens: the picked element is what `cdesign page` reports to the agent.
-- Clicking a card opens it in the normal viewer (all sizes, select, comment, chat). A bar above it shows the flow, the next screens, a Wireframe/Screen switch for paired steps and the sync state.
-- Wireframes are prototypes: changing one does not require changing its page. Agents or the user mark the side that must follow as **outdated** (`cdesign sync outdated <file> --note …`, or the button in the bar) and confirm alignment with `cdesign sync done <file>`. `cdesign sync` (MCP `sync`) answers "what needs syncing?". State lives in `design/sync.json` (content hashes + marks), committed with the design.
+- **Design** (`D`): as in Figma, hovering outlines the element under the pointer and a click selects it for the agent (its tag and size show under it). **Comment** (`C`) picks an element and adds a draft; drafts use the same comment workflow as full pages. Click a frame's label to select the frame itself (move, resize, `Delete`).
+- **Preview** (`P`): every frame is interactive: scroll, click and type as in the real app.
+- Open a frame (the expand button on its label, or `Enter` with the frame or one of its elements selected) to show the page by itself with device sizes, split view and the style inspector. `Esc`, ← or `M` returns to the canvas.
 
-Website exports exclude `design/wireframe/` like `design/prototype/`.
+Navigation follows Figma: two-finger trackpad scroll or the mouse wheel pans, pinch or `Ctrl` / `⌘` + scroll zooms around the pointer, `Space`-drag, middle-drag or the Hand tool (`H`) pans, and dragging empty canvas pans too. `+` / `−` zoom, `0` is 100%, `Shift+1` fits the tab, `Shift+2` fits the selected frame, arrow keys pan. `Delete` removes the selected frame from the tab (the page file stays). The camera is remembered per tab.
+
+A frame's `page` may carry a URL state (`nova-venda.tsx#venda/cliente`) so a dialog or sheet is shown open on its page. Flow files in the older `steps`/`links` format still open: their screens become frames and arrows, decisions and wireframes are ignored.
 
 ## React or HTML mode
 
@@ -179,7 +177,7 @@ design/
   prototype/              work in progress; moved to components/ or pages/ once done
 ```
 
-Group pages by feature or screen type under `design/pages/`, put lo-fi wireframes under `design/wireframe/`, describe user flows in `design/flows/<id>.json`, give other experiments a folder under `design/prototype/`, and group components by family under `design/components/` or by feature under `design/features/`. Use short, descriptive names and reuse existing groups. The Files tab lists preview entries inside `design/`, including nested folders.
+Group pages by feature or screen type under `design/pages/`, describe user flows in `design/flows/<id>.json`, give other experiments a folder under `design/prototype/`, and group components by family under `design/components/` or by feature under `design/features/`. Use short, descriptive names and reuse existing groups. The Files tab lists preview entries inside `design/`, including nested folders.
 
 Every folder keeps its previews in its own `previews/` subfolder. Prototypes start in `prototype/`; when one is done, the agent asks whether to move it to `components/`, `features/` or `pages/`. Moved files stay editable.
 

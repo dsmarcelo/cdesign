@@ -32,7 +32,7 @@ const html: RenderAdapter = {
   },
 };
 const react: RenderAdapter = {
-  pages: root => projectFiles(root, join(root, "design")).filter(f => f.endsWith(".tsx") && !f.split("/").pop()!.startsWith("_") && (/^design\/(pages|prototype|wireframe)\//.test(f) || /\/previews\/[^/]+\.preview\.tsx$/.test(f) || isReactComponent(f))),
+  pages: root => projectFiles(root, join(root, "design")).filter(f => f.endsWith(".tsx") && !f.split("/").pop()!.startsWith("_") && (/^design\/(pages|prototype)\//.test(f) || /\/previews\/[^/]+\.preview\.tsx$/.test(f) || isReactComponent(f))),
   components(root, duplicates = []) {
     const index = new Map<string, string>();
     for (const file of projectFiles(root, join(root, "design"))) {

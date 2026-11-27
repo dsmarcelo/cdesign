@@ -32,14 +32,14 @@ src/
   tsx.ts        React mode: TypeScript-compiler instrumentation that stamps the same ids on JSX
   react.ts      React mode: Bun.build bundling, Tailwind v4 compile (`@tailwindcss/node`)
   previews.ts   inline `Preview` export vs `*.preview.tsx` sidecar resolution
-  flows.ts      flows (design/flows/<id>.json) and wireframe/page sync state (design/sync.json): `cdesign flows`, `cdesign sync`, MCP flows/sync
+  flows.ts      flows = canvas tabs (design/flows/<id>.json: frames with page, x/y, w/h): `cdesign flows`, MCP flows, viewer `/__cd/flows`
   edit.ts       direct style editing of elements, addressed by file + data-cd-id
   tokens.ts     tokens.json / Tailwind `@theme` tokens: search, show, set, rm, build, export
   context.ts    compact `open` directions and `context` list/find/get/for retrieval
   shot.ts       headless-Chrome screenshots (talks to Chrome over DevTools; `--responsive` = 390/768/1280px)
   export.ts     standalone website export;  publish.ts: deploys an export to a Vercel project (needs `vercel link` and an HTTPS publisher origin)
   store.ts      per-project `.cdesign/` state (comments.json, agent.json heartbeat) and `~/.cdesign` daemon/tunnel files
-ui/             viewer front end: index.html (shell), map.js/map.css (Flows/Pages maps, flow bar), chat.js, overlay.js (injected into previews; selection + comments)
+ui/             viewer front end: index.html (shell), Canvas.tsx/canvas.css (free canvas of draggable page frames, Design/Preview modes), Chat.tsx, overlay.js (injected into previews; selection + comments)
 skills/         bundled agent skills (cdesign, cdesign-system, cdesign-review, cdesign-convert), printed by `cdesign skills get <name>`
 tests/          bun:test suites, one per area
 design/         a sample design project (html mode) used by this repo itself; not application code
@@ -70,5 +70,5 @@ install.sh / install.ps1   curl-pipe installers (Bun + launcher in ~/.local/bin 
 - **Chrome:** `shot` and the browser tests locate Chrome via `CDESIGN_CHROME`, then `google-chrome`/`chromium`; `shot` throws a clear error if none exists.
 - **Export/publish:** `forbidden()` in `export.ts` excludes dot-paths, `prototype/`, `previews/` and `node_modules/` from website exports, and the React build also throws if a dependency pulls one of them in. Website names must match `^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`.
 - **Installer:** `install.sh` / `install.ps1` replace `~/.local/share/cdesign`; with `CDESIGN_SRC` it symlinks to a checkout instead, and tracked Bash installs retain their install type on update. Keep both scripts in sync when changing install behaviour.
-- **Flows and sync:** arrows exist only in `design/flows/*.json` (never inferred). `design/sync.json` stores per-page content hashes at the last confirmed sync plus explicit `outdated` marks; only marks mean "needs update", hash drift is informational. React pages include `design/wireframe/` (`modes.ts`); exports exclude it (`export.ts`). Wireframe device variants are `name.phone.tsx` / `name.desktop.tsx` siblings (`variantsOf` in `flows.ts`; the sync hash of a wireframe combines its variants); unsuffixed = responsive. Map screens are live iframes at device size scaled with CSS `zoom`, so map captions counter-scale with `--z`. Viewer map routes share the hash with page paths (`#map:pages`, `#map:flows`, `#flow:<id>`; `isMapHash` in `ui/map.js`).
+- **Flows (canvas tabs):** each `design/flows/<id>.json` is `{title, description?, frames:[{id,title?,page,x,y,w,h}]}`; the viewer rewrites it on drag/resize, and the server's watcher sends a `flows` SSE event (not `reload`) for flow JSON so frames keep their state. Old `steps`/`links` files are read as frames of their screen steps and rewritten in the new format on the next save. There are no wireframes, arrows or sync state. Frames are live iframes at device size inside `.cv-canvas`, scaled with CSS `zoom`, so labels counter-scale with `--z`. In Design mode iframes get `pointer-events:none` and clicks are forwarded as a `cd-board-pick` event; in Preview the parent sets `__cd-live` on each frame's `<html>` so overlay.js stops locking scroll. Hash routes: `#flow:<id>` is the canvas (legacy `#map:flows`/`#map:pages` open the first tab), `#<page path>` is the full-page view (`isMapHash`, `flowOfHash` in `ui/lib.ts`). A frame `page` may end in `#state` (`baseFile` in `flows.ts`, `splitState` in `ui/lib.ts`): validation uses the file before `#` and the iframe gets the state as its URL hash.
 - **Skills and README:** the agent-facing guidance in `skills/*/SKILL.md` and the CLI table in `README.md` describe real commands; update them in the same change as the command or flag they document.

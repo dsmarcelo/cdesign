@@ -1,7 +1,8 @@
 #lside{position:relative;display:flex;flex-direction:column;padding:0;overflow:hidden}
 #ltabs{display:flex;gap:4px;padding:8px 8px 0;flex:none}
-#ltabs button{flex:1;border-radius:6px;background:none;border-color:transparent;color:var(--mut)}
+#ltabs button{flex:1 1 auto;display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:5px 6px;white-space:nowrap;min-width:0;border-radius:6px;background:none;border-color:transparent;color:var(--mut)}
 #ltabs button[aria-selected=true]{background:var(--line);color:#fafafa}
+.tab-badge{font-size:10px;line-height:1.4;padding:0 5px;border-radius:999px;background:var(--line);color:var(--mut);font-variant-numeric:tabular-nums}
 #files{flex:1;min-height:0;overflow:auto;padding:8px}
 #chat{flex:1;min-height:0;display:flex;flex-direction:column;padding:8px;gap:8px}
 #cm{flex:1;min-height:0;overflow:auto;padding:8px}
@@ -52,10 +53,8 @@
 .cc-send{flex:none;width:30px;height:30px;padding:0;border-radius:50%;display:inline-flex;align-items:center;justify-content:center}
 .cc-send[hidden]{display:none}
 @media (max-width:700px){
-  #tab-chat,#chat,#lrs{display:none!important}
-  #lside:not([data-tab=comments]) #files{display:block!important}
-  #files,#cm{padding-bottom:72px}
-  #lside[data-tab=chat] #tab-files{background:var(--line);color:#fafafa}
+  #lrs{display:none!important}
+  #files,#cm,#chat{padding-bottom:72px}
 }
 body.hl #lside{display:none}
 .cc-approval{border:1px solid #fbbf2466;border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:6px;font-size:12px}

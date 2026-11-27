@@ -2,6 +2,11 @@
 (() => {
   let mode = null, hover = null, tab = null, picked = null;
 
+  /** Previews are prototypes inside the viewer: a page's "unsaved changes" guard must not ask before the viewer
+   * swaps or unloads the frame. This capture listener runs before the page's own (bubble) listeners at the window. */
+  addEventListener("beforeunload", (e) => e.stopImmediatePropagation(), true);
+  try { Object.defineProperty(window, "onbeforeunload", { configurable: true, get: () => null, set() {} }); } catch {}
+
   const css = document.createElement("style");
   css.textContent = `
   @media (forced-colors:none){
@@ -9,7 +14,7 @@
   }
   .__cd-hl{outline:2px solid #fafafa!important;outline-offset:1px;cursor:crosshair!important}
   .__cd-sel{outline:2px dashed #fafafa!important;outline-offset:2px}
-  .__cd-pin{position:absolute;z-index:2147483646;width:22px;height:22px;border-radius:50%;background:#fafafa;color:#000;
+  .__cd-pin{position:absolute;z-index:2147483646;width:22px;height:22px;border-radius:50%;background:#fafafa;color:#000;pointer-events:none;
     font:600 11px/22px system-ui;text-align:center;transform:translate(-50%,-50%);box-shadow:0 1px 4px #0005;pointer-events:none}
   .__cd-pin.q{background:#737373}
   .__cd-pop{box-sizing:border-box;position:absolute;z-index:2147483647;width:300px;background:#000;color:#fafafa;border-radius:12px;padding:10px;border:1px solid #262626;
@@ -73,21 +78,41 @@
   const clearHl = () => hover?.classList.remove("__cd-hl");
   const post = (selection) => fetch("/__cd/selection", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tabId: tab, selection }) }).catch(() => {});
   const unpick = () => { closeInsp(); picked?.classList.remove("__cd-sel"); picked = null; };
-  const pick = (el) => {
+  const highlight = (el) => {
     unpick();
     picked = el;
     el.classList.add("__cd-sel");
+  };
+  const selectionOf = (el) => {
     const r = el.getBoundingClientRect();
-    parent.postMessage({ cd: "picked" }, "*"); // other previews on the map drop their outline
-    post({ page: decodeURIComponent(location.pathname.replace(/^\/p\//, "")), file: fileOf(el), cdId: el.getAttribute("data-cd-id"), uses: usesOf(el), selector: selectorOf(el), tag: el.tagName.toLowerCase(), text: (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 200), size: `${px(r.width)} x ${px(r.height)} px` });
+    return { page: decodeURIComponent(location.pathname.replace(/^\/p\//, "")), file: fileOf(el), cdId: el.getAttribute("data-cd-id"), uses: usesOf(el), selector: selectorOf(el), tag: el.tagName.toLowerCase(), text: (el.textContent || "").trim().replace(/\s+/g, " ").slice(0, 200), size: `${px(r.width)} x ${px(r.height)} px` };
+  };
+  const pick = (el) => {
+    highlight(el);
+    parent.postMessage({ cd: "picked" }, "*"); // the other split preview drops its outline
+    post(selectionOf(el));
     inspect(el);
   };
+  // In Design the parent owns pointer gestures on the canvas, including over this iframe; in Preview (html.__cd-live) the page scrolls itself.
+  const onBoard = !!window.frameElement?.closest("#map");
+  if (onBoard) {
+    const boardCss = document.createElement("style");
+    boardCss.textContent = "html:not(.__cd-live),html:not(.__cd-live) body{overflow:hidden!important}*{scrollbar-width:none!important}*::-webkit-scrollbar{display:none!important}.__cd-sel,.__cd-hl{outline:none!important}";
+    document.head.appendChild(boardCss);
+    document.addEventListener("cd-board-pick", (e) => {
+      const el = target(e);
+      if (!el) return;
+      highlight(el);
+      e.detail(selectionOf(el));
+    });
+    document.addEventListener("cd-board-clear", unpick);
+  }
   // after a reload the page is new: redraw the outline for the selection the server still holds
   async function restore() {
-    if (!tab || picked?.isConnected) return;
+    if (onBoard || !tab || picked?.isConnected) return;
     try {
-      const { selection: s } = await (await fetch("/__cd/page?tab=" + tab)).json();
-      if (!s) return;
+      const { file, selection: s } = await (await fetch("/__cd/page?tab=" + tab)).json();
+      if (!s || file !== decodeURIComponent(location.pathname.replace(/^\/p\//, ""))) return;
       const el = [...document.querySelectorAll(`[data-cd-id="${s.cdId}"]`)].find((e) => fileOf(e) === s.file);
       if (el) { (picked = el).classList.add("__cd-sel"); reopen(el); }
     } catch {}
@@ -416,8 +441,8 @@
   });
 
   async function pins() {
-    document.querySelectorAll(".__cd-pin").forEach((p) => p.remove());
     const list = (await (await fetch("/__cd/comments")).json()).filter((c) => c.status !== "done");
+    document.querySelectorAll(".__cd-pin").forEach((p) => p.remove());
     let n = 0;
     list.forEach((c) => {
       const els = [...document.querySelectorAll(`[data-cd-id="${c.cdId}"]`)].filter((e) => fileOf(e) === c.file);
@@ -435,6 +460,7 @@
     });
   }
 
+  let focusTimer = 0;
   addEventListener("message", (e) => {
     if (e.data?.cd === "mode") {
       mode = e.data.mode;
@@ -446,7 +472,19 @@
     if (e.data?.cd === "clear" && (picked || tab)) { unpick(); post(null); }
     if (e.data?.cd === "pins") { pins(); restore(); }
     if (e.data?.cd === "unpick") unpick();
+    if (e.data?.cd === "focus") {
+      const el = [...document.querySelectorAll(`[data-cd-id="${CSS.escape(String(e.data.cdId))}"]`)].find((n) => fileOf(n) === e.data.file);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+        clearHl();
+        el.classList.add("__cd-hl");
+        clearTimeout(focusTimer);
+        focusTimer = setTimeout(() => el.classList.remove("__cd-hl"), 1500);
+      }
+    }
   });
   addEventListener("load", pins);
-  parent.postMessage({ cd: "ready" }, "*");
+  if (!onBoard) {
+    addEventListener("hashchange", () => parent.postMessage({ cd: "hash", hash: location.hash }, "*"));
+  }
 })();
