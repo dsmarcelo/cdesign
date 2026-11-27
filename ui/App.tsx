@@ -113,6 +113,7 @@ export function App() {
   const fr1Ref = useRef<HTMLIFrameElement>(null);
   const fr2Ref = useRef<HTMLIFrameElement>(null);
   const d1Ref = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const lsideRef = useRef<HTMLElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -193,6 +194,8 @@ export function App() {
 
   const curRef = useRef(cur);
   curRef.current = cur;
+  const curFragmentRef = useRef(curFragment);
+  curFragmentRef.current = curFragment;
   const viewRef = useRef(view);
   viewRef.current = view;
   const modeRef = useRef(mode);
@@ -378,6 +381,7 @@ export function App() {
     document.body.classList.toggle("hl", leftHidden);
     document.body.classList.toggle("map", inMap);
     document.body.classList.toggle("resp", view === "resp");
+    document.body.classList.toggle("tablet", view === "768px");
     document.body.classList.toggle("phone", view === "phone");
     document.body.classList.toggle("split", view === "split");
     document.body.classList.toggle("bar", barOpen);
@@ -420,14 +424,35 @@ export function App() {
       d.style.height = "100%";
       return;
     }
+    const availW = Math.max(200, (stageRef.current?.clientWidth ?? mainRef.current?.clientWidth ?? innerWidth) - 16);
+    const availH = Math.max(200, (stageRef.current?.clientHeight ?? mainRef.current?.clientHeight ?? innerHeight) - 16);
     if (view === "phone") {
       const [w, h] = rot ? [...DEVICES[dev]].reverse() : DEVICES[dev];
-      const s = fit ? Math.min(1, ((mainRef.current?.clientHeight ?? innerHeight) - 24) / h) : 1;
+      const sw = Math.min(1, availW / w);
+      const sh = fit ? Math.min(1, availH / h) : 1;
+      const s = Math.min(sw, sh);
       f.style.setProperty("--dw", w + "px");
       f.style.setProperty("--dh", h + "px");
       f.style.setProperty("--ds", String(s));
       d.style.width = Math.round(w * s) + "px";
       d.style.height = Math.round(h * s) + "px";
+      return;
+    }
+    if (view === "768px") {
+      if (availW < 768) {
+        const s = availW / 768;
+        f.style.setProperty("--dw", "768px");
+        f.style.setProperty("--dh", Math.round(availH / s) + "px");
+        f.style.setProperty("--ds", String(s));
+        d.style.width = Math.round(768 * s) + "px";
+        d.style.height = availH + "px";
+      } else {
+        f.style.removeProperty("--dw");
+        f.style.removeProperty("--dh");
+        f.style.removeProperty("--ds");
+        d.style.width = "768px";
+        d.style.height = "";
+      }
       return;
     }
     f.style.removeProperty("--dw");
@@ -445,7 +470,19 @@ export function App() {
   useEffect(() => {
     const onResize = () => applySize();
     addEventListener("resize", onResize);
-    return () => removeEventListener("resize", onResize);
+    let raf = 0;
+    const ro = stageRef.current
+      ? new ResizeObserver(() => {
+          cancelAnimationFrame(raf);
+          raf = requestAnimationFrame(applySize);
+        })
+      : null;
+    if (ro && stageRef.current) ro.observe(stageRef.current);
+    return () => {
+      removeEventListener("resize", onResize);
+      cancelAnimationFrame(raf);
+      ro?.disconnect();
+    };
   }, [applySize]);
 
   // Project tools popover positioning
@@ -666,6 +703,14 @@ export function App() {
         allFrames().forEach((f) => f.contentWindow !== e.source && f.contentWindow?.postMessage({ cd: "unpick" }, "*"));
       }
       if (e.data?.cd === "sidebar" && e.source && allFrames().some((f) => f.contentWindow === e.source)) toggleLeft();
+      if (e.data?.cd === "hash" && viewRef.current === "split") {
+        const other = e.source === fr1Ref.current?.contentWindow ? fr2Ref.current : e.source === fr2Ref.current?.contentWindow ? fr1Ref.current : null;
+        try {
+          if (other?.contentWindow && other.contentWindow.location.hash !== e.data.hash) {
+            other.contentWindow.location.hash = e.data.hash;
+          }
+        } catch {}
+      }
     };
     addEventListener("hashchange", onHash);
     addEventListener("keydown", onKey);
@@ -701,10 +746,18 @@ export function App() {
       const r = d1Ref.current.getBoundingClientRect();
       if (!rsRef.current.set) rsRef.current = { w: Math.round(r.width) || rsRef.current.w, h: Math.round(r.height) || rsRef.current.h };
     }
+    if (w === "split" && !mob && !deskHideLeft && innerWidth < 1280) {
+      setDeskHideLeft(true);
+    }
     setView(w);
     ssSet("cd-width", w);
     if (w === "split") {
-      if (curRef.current) loadFrame(fr2Ref.current, previewPath(curRef.current));
+      if (curRef.current) {
+        let liveHash = "";
+        try { liveHash = fr1Ref.current?.contentWindow?.location.hash || ""; } catch {}
+        if (!liveHash && curFragmentRef.current) liveHash = "#" + curFragmentRef.current;
+        loadFrame(fr2Ref.current, previewPath(curRef.current + liveHash));
+      }
     } else {
       loadFrame(fr2Ref.current, "about:blank");
     }
@@ -1160,7 +1213,7 @@ export function App() {
             Files
           </button>
           <button id="tab-comments" role="tab" aria-selected={activeTab === "comments"} onClick={() => selectTab("comments")}>
-            {openComments.length ? `Comments (${openComments.length})` : "Comments"}
+            Comments{openComments.length > 0 && <span className="tab-badge">{openComments.length}</span>}
           </button>
         </div>
 
@@ -1223,6 +1276,9 @@ export function App() {
           setCur(file);
         }}
         onSyncAction={syncAction}
+        onSyncOpen={(open) => {
+          if (open && !mob && !deskHideLeft && innerWidth < 1400) setDeskHideLeft(true);
+        }}
         onFrameLoad={onFrameLoad}
         onNavigateHash={(h) => {
           location.hash = h;
@@ -1240,7 +1296,7 @@ export function App() {
           }}
           onSyncAction={syncAction}
         />
-        <div id="stage">
+        <div id="stage" ref={stageRef}>
           <div className="dev" id="d1" ref={d1Ref}>
             <iframe id="fr" ref={fr1Ref} onLoad={(e) => onFrameLoad(e.currentTarget)} />
             <i className="rh" id="rx" onPointerDown={startResize(1, 0)} />

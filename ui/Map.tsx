@@ -361,6 +361,7 @@ export function ProjectMap({
   onElementSelect,
   onOpen,
   onSyncAction,
+  onSyncOpen,
   onFrameLoad,
   onNavigateHash,
 }: {
@@ -372,6 +373,7 @@ export function ProjectMap({
   onElementSelect: (element: BoardElement | null) => void;
   onOpen: (file: string) => void;
   onSyncAction: (action: "done" | "outdated" | "clear", file: string, note?: string) => void;
+  onSyncOpen?: (open: boolean) => void;
   onFrameLoad: (f: HTMLIFrameElement) => void;
   onNavigateHash: (h: string) => void;
 }) {
@@ -793,7 +795,11 @@ export function ProjectMap({
                   type="button"
                   className={`sync-btn${marked ? " warn" : ""}`}
                   title="What needs syncing between wireframes and pages"
-                  onClick={() => setPanelOpen((o) => !o)}
+                  onClick={() => setPanelOpen((o) => {
+                    const next = !o;
+                    onSyncOpen?.(next);
+                    return next;
+                  })}
                 >
                   {marked ? `${marked} outdated` : drift ? `${drift} changed` : "Sync"}
                 </button>
@@ -1081,12 +1087,13 @@ export function FlowBar({
         {!item.outdated.some((o) => o.file === cur) && (
           <button
             type="button"
+            title={`Mark this ${isWire ? "wireframe" : "page"} outdated`}
             onClick={() => {
               const note = prompt(`What must change in ${cur}? (optional note for the agent)`, "");
               if (note !== null) onSyncAction("outdated", cur, note.trim() || undefined);
             }}
           >
-            Mark this {isWire ? "wireframe" : "page"} outdated
+            Mark outdated
           </button>
         )}
       </span>

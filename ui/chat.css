@@ -1,7 +1,8 @@
 #lside{position:relative;display:flex;flex-direction:column;padding:0;overflow:hidden}
 #ltabs{display:flex;gap:4px;padding:8px 8px 0;flex:none}
-#ltabs button{flex:1;border-radius:6px;background:none;border-color:transparent;color:var(--mut)}
+#ltabs button{flex:1 1 auto;display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:5px 6px;white-space:nowrap;min-width:0;border-radius:6px;background:none;border-color:transparent;color:var(--mut)}
 #ltabs button[aria-selected=true]{background:var(--line);color:#fafafa}
+.tab-badge{font-size:10px;line-height:1.4;padding:0 5px;border-radius:999px;background:var(--line);color:var(--mut);font-variant-numeric:tabular-nums}
 #files{flex:1;min-height:0;overflow:auto;padding:8px}
 #chat{flex:1;min-height:0;display:flex;flex-direction:column;padding:8px;gap:8px}
 #cm{flex:1;min-height:0;overflow:auto;padding:8px}

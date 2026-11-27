@@ -81,16 +81,22 @@ main>#stage{flex:1 1 0;height:auto;min-height:0}
 #flowbar{flex:none;display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px;width:100%;padding:6px 10px;border-bottom:1px solid var(--line);background:#000;font-size:12px}
 #flowbar[hidden]{display:none}
 #flowbar .where{display:flex;gap:8px;flex-wrap:wrap}
-#flowbar .where button.link{font-size:12px;color:#d4d4d4}
+#flowbar .where button.link{font-size:12px;color:#d4d4d4;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #flowbar .next{display:flex;gap:4px;flex-wrap:wrap}
-#flowbar .chip{height:24px;padding:0 8px;border-radius:999px;font-size:11px;color:var(--mut);background:none}
+#flowbar .chip{height:24px;padding:0 8px;border-radius:999px;font-size:11px;color:var(--mut);background:none;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (hover:hover){#flowbar .chip:hover{color:#fafafa;border-color:#737373}}
-#flowbar .right{display:flex;align-items:center;gap:6px;margin-left:auto;flex-wrap:wrap}
-#flowbar .right>button{height:24px;padding:0 8px;font-size:11px}
+#flowbar .right{display:flex;align-items:center;gap:6px;margin-left:auto;flex-wrap:nowrap}
+#flowbar .right>button{height:24px;padding:0 8px;font-size:11px;white-space:nowrap}
 #flowbar .outdated{flex-basis:100%;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:6px 10px;border:1px solid #78350f;border-radius:8px;background:#1c1206;color:var(--warn)}
 #flowbar .outdated button{height:22px;padding:0 8px;font-size:11px}
 
+@media (max-width:1100px){
+  #map.panel{padding-right:0}
+  .sync-panel{box-shadow:-8px 0 24px #0009}
+}
+
 @media (max-width:700px){
+  #flowbar .right{flex-wrap:wrap}
   #map{grid-area:2/1}
   .map-head{flex-wrap:nowrap;overflow-x:auto;padding:6px 10px;gap:6px;scrollbar-width:none}
   .map-head::-webkit-scrollbar{display:none}

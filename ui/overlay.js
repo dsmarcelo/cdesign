@@ -470,4 +470,7 @@
     if (e.data?.cd === "unpick") unpick();
   });
   addEventListener("load", pins);
+  if (!onBoard) {
+    addEventListener("hashchange", () => parent.postMessage({ cd: "hash", hash: location.hash }, "*"));
+  }
 })();
