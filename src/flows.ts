@@ -33,8 +33,12 @@ const PREVIEWABLE = /\.(tsx|html)$/;
 
 const str = (v: unknown) => typeof v === "string" && v.trim() ? v.trim() : undefined;
 
-function checkFile(root: string, path: string | undefined, kind: string, step: string, errors: string[]) {
-  if (path === undefined) return;
+/** `page.tsx#venda/cliente` -> `page.tsx`: the part after "#" is the URL state the page opens with (a dialog or sheet showing). */
+export const baseFile = (path: string) => path.split("#")[0];
+
+function checkFile(root: string, ref: string | undefined, kind: string, step: string, errors: string[]) {
+  if (ref === undefined) return;
+  const path = baseFile(ref);
   if (!path.startsWith("design/") || !PREVIEWABLE.test(path)) errors.push(`step "${step}": ${kind} must be a project-relative design/… .tsx or .html file, got "${path}"`);
   else if (!existsSync(join(root, path)) || !insideProject(root, path)) errors.push(`step "${step}": ${kind} file not found: ${path}`);
 }
@@ -109,7 +113,8 @@ export type SyncItem = {
 
 const fileHash = (root: string, f: string) => { try { return createHash("sha1").update(readFileSync(join(root, f))).digest("hex"); } catch { return ""; } };
 /** A wireframe's hash covers all of its device variants, so editing the desktop sibling also counts as a wireframe change. */
-const hash = (root: string, f: string) => {
+const hash = (root: string, ref: string) => {
+  const f = baseFile(ref);
   if (!f.startsWith(WIREFRAME_DIR + "/")) return fileHash(root, f);
   const v = variantsOf(root, f), files = [...new Set([v.phone, v.desktop].filter(Boolean) as string[])].sort();
   return files.length === 1 ? fileHash(root, files[0]) : createHash("sha1").update(files.map((x) => fileHash(root, x)).join()).digest("hex");
@@ -152,9 +157,10 @@ export function syncItems(root: string, flows = listFlows(root)): SyncItem[] {
   return [...items.values()];
 }
 
-/** The pair a file belongs to (as wireframe or page), from the flows. */
+/** The pair a file belongs to (as wireframe or page), from the flows. A plain page path also matches a step that opens it with a URL state. */
 export function pairOf(root: string, file: string, flows = listFlows(root)): SyncItem | undefined {
-  return syncItems(root, flows).find((i) => i.wireframe === file || i.page === file);
+  const items = syncItems(root, flows);
+  return items.find((i) => i.wireframe === file || i.page === file) ?? items.find((i) => !!i.page && baseFile(i.page) === file);
 }
 
 function known(root: string, file: string) {

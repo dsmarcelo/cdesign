@@ -523,7 +523,9 @@ ${now}`);
       file ??= cur.file ?? undefined;
     }
     if (!file) fail("No page given and none open in the viewer. Pass a page, e.g. `cdesign shot design/prototype/home.html`.");
-    const url = `http://${reg.id}.localhost:${reg.port}/p/${encodeURI(file!)}?raw=1`;
+    // `page.tsx#venda/cliente` shoots the page with that URL state (a dialog or sheet open), like a flow step does.
+    const [base, state] = [file!.split("#")[0], file!.split("#").slice(1).join("#")];
+    const url = `http://${reg.id}.localhost:${reg.port}/p/${encodeURI(base)}?raw=1${state ? "#" + state : ""}`;
     let shot;
     try {
       shot = await screenshot({ url, selector: sel, width, theme, format, maxEdge: 1568, maxHeight: full ? 0 : 1600, y, responsive });

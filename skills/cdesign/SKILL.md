@@ -21,13 +21,13 @@ Group related pages by feature or screen type under design/pages/ (for example, 
 
 ## Flows, wireframes and sync
 
-The project is planned as **flows** of **wireframes** first; real **pages** come later. The viewer shows this as a map (Flows | Pages | Files in the toolbar; `M` toggles the map, `Esc` returns from an opened page).
+Build **wireframes** and **pages** in the same **Flows** canvas. Use the **Wireframes** or **Screens & Components** toggle to review each layer. `M` switches between the canvas and an opened file.
 
 **Files**
 - `design/wireframe/**.tsx|html`: lo-fi screens (grayscale boxes, real control shapes, skeleton text). They are prototypes: render, select and comment on them like any page. Group them like the pages (`design/wireframe/vendas/…`).
   - **Devices.** A wireframe can exist for phone, desktop or both. One unsuffixed file (`cliente.tsx`) is responsive and is shown on both. For separate layouts add siblings `cliente.phone.tsx` and `cliente.desktop.tsx` (point the flow step at either one; the other is found automatically). There are no tablet wireframes. The map draws each screen at real device size (phone 402×874, iPhone 18; desktop 1280×800) and has a Phone/Desktop toggle; a screen missing on the chosen device falls back to the other one, labeled "Phone only"/"Desktop only".
   - **Fill the viewport.** The map already draws the device frame. A wireframe must render the screen itself edge to edge (`min-h-screen w-full`), never its own phone bezel, fixed `w-[390px]` box, rounded device border or gray page padding around it.
-- `design/pages/**`: the real screens. The Pages map groups them by first-level folder; the hub is the file named like the folder (or `index`).
+- `design/pages/**`: the real screens. Link finished screens using each flow step’s `page` field. Include only the screens and component states used in that journey. For a dialog, sheet, drawer, filter overlay or other state of a page, show it on the page it opens from (see **Page states in the URL hash** below) and point the step at `page.tsx#state`, e.g. `design/pages/vendas/nova-venda.tsx#venda/cliente`. Only when a component has no host page yet, use its `Preview` export or preview sidecar as the step's `page`. The **Files** view holds the project-wide preview inventory.
 - `design/flows/<id>.json`: one file per user flow. `id` = lowercase letters, digits, dashes. Define each navigation arrow as a link in this file:
 ```json
 { "title": "Nova venda", "description": "Da lista de vendas à confirmação.",
@@ -36,7 +36,7 @@ The project is planned as **flows** of **wireframes** first; real **pages** come
     { "id": "pedido", "title": "Revisar pedido", "wireframe": "design/wireframe/vendas/pedido.tsx" },
     { "id": "registrou", "decision": "Venda registrada?" },
     { "id": "confirmacao", "title": "Venda registrada", "wireframe": "design/wireframe/vendas/confirmacao.tsx" },
-    { "id": "cliente", "title": "Selecionar cliente", "wireframe": "design/wireframe/vendas/cliente.tsx" } ],
+    { "id": "cliente", "title": "Selecionar cliente", "wireframe": "design/wireframe/vendas/cliente.tsx", "page": "design/pages/vendas/nova-venda.tsx#venda/cliente" } ],
   "links": [
     { "from": "lista", "to": "pedido", "label": "Nova venda" },
     { "from": "pedido", "to": "registrou", "label": "Registrar" },
@@ -47,14 +47,24 @@ The project is planned as **flows** of **wireframes** first; real **pages** come
 ```
   A screen step has a `wireframe`, a `page`, or both. Use existing, project-relative paths. Use `decision` for a question and label its outgoing links with the outcomes.
 
+**Page states in the URL hash**
+- A step's `page` may end in `#state`. cdesign validates and hashes the file before `#` and loads the preview with that URL hash; it does not open anything itself. The page must read `location.hash` on load (and on `hashchange`/`popstate`) and render the state, otherwise the step silently shows the plain page and `flows check` still passes.
+- Make overlays hash-driven rather than local state: opening one writes the hash (`history.pushState`, so Back closes it), closing removes it. Use segments joined by `/`, innermost last, each `name` or `name=arg`: `#produto=p3/estoque=p3` is the stock dialog over the product sheet. Name states in the product's language, and let a missing arg mean "the first item" so flow steps need no real ids. Reuse the project's hash-route helper if it has one (look for `location.hash` in `design/components/shared/`); otherwise add one small shared hook and document its format in its header.
+- A state opened directly by link must show content: if it needs data the user would have entered first (items in a cart, a customer with addresses), fill sample data when the page opens on that hash with an empty draft. Never write to persistent demo data from a link.
+- A nested state implies its parent: `#venda/item` must also show the screen the item editor opens over (for example mobile step 2), with the editor on top.
+- Each `page#state` is its own sync pair. Verify every state renders with `cdesign shot page.tsx#state` (add `--width 1280` for desktop) before finishing.
+- The wireframe of a dialog or sheet step draws the screen it opens over, dimmed, with the dialog on top, so both layers read the same way.
+
 - `design/sync.json`: written by `cdesign sync`; never edit it by hand. It stores, per page, the content hashes of the pair when it was last confirmed in sync, and explicit `outdated` marks with notes. Commit it with the design.
 
 **Authoring a flow layout**
 
-- List the entry screen first, then the main steps in reading order. For each step, list its primary **forward** link before optional branches. cdesign follows that order to build the main row from left to right.
-- Give each short detour its own screen and link from the step that opens it. If it rejoins the journey, link back to the existing step. With a single main row, cdesign can place one-step detours side by side beneath it.
-- Mark return and retry links with `"dashed": true`. Use short labels that explain the action or outcome at a glance. The viewer routes loop-back links between main steps above the row and return links from detours in the space between rows.
-- Run `cdesign flows check`, then open **Flows** and use **Fit** to review the whole journey on the supported devices. The screens are live previews. Use **Select** (`S`) to inspect an element inside a preview, and `cdesign page` to retrieve the selection.
+- The canvas grows to the right as a tree: each screen's destinations sit in the next column, stacked top to bottom in link order, with the screen centred beside them and joined by elbow arrows. A screen sits next to the first screen (breadth-first from the entry step) that links to it.
+- List the entry screen first. For each step, list its links in the order you want the destinations stacked.
+- Give each detour (dialog, sheet, editor) its own step linked from the screen that opens it. Link back to that screen when it closes: a link back to the opener shows as a ↩ badge on the screen instead of a second arrow. Links between sibling screens bend around the right of their column; any other return or skip runs in a lane above the flow. Mark every return and retry link `"dashed": true`.
+- A screen opened from several places is drawn once, next to the opener closest to the entry; link the others to it as usual.
+- Use short labels that explain the action or outcome at a glance.
+- Run `cdesign flows check`, then open **Flows** and use **Fit** to review the whole journey on the supported devices. The screens are live previews. Select or comment on an element directly on the canvas. Use `cdesign page` to retrieve the selection and the page it came from.
 
 **Sync rules**
 - A wireframe change does **not** require a page change: wireframes are a prototype until the user decides to build or update the page. Do not touch the page unless asked.
@@ -67,6 +77,7 @@ The project is planned as **flows** of **wireframes** first; real **pages** come
 | You changed | Also update |
 |---|---|
 | Added a screen to a flow | create its wireframe, add the step and its links in `design/flows/<id>.json`, `flows check` |
+| Added a dialog/sheet step | make the page open it from its URL hash, point the step at `page.tsx#state`, `flows check`, `shot page.tsx#state` |
 | A wireframe | nothing required; if the page must follow, `sync outdated <page> --note …` |
 | A page built from a wireframe | set the step's `page`, then `sync done <page>` once it matches |
 | A page (shipped behavior changed) | if the wireframe should reflect it, `sync outdated <wireframe> --note …` |

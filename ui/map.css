@@ -1,4 +1,4 @@
-/* Project map (ui/map.js) and the flow bar above an opened page. Same palette as the viewer: black, grays, one amber for "outdated". */
+/* Flow canvas and navigation above an opened preview. */
 .seg{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--line);border-radius:8px;flex:none}
 .seg button{height:24px!important;padding:0 8px;border:0;border-radius:6px;background:none;color:var(--mut);font-size:12px}
 .seg button[aria-pressed=true]{background:var(--line);color:#fafafa}
@@ -9,10 +9,9 @@
 #map{grid-area:2/2;display:none;position:relative;overflow:auto;background:#000;background-image:radial-gradient(#1c1c1c 1px,transparent 1px);background-size:20px 20px}
 body.map #map{display:flex;flex-direction:column;overflow:hidden;min-height:0;min-width:0}
 body.map main{display:none}
-body.map :is(#w,#devs,#full-page){display:none!important}
+body.map :is(#w,#devs,#full-page,#sel,#mode){display:none!important}
 .map-head{position:sticky;top:0;left:0;z-index:3;display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:10px 16px;background:#000d;backdrop-filter:blur(6px);border-bottom:1px solid var(--line)}
 .map-head h2{margin:0;font-size:14px;font-weight:600}
-.map-head small{color:var(--mut)}
 .map-head .chips{display:flex;flex-wrap:wrap;gap:4px;flex:1 1 auto;min-width:0}
 .map-head .chips button{height:26px;padding:0 10px;border-radius:999px;font-size:12px;color:var(--mut);background:none}
 .map-head .chips button[aria-pressed=true]{background:#fafafa;color:#000;border-color:#fafafa}
@@ -22,15 +21,12 @@ body.map :is(#w,#devs,#full-page){display:none!important}
 .map-head .zoom{margin-left:auto}
 .map-head .zoom button{height:26px;min-width:28px;padding:0 6px;font-size:12px}
 .map-canvas{padding:8px 0 48px;width:max-content;min-width:100%}
-.map-canvas.groups{display:flex;flex-wrap:nowrap;align-items:flex-start;gap:200px;padding:160px 120px}
 .empty-map{max-width:520px;margin:64px auto;color:var(--mut);line-height:1.6;text-align:center}
 .empty-map code{color:#fafafa}
 .flow-desc{margin:calc(12px / var(--z,1)) 120px 0;color:var(--mut);max-width:calc(720px / var(--z,1));font-size:calc(13px / var(--z,1))}
 .flow-errors{margin:12px 32px 0;padding:8px 12px;border:1px solid var(--bad);border-radius:8px;color:#fca5a5;white-space:pre-wrap;font-size:12px;max-width:720px}
 
-.group{border:1px solid var(--line);border-radius:24px;padding:calc(24px / var(--z,1) * .5) 48px 48px;background:#0a0a0a}
-.group h3{margin:0 0 calc(40px / var(--z,1));font-size:calc(13px / var(--z,1));font-weight:600;color:var(--mut);text-transform:uppercase;letter-spacing:.06em}
-.group-body,.flow-body{position:relative}
+.flow-body{position:relative}
 .edges{position:absolute;inset:0;width:100%;height:100%;overflow:visible;pointer-events:none;color:#888}
 .edges > path{fill:none;stroke:currentColor;stroke-linejoin:round}
 .edges > path[stroke-dasharray]{opacity:.65}
@@ -46,14 +42,15 @@ body.map :is(#w,#devs,#full-page){display:none!important}
 @media (hover:hover){.thumb:hover{outline:calc(2px / var(--z,1)) solid #a3a3a3}}
 html[data-theme=dark] .thumb{background:#111}
 .thumb iframe{position:absolute;inset:0;width:100%;height:100%;border:0;pointer-events:none;background:inherit}
-body.picking #map .thumb iframe{pointer-events:auto}
-body.picking #map .thumb{cursor:crosshair}
+#map .thumb:not(.empty){cursor:crosshair}
 .node.fallback .thumb{opacity:.55}
 .thumb.empty{display:grid;place-items:center;background:#111;color:var(--mut);font-size:calc(13px / var(--z,1));outline:calc(1.5px / var(--z,1)) dashed #404040}
-.node.hub .thumb{outline-color:#737373}
 .badge{flex:none;font-size:.8em;padding:.15em .6em;border-radius:999px;border:1px solid var(--line);color:var(--mut);white-space:nowrap;font-weight:400}
 .badge.ok{color:var(--ok);border-color:#14532d}
 .badge.chg{color:#d4d4d4;border-color:#525252}
+/* ↩ a link back to the screen that opened this one, shown instead of a second arrow */
+.badge.ret{border-style:dashed;color:#a3a3a3}
+.node.decision .badge.ret{position:absolute;top:100%;left:50%;transform:translateX(-50%);margin-top:.5em;font-size:calc(11px / var(--z,1))}
 .badge.warn{color:var(--warn);border-color:#78350f;background:#1c1206}
 
 .node.decision{display:grid;place-items:center;pointer-events:none}
@@ -102,9 +99,24 @@ main>#stage{flex:1 1 0;height:auto;min-height:0}
 .map-viewport .map-canvas{position:absolute;top:0;left:0;min-width:0}
 .map-viewport.hand,.map-viewport.hand *{cursor:grab!important}
 .map-viewport.panning,.map-viewport.panning *{cursor:grabbing!important}
-.map-viewport.hand iframe{pointer-events:none!important}
-.board-selected .thumb{outline:2px solid #5da9ff}
+.board-selected .thumb,.board-selected .thumb:hover{outline:calc(2px / var(--z,1)) solid #5da9ff}
 
 .map-position{position:absolute;inset:0 auto auto 0}
 
 .flow-body .cap .open{white-space:normal;overflow-wrap:anywhere}
+
+.board-comment{position:absolute;bottom:16px;right:16px;z-index:4;display:grid;gap:8px;width:min(340px,calc(100% - 32px));max-height:calc(100% - 32px);overflow:auto;overscroll-behavior:contain;padding:12px;border:1px solid #404040;border-radius:12px;background:#111;box-shadow:0 8px 24px #0008}
+.board-comment label{font-size:13px;font-weight:600}
+.board-comment small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mut)}
+.board-comment textarea{width:100%;min-height:80px;padding:8px;border:1px solid #525252;border-radius:6px;background:#000;color:#fafafa;font:inherit;user-select:text;resize:vertical}
+.board-comment .grp{justify-content:flex-end}
+.board-comment p{margin:0;color:#fca5a5}
+@media (pointer:coarse){
+  .board-comment textarea{font-size:16px}
+  .map-head .seg button,.map-head .zoom button{min-height:32px}
+}
+@media (max-width:700px){
+  .board-comment{bottom:72px;max-height:calc(100% - 88px)}
+  body.bar .board-comment{bottom:144px;max-height:calc(100% - 160px)}
+}
+@media (prefers-reduced-motion:reduce){.thumb{transition:none}}

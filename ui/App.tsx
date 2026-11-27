@@ -9,8 +9,10 @@ import {
   pageHash,
   pagePath,
   previewPath,
+  splitState,
   ssGet,
   ssSet,
+  type BoardElement,
   type CommentItem,
   type FlowsData,
   type ProjectInfo,
@@ -130,6 +132,7 @@ export function App() {
     const h = pageHash();
     return isMapHash(h) ? null : h || null;
   });
+  const [curFragment, setCurFragment] = useState("");
   const [mapRoute, setMapRoute] = useState<string | null>(() => {
     const h = pageHash();
     return isMapHash(h) ? h : null;
@@ -197,8 +200,7 @@ export function App() {
   modeRef.current = mode;
   const mapRouteRef = useRef(mapRoute);
   mapRouteRef.current = mapRoute;
-  const flowsDataRef = useRef(flowsData);
-  flowsDataRef.current = flowsData;
+  const boardPageRef = useRef<string | null>(null);
   const remoteRef = useRef(remote);
   remoteRef.current = remote;
 
@@ -224,10 +226,13 @@ export function App() {
     [allFrames]
   );
 
-  const syncFrames = useCallback(() => {
-    sendToFrames({ cd: "mode", mode: modeRef.current, tab: tabIdRef.current });
-    sendToFrames({ cd: "pins" });
-  }, [sendToFrames]);
+  const setFrameMode = useCallback((frame: HTMLIFrameElement) => {
+    frame.contentWindow?.postMessage({
+      cd: "mode",
+      mode: frame.closest("#map") ? null : modeRef.current,
+      tab: tabIdRef.current,
+    }, "*");
+  }, []);
 
   const applyThemeToFrame = useCallback((f: HTMLIFrameElement, t: string) => {
     try {
@@ -239,7 +244,7 @@ export function App() {
     fetch("/__cd/page", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ tabId: tabIdRef.current, file: curRef.current }),
+      body: JSON.stringify({ tabId: tabIdRef.current, file: boardPageRef.current ?? curRef.current }),
       keepalive: true,
     }).catch(() => {});
   }, []);
@@ -253,45 +258,55 @@ export function App() {
     }
   };
 
-  const loadPreview = useCallback((file: string | null, v = viewRef.current) => {
+  const loadPreview = useCallback((file: string | null, v = viewRef.current, state = "") => {
     if (!file) return;
-    loadFrame(fr1Ref.current, previewPath(file));
-    if (v === "split") loadFrame(fr2Ref.current, previewPath(file));
+    const url = previewPath(state ? file + "#" + state : file);
+    loadFrame(fr1Ref.current, url);
+    if (v === "split") loadFrame(fr2Ref.current, url);
   }, []);
 
+  /** A flow step may open its page with a URL state (`page.tsx#venda/cliente`): the viewer keeps the plain file as the current page and passes the state to the preview only. */
   const setCur = useCallback(
-    (p: string) => {
+    (ref: string) => {
+      const [p, state] = splitState(ref);
+      boardPageRef.current = null;
       curRef.current = p;
       setCurState(p);
+      setCurFragment(state);
       setMapRoute(null);
       if (pageHash() !== p) location.hash = pagePath(p);
-      loadPreview(p);
+      loadPreview(p, viewRef.current, state);
       report();
     },
     [loadPreview, report]
   );
 
   const setMode = useCallback(
-    (m: Exclude<ViewerMode, null>) => {
-      const next: ViewerMode = modeRef.current === m ? null : m;
+    (m: Exclude<ViewerMode, null>, toggle = true) => {
+      const next: ViewerMode = toggle && modeRef.current === m ? null : m;
       modeRef.current = next;
       setModeState(next);
-      if (next !== "select") sendToFrames({ cd: "clear" });
-      syncFrames();
+      if (!mapRouteRef.current && next !== "select") sendToFrames({ cd: "clear" });
+      allFrames().forEach(setFrameMode);
     },
-    [sendToFrames, syncFrames]
+    [allFrames, sendToFrames, setFrameMode]
   );
 
-  const goMap = useCallback((kind?: "pages" | "flows") => {
-    const h =
-      kind === "pages"
-        ? "map:pages"
-        : kind === "flows"
-          ? lastMapRef.current?.startsWith("flow:")
-            ? lastMapRef.current
-            : "map:flows"
-          : lastMapRef.current || ssGet("cd-last-map") || (flowsDataRef.current.flows.length ? "map:flows" : "map:pages");
-    location.hash = h;
+  const goMap = useCallback(() => {
+    location.hash = lastMapRef.current || ssGet("cd-last-map") || "map:flows";
+  }, []);
+
+  const changeBoardTool = useCallback((tool: "select" | "comment") => {
+    setMode(tool, false);
+  }, [setMode]);
+
+  const selectBoardElement = useCallback((selection: BoardElement | null) => {
+    boardPageRef.current = selection?.page ?? null;
+    fetch("/__cd/selection", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tabId: tabIdRef.current, selection }),
+    }).catch(() => {});
   }, []);
 
   const fetchFiles = useCallback(async () => {
@@ -323,17 +338,13 @@ export function App() {
   }, []);
 
   const fetchMap = useCallback(async () => {
-    const [d, p]: [FlowsData, string[]] = await Promise.all([
-      fetch("/__cd/flows").then((r) => r.json()).catch(() => ({ flows: [], sync: [] })),
-      fetch("/__cd/files").then((r) => r.json()).catch(() => []),
-    ]);
-    const pages = p.filter((f) => f.startsWith("design/pages/"));
-    const key = JSON.stringify([d, pages]);
+    const d: FlowsData | null = await fetch("/__cd/flows").then((r) => r.ok ? r.json() : null).catch(() => null);
+    if (!d) return { changed: false, hasFlows: false };
+    const key = JSON.stringify(d);
     const changed = key !== mapKeyRef.current;
     mapKeyRef.current = key;
-    setFlowsData(d);
-    setFiles(p);
-    return { changed, data: d };
+    if (changed) setFlowsData(d);
+    return { changed, hasFlows: d.flows.length > 0 };
   }, []);
 
   const refreshMap = useCallback(async () => {
@@ -367,7 +378,6 @@ export function App() {
   useEffect(() => {
     document.body.classList.toggle("hl", leftHidden);
     document.body.classList.toggle("map", inMap);
-    document.body.classList.toggle("picking", !!mode);
     document.body.classList.toggle("resp", view === "resp");
     document.body.classList.toggle("phone", view === "phone");
     document.body.classList.toggle("split", view === "split");
@@ -375,7 +385,7 @@ export function App() {
     document.body.classList.toggle("bb", barBottom);
     document.body.classList.toggle("remote", remote);
     document.body.classList.toggle("nop", currentProject === null);
-  }, [leftHidden, inMap, mode, view, barOpen, barBottom, remote, currentProject]);
+  }, [leftHidden, inMap, view, barOpen, barBottom, remote, currentProject]);
 
   // Theme application
   useEffect(() => {
@@ -617,13 +627,13 @@ export function App() {
       loadPreview(initialFile);
       fetchComments();
       fetchAgent();
-      const { data } = await fetchMap();
+      const { hasFlows } = await fetchMap();
       const h = pageHash();
       if (isMapHash(h)) {
         lastMapRef.current = h;
         ssSet("cd-last-map", h);
         setMapRoute(h);
-      } else if (openedWithoutHashRef.current && data.flows.length) {
+      } else if (openedWithoutHashRef.current && hasFlows && (!h || h === initialFile)) {
         location.replace("#map:flows");
       }
     })();
@@ -659,7 +669,8 @@ export function App() {
       const shareOpen = (document.getElementById("share-dialog") as HTMLDialogElement | null)?.open;
       if (webOpen || shareOpen || /input|textarea/i.test((e.target as HTMLElement)?.tagName || "")) return;
       if (e.key === "m" && !e.ctrlKey && !e.metaKey) {
-        goMap(mapRouteRef.current ? (pageHash() === "map:pages" ? "flows" : "pages") : undefined);
+        if (mapRouteRef.current && curRef.current) setCur(curRef.current);
+        else goMap();
         return;
       }
       if (mapRouteRef.current && e.key === "Escape") {
@@ -667,8 +678,8 @@ export function App() {
         else if (curRef.current) setCur(curRef.current);
         return;
       }
-      if (e.key === "c") setMode("comment");
-      if (e.key === "s") setMode("select");
+      if (e.key === "c" && !mapRouteRef.current) setMode("comment");
+      if (e.key === "s" && !mapRouteRef.current) setMode("select");
       if (e.key === "Escape") {
         if (modeRef.current) setMode(modeRef.current);
         else goMap();
@@ -679,7 +690,6 @@ export function App() {
       if (e.data?.cd === "picked") {
         allFrames().forEach((f) => f.contentWindow !== e.source && f.contentWindow?.postMessage({ cd: "unpick" }, "*"));
       }
-      if (e.data?.cd === "ready") syncFrames();
       if (e.data?.cd === "sidebar" && e.source && allFrames().some((f) => f.contentWindow === e.source)) toggleLeft();
     };
     addEventListener("hashchange", onHash);
@@ -694,7 +704,7 @@ export function App() {
       document.removeEventListener("visibilitychange", onVis);
       removeEventListener("message", onMsg);
     };
-  }, [allFrames, goMap, report, setCur, setMode, syncFrames]);
+  }, [allFrames, goMap, report, setCur, setMode]);
 
   const toggleLeft = () => {
     if (mob) setMobHideLeft((h) => !h);
@@ -811,13 +821,11 @@ export function App() {
   };
 
   const fileTree = useMemo(() => buildTree(files), [files]);
-  const mapPages = useMemo(() => files.filter((f) => f.startsWith("design/pages/")), [files]);
 
   const recent = (a: CommentItem, b: CommentItem) => (b.createdAt || "").localeCompare(a.createdAt || "");
   const openComments = useMemo(() => comments.filter((c) => c.status !== "done").sort(recent), [comments]);
   const doneComments = useMemo(() => comments.filter((c) => c.status === "done").sort(recent), [comments]);
 
-  const activeViewKey = !inMap ? "files" : mapRoute === "map:pages" ? "pages" : "flows";
   const agentLabel = agentState === "on" ? "Agent listening" : agentState === "working" ? "Agent working" : "No agent listening";
   const currentProjUrl = projectList.find((p) => p.id === currentProject)?.url ?? "";
   const tunnelMsg = tunnel?.starting
@@ -831,9 +839,10 @@ export function App() {
   const onFrameLoad = useCallback(
     (f: HTMLIFrameElement) => {
       applyThemeToFrame(f, document.documentElement.dataset.theme || theme);
-      syncFrames();
+      setFrameMode(f);
+      f.contentWindow?.postMessage({ cd: "pins" }, "*");
     },
-    [applyThemeToFrame, syncFrames, theme]
+    [applyThemeToFrame, setFrameMode, theme]
   );
 
   const renderCommentCard = (c: CommentItem) => (
@@ -902,15 +911,12 @@ export function App() {
           </button>
 
           <span id="views" className="grp seg" role="group" aria-label="View">
-            <button data-v="flows" aria-pressed={activeViewKey === "flows"} title="Flow map (M)" onClick={() => goMap("flows")}>
+            <button data-v="flows" aria-pressed={inMap} title="Flow map (M)" onClick={goMap}>
               Flows
-            </button>
-            <button data-v="pages" aria-pressed={activeViewKey === "pages"} title="Pages map" onClick={() => goMap("pages")}>
-              Pages
             </button>
             <button
               data-v="files"
-              aria-pressed={activeViewKey === "files"}
+              aria-pressed={!inMap}
               title="Open page with the file list"
               onClick={() => {
                 if (cur) {
@@ -1110,6 +1116,8 @@ export function App() {
               id="sel"
               className={`ic${mode === "select" ? " on" : ""}`}
               title="Select element for the agent (S)"
+              aria-label="Select element for the agent (S)"
+              aria-pressed={mode === "select"}
               onClick={() => setMode("select")}
             >
               <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
@@ -1120,6 +1128,7 @@ export function App() {
             <button
               id="mode"
               aria-label="Comment (C)"
+              aria-pressed={mode === "comment"}
               className={`ic${mode === "comment" ? " on" : ""}`}
               title="Comment (C)"
               onClick={() => setMode("comment")}
@@ -1196,8 +1205,9 @@ export function App() {
         visible={inMap}
         route={mapRoute ?? "map:flows"}
         data={flowsData}
-        pages={mapPages}
         mode={mode}
+        onToolChange={changeBoardTool}
+        onElementSelect={selectBoardElement}
         onOpen={(file) => {
           lastMapRef.current = pageHash();
           setCur(file);
@@ -1211,7 +1221,7 @@ export function App() {
 
       <main ref={mainRef}>
         <FlowBar
-          cur={cur}
+          cur={cur && curFragment ? cur + "#" + curFragment : cur}
           inMap={inMap}
           data={flowsData}
           onSelectFile={setCur}

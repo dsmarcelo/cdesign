@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { listFlows, readFlow, syncItems, markOutdated, markSynced, clearOutdated, syncReport, pageFlowNote, newFlow, variantsOf } from "../src/flows";
+import { listFlows, readFlow, syncItems, markOutdated, markSynced, clearOutdated, syncReport, pageFlowNote, newFlow, variantsOf, pairOf } from "../src/flows";
 import { listPages } from "../src/modes";
 import { configure } from "../src/project";
 import { projectId } from "../src/store";
@@ -132,4 +132,26 @@ test("CLI and daemon expose flows and sync", async () => {
     expect((await fetch(url("app/main.js").replace(/\?.*/, ""))).status).toBe(200);
     expect((await fetch(url("app/main.css").replace(/\?.*/, ""))).status).toBe(200);
   } finally { daemon.kill(); await daemon.exited; }
+});
+
+test("a step page may carry a URL state after # (a dialog or sheet open on that page)", () => {
+  const { root, put } = project();
+  put("design/flows/nova-venda.json", JSON.stringify({
+    title: "Nova venda",
+    steps: [
+      { id: "itens", title: "Itens", wireframe: "design/wireframe/vendas/itens.tsx", page: "design/pages/vendas/nova-venda.tsx" },
+      { id: "cliente", title: "Cliente", wireframe: "design/wireframe/vendas/cliente.tsx", page: "design/pages/vendas/nova-venda.tsx#venda/cliente" },
+      { id: "erro", title: "Erro", page: "design/pages/vendas/missing.tsx#x" },
+    ],
+    links: [{ from: "itens", to: "cliente", label: "Cliente" }],
+  }));
+  const [f] = listFlows(root);
+  expect(f.errors).toEqual(['step "erro": page file not found: design/pages/vendas/missing.tsx']);
+  // Each state is its own pair, hashed from the page file itself.
+  const items = syncItems(root);
+  expect(items.map((i) => i.page)).toContain("design/pages/vendas/nova-venda.tsx#venda/cliente");
+  markSynced(root, "design/pages/vendas/nova-venda.tsx#venda/cliente");
+  expect(syncItems(root).find((i) => i.page?.endsWith("#venda/cliente"))?.state).toBe("in-sync");
+  // A plain page path prefers the step without a state, then any state of it.
+  expect(pairOf(root, "design/pages/vendas/nova-venda.tsx")?.page).toBe("design/pages/vendas/nova-venda.tsx");
 });

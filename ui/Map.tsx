@@ -1,13 +1,14 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  baseName,
   MAP_DEVICE,
   previewPath,
+  splitState,
   lsGet,
   lsSet,
   ssGet,
   ssSet,
   SYNC_STATE,
+  type BoardElement,
   type Flow,
   type FlowsData,
   type FlowStep,
@@ -31,51 +32,44 @@ function stepView(s: FlowStep, layer: Layer, device: Device) {
   return { file, device: dev, sub: notes.join(" · ") || undefined, fallback: !first };
 }
 
+/**
+ * Lays a flow out as a tree that grows to the right: each screen's destinations sit in the next column, stacked
+ * top to bottom in link order, with the screen centred on them, joined by elbow arrows. The tree comes from a
+ * breadth-first walk from the entry step, so a screen sits next to the first screen that opens it.
+ * Links back to the opener ("Concluir", "Voltar") become a ↩ badge on the screen instead of a second arrow;
+ * links between siblings bend around the right side of the column; any other link runs in a lane above the flow.
+ */
 function layoutFlow(flow: Flow, layer: Layer, device: Device) {
   const ids = flow.steps.map((s) => s.id);
   const out: Record<string, number[]> = Object.fromEntries(ids.map((i) => [i, []]));
   flow.links.forEach((l, k) => out[l.from]?.push(k));
-  const state: Record<string, number> = {};
-  const back = new Set<number>();
-  const dfs = (u: string) => {
-    state[u] = 1;
-    for (const k of out[u] ?? []) {
-      const v = flow.links[k].to;
-      if (state[v] === 1) back.add(k);
-      else if (!state[v]) dfs(v);
-    }
-    state[u] = 2;
-  };
-  ids.forEach((i) => state[i] || dfs(i));
-  const layerOf: Record<string, number> = Object.fromEntries(ids.map((i) => [i, 0]));
-  for (let n = 0; n < ids.length; n++) {
-    flow.links.forEach((l, k) => {
-      if (!back.has(k) && layerOf[l.to] < layerOf[l.from] + 1) layerOf[l.to] = layerOf[l.from] + 1;
-    });
-  }
-  const row: Record<string, number> = {};
-  const used = new Set<string>();
-  const hasIn = new Set(flow.links.filter((_, k) => !back.has(k)).map((l) => l.to));
-  let maxRow = -1;
-  const take = (i: string, r: number) => {
-    while (used.has(layerOf[i] + ":" + r)) r++;
-    row[i] = r;
-    used.add(layerOf[i] + ":" + r);
-    maxRow = Math.max(maxRow, r);
-  };
-  const visit = (u: string, r: number) => {
-    if (row[u] !== undefined) return;
-    take(u, r);
-    let first = true;
-    for (const k of out[u] ?? []) {
-      const v = flow.links[k].to;
-      if (back.has(k) || row[v] !== undefined) continue;
-      visit(v, first ? row[u] : maxRow + 1);
-      first = false;
+
+  const parent: Record<string, string> = {};
+  const depth: Record<string, number> = {};
+  const kids: Record<string, string[]> = Object.fromEntries(ids.map((i) => [i, []]));
+  const tree = new Set<number>();
+  const roots: string[] = [];
+  const seen = new Set<string>();
+  const walk = (root: string) => {
+    roots.push(root);
+    seen.add(root);
+    depth[root] = 0;
+    for (const queue = [root]; queue.length; ) {
+      const u = queue.shift()!;
+      for (const k of out[u]) {
+        const v = flow.links[k].to;
+        if (seen.has(v)) continue;
+        seen.add(v);
+        parent[v] = u;
+        depth[v] = depth[u] + 1;
+        kids[u].push(v);
+        tree.add(k);
+        queue.push(v);
+      }
     }
   };
-  ids.filter((i) => !hasIn.has(i)).forEach((i) => visit(i, maxRow + 1));
-  ids.forEach((i) => visit(i, maxRow + 1));
+  const hasIn = new Set(flow.links.filter((l) => l.from !== l.to).map((l) => l.to));
+  for (const i of [ids[0], ...ids.filter((i) => !hasIn.has(i)), ...ids]) if (i !== undefined && !seen.has(i)) walk(i);
 
   const views: Record<string, ReturnType<typeof stepView>> = {};
   const size: Record<string, [number, number]> = {};
@@ -87,89 +81,116 @@ function layoutFlow(flow: Flow, layer: Layer, device: Device) {
       size[s.id] = MAP_DEVICE[views[s.id].device];
     }
   }
-  const GAP = 320, ROW = 260, PAD = 120;
-  const rankCount = Math.max(...ids.map((i) => layerOf[i]), 0) + 1;
-  const colW = Array.from({ length: rankCount }, (_, x) =>
-    Math.max(D, ...ids.filter((i) => layerOf[i] === x).map((i) => size[i][0]))
-  );
-  const colX = colW.map((_, x) => PAD + colW.slice(0, x).reduce((a, w) => a + w + GAP, 0));
-  const rowH = Math.max(...ids.map((i) => size[i][1]), D);
-  // Put one-step detours side by side when the rest of the flow forms a single main row.
-  const detours = ids.filter((i) => row[i] > 0 && out[i].every((k) => back.has(k)) &&
-    flow.links.some((l, k) => !back.has(k) && l.to === i && row[l.from] === 0));
-  const compact = detours.length > 0 && ids.every((i) => row[i] === 0 || detours.includes(i));
-  const side = new Set(compact ? detours : []);
-  const feedback = flow.links.flatMap((l, k) => back.has(k) && !side.has(l.from) && !side.has(l.to) ? [k] : []);
-  const branch = flow.links.flatMap((l, k) => side.has(l.from) || side.has(l.to) ? [k] : []);
-  const LANE = device === "desktop" ? 104 : 60;
-  const captionClearance = device === "desktop" ? 520 : 320;
-  const top = PAD + (feedback.length ? captionClearance + (feedback.length - 1) * LANE : 0);
-  const branchTop = top + rowH + captionClearance + branch.length * LANE;
-  const pos = Object.fromEntries(ids.map((i) => {
-    const [w, h] = size[i], x = layerOf[i];
-    return [i, { x: colX[x] + (colW[x] - w) / 2, y: top + row[i] * (rowH + ROW) + (rowH - h) / 2, w, h }];
-  }));
-  const mainWidth = (colX.at(-1) ?? PAD) + (colW.at(-1) ?? D) - PAD;
-  let branchWidth = 0;
-  if (compact) {
-    const parentRank = (i: string) => layerOf[flow.links.find((l, k) => !back.has(k) && l.to === i)!.from];
-    detours.sort((a, b) => parentRank(a) - parentRank(b));
-    branchWidth = detours.reduce((sum, i) => sum + size[i][0], 0) + (detours.length - 1) * GAP;
-    let x = PAD + Math.max(0, (mainWidth - branchWidth) / 2);
-    for (const i of detours) {
-      pos[i].x = x;
-      pos[i].y = branchTop + (rowH - pos[i].h) / 2;
-      x += pos[i].w + GAP;
-    }
-  }
-  const width = Math.max(mainWidth, branchWidth) + 2 * PAD;
-  const height = PAD + (compact ? branchTop + rowH : top + (maxRow + 1) * rowH + Math.max(0, maxRow) * ROW);
 
-  const edges = flow.links.map((l, k) => {
-    const from = pos[l.from], to = pos[l.to];
-    const branchLane = branch.indexOf(k);
-    const feedbackLane = feedback.indexOf(k);
-    if (branchLane !== -1 || feedbackLane !== -1) {
-      const below = branchLane !== -1;
-      const lane = below ? top + rowH + 44 + branchLane * LANE : top - captionClearance - feedbackLane * LANE;
-      const sidePort = (id: string, p: typeof from, source: boolean) => {
-        const sign = source ? 1 : -1;
-        const x = source ? p.x + p.w : p.x;
-        const rank = layerOf[id];
-        const columnEdge = colX[rank] + (source ? colW[rank] : 0);
-        const offset = 44 + 56 * feedbackLane / Math.max(1, feedback.length);
-        return { x, y: p.y + p.h * (below ? 0.22 : 0.26), stem: below ? x + sign * 50 : columnEdge + sign * offset };
-      };
-      const bottomPort = (id: string, p: typeof from) => {
-        const links = branch.filter((index) => {
-          const link = flow.links[index];
-          return link.from === id || link.to === id;
-        });
-        const x = p.x + p.w * (links.indexOf(k) + 1) / (links.length + 1);
-        return { x, y: p.y + p.h, stem: x };
-      };
-      const start = below && !side.has(l.from) ? bottomPort(l.from, from) : sidePort(l.from, from, true);
-      const end = below && !side.has(l.to) ? bottomPort(l.to, to) : sidePort(l.to, to, false);
-      const sx = start.stem, tx = end.stem;
-      return {
-        d: `M${start.x} ${start.y} H${sx} V${lane} H${tx} V${end.y} H${end.x}`,
-        dashed: back.has(k) || !!l.dashed,
-        label: l.label,
-        mid: [(sx + tx) / 2, lane] as [number, number],
-      };
-    }
-    const sx = from.x + from.w, sy = from.y + from.h / 2;
-    const tx = to.x, ty = to.y + to.h / 2;
-    const c = Math.max(80, (tx - sx) / 2);
-    return {
-      d: `M${sx} ${sy} C${sx + c} ${sy},${tx - c} ${ty},${tx} ${ty}`,
-      dashed: !!l.dashed,
-      label: l.label,
-      mid: [(sx + tx) / 2, (sy + ty) / 2] as [number, number],
-    };
+  const title = (id: string) => {
+    const st = flow.steps.find((s) => s.id === id);
+    return st?.title ?? st?.decision ?? id;
+  };
+  const returns: Record<string, { label?: string; to: string }[]> = {};
+  const bracket: number[] = [];
+  const lanes: number[] = [];
+  flow.links.forEach((l, k) => {
+    if (tree.has(k)) return;
+    if (l.from === l.to || parent[l.from] === l.to) (returns[l.from] ??= []).push({ label: l.label, to: title(l.to) });
+    else if (depth[l.from] === depth[l.to]) bracket.push(k);
+    else lanes.push(k);
   });
 
-  return { width, height, pos, views, edges };
+  const GAP = device === "desktop" ? 480 : 420;
+  const VGAP = device === "desktop" ? 600 : 560;
+  const PAD = 120;
+  const LANE = device === "desktop" ? 104 : 60;
+  const captionClearance = device === "desktop" ? 520 : 320;
+  const cols = Math.max(...ids.map((i) => depth[i]), 0) + 1;
+  const colW = Array.from({ length: cols }, (_, x) => Math.max(D, ...ids.filter((i) => depth[i] === x).map((i) => size[i][0])));
+  const colX = colW.map((_, x) => PAD + colW.slice(0, x).reduce((a, w) => a + w + GAP, 0));
+  const colEnd = (id: string) => colX[depth[id]] + colW[depth[id]];
+
+  const extent: Record<string, number> = {};
+  const measure = (u: string): number => {
+    const k = kids[u].reduce((sum, v) => sum + measure(v), 0) + Math.max(0, kids[u].length - 1) * VGAP;
+    return (extent[u] = Math.max(size[u][1], k));
+  };
+  const top = PAD + (lanes.length ? captionClearance + (lanes.length - 1) * LANE : 0) + 80;
+  const pos: Record<string, { x: number; y: number; w: number; h: number }> = {};
+  const place = (u: string, y0: number) => {
+    const [w, h] = size[u];
+    const block = kids[u].reduce((sum, v) => sum + extent[v], 0) + Math.max(0, kids[u].length - 1) * VGAP;
+    let y = y0 + (extent[u] - block) / 2;
+    for (const v of kids[u]) {
+      place(v, y);
+      y += extent[v] + VGAP;
+    }
+    let mid = y0 + extent[u] / 2;
+    if (kids[u].length) {
+      const first = pos[kids[u][0]], last = pos[kids[u].at(-1)!];
+      mid = (first.y + first.h / 2 + last.y + last.h / 2) / 2;
+    }
+    const x = colX[depth[u]] + (colW[depth[u]] - w) / 2;
+    pos[u] = { x, y: Math.min(Math.max(mid - h / 2, y0), y0 + extent[u] - h), w, h };
+  };
+  let y = top;
+  for (const r of roots) {
+    measure(r);
+    place(r, y);
+    y += extent[r] + VGAP * 2;
+  }
+  const width = (colX.at(-1) ?? PAD) + (colW.at(-1) ?? D) + PAD;
+  const height = y - VGAP * 2 + PAD;
+
+  type Edge = { d: string; dashed?: boolean; label?: string; mid: [number, number] };
+  const edges: Edge[] = [];
+  const centre = (id: string) => pos[id].y + pos[id].h / 2;
+  // Elbows from each screen to its destinations: ports spread down the right side in child order, and the
+  // vertical runs step right toward the middle of the fan so no two arrows cross.
+  for (const u of ids) {
+    const ks = out[u].filter((k) => tree.has(k));
+    if (!ks.length) continue;
+    const p = pos[u], sx = p.x + p.w, edge = colEnd(u);
+    const ports = ks.map((k, i) =>
+      ks.length === 1
+        ? Math.min(Math.max(centre(flow.links[k].to), p.y + p.h * 0.15), p.y + p.h * 0.85)
+        : p.y + p.h * (0.25 + (0.5 * i) / (ks.length - 1))
+    );
+    const up = ks.map((k, i) => [k, i] as const).filter(([k, i]) => centre(flow.links[k].to) < ports[i] - 1);
+    const down = ks.map((k, i) => [k, i] as const).filter(([k, i]) => centre(flow.links[k].to) > ports[i] + 1).reverse();
+    const step = Math.min(44, (GAP * 0.45 - 48) / Math.max(1, up.length, down.length));
+    const stem: Record<number, number> = {};
+    up.forEach(([k], a) => (stem[k] = edge + 48 + a * step));
+    down.forEach(([k], b) => (stem[k] = edge + 48 + b * step));
+    ks.forEach((k, i) => {
+      const l = flow.links[k], t = pos[l.to], ty = centre(l.to), py = ports[i];
+      const xv = stem[k];
+      edges.push(
+        xv === undefined
+          ? { d: `M${sx} ${py} H${t.x}`, dashed: !!l.dashed, label: l.label, mid: [(edge + t.x) / 2, py] }
+          : { d: `M${sx} ${py} H${xv} V${ty} H${t.x}`, dashed: !!l.dashed, label: l.label, mid: [(xv + t.x) / 2, ty] }
+      );
+    });
+  }
+  // Sibling links bend around the right side of their column and enter the target from the right.
+  bracket.forEach((k, n) => {
+    const l = flow.links[k], a = pos[l.from], b = pos[l.to];
+    const x = colEnd(l.from) + GAP * 0.55 + n * 36;
+    const sy = a.y + a.h * 0.8, ty = b.y + b.h * 0.2;
+    edges.push({ d: `M${a.x + a.w} ${sy} H${x} V${ty} H${b.x + b.w}`, dashed: true, label: l.label, mid: [x, (sy + ty) / 2] });
+  });
+  // Everything else (long returns, skips) runs in its own lane above the flow.
+  lanes.forEach((k, n) => {
+    const l = flow.links[k], a = pos[l.from], b = pos[l.to];
+    const lane = top - 80 - captionClearance - n * LANE;
+    const off = 24 + (56 * n) / Math.max(1, lanes.length);
+    const sx = colEnd(l.from) + off, tx = colX[depth[l.to]] - off;
+    const sy = a.y + a.h * 0.1, ty = b.y + b.h * 0.1;
+    edges.push({
+      d: `M${a.x + a.w} ${sy} H${sx} V${lane} H${tx} V${ty} H${b.x}`,
+      dashed: true,
+      label: l.label,
+      mid: [(sx + tx) / 2, lane],
+    });
+  });
+
+  return { width, height, pos, views, edges, returns };
 }
 
 function EdgeSvg({ paths }: { paths: { d: string; dashed?: boolean }[] }) {
@@ -193,6 +214,7 @@ function ScreenCard({
   device,
   cls,
   sub,
+  returns,
   item,
   style,
   mode,
@@ -205,12 +227,13 @@ function ScreenCard({
   device: Device;
   cls?: string;
   sub?: string;
+  returns?: { label?: string; to: string }[];
   item?: SyncItem;
   style?: React.CSSProperties;
   mode: ViewerMode;
   onOpen: (file: string) => void;
   onFrameLoad: (f: HTMLIFrameElement) => void;
-  registerFrame: (el: HTMLIFrameElement | null) => void;
+  registerFrame: React.RefCallback<HTMLIFrameElement>;
 }) {
   const [w, h] = MAP_DEVICE[device];
   const st = item ? SYNC_STATE[item.state] : null;
@@ -235,22 +258,27 @@ function ScreenCard({
           </span>
         )}
         {sub && <span className="badge mut">{sub}</span>}
+        {returns?.map((r, i) => (
+          <span key={i} className="badge ret" title={`Returns to ${r.to}`}>↩ {r.label ?? r.to}</span>
+        ))}
       </div>
       <div
         className={`thumb ${device}${!file ? " empty" : ""}`}
         style={{ width: w, height: h }}
         onDoubleClick={() => {
-          if (file && !mode) onOpen(file);
+          if (file && mode !== "comment") onOpen(file);
         }}
       >
         {!file ? (
           <span>No file yet</span>
         ) : (
           <iframe
+            key={file}
             ref={registerFrame}
             title={file}
+            tabIndex={-1}
             data-src={previewPath(file)}
-            data-file={file}
+            data-file={splitState(file)[0]}
             onLoad={(e) => onFrameLoad(e.currentTarget)}
           />
         )}
@@ -259,12 +287,69 @@ function ScreenCard({
   );
 }
 
+function BoardComment({ element, onClose }: { element: BoardElement; onClose: () => void }) {
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  const input = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (matchMedia("(pointer: fine)").matches) input.current?.focus();
+  }, []);
+
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const text = input.current?.value.trim();
+    if (pending) return;
+    if (!text) {
+      setError("Enter a comment.");
+      input.current?.focus();
+      return;
+    }
+    setPending(true);
+    setError("");
+    try {
+      const { file, cdId, uses, selector } = element;
+      const response = await fetch("/__cd/comments", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ file, cdId, uses, selector, text }),
+      });
+      if (!response.ok) throw new Error();
+      if (input.current?.isConnected) onClose();
+    } catch {
+      setError("Could not save the comment. Try again.");
+      setPending(false);
+    }
+  };
+
+  return (
+    <form className="board-comment" aria-label="Element comment" onSubmit={submit} onKeyDown={(e) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        e.currentTarget.requestSubmit();
+      }
+    }}>
+      <label htmlFor="board-comment-text">Comment on &lt;{element.tag}&gt;</label>
+      <small title={element.file}>{element.file}:{element.cdId}</small>
+      <textarea id="board-comment-text" ref={input} name="comment" placeholder="Write a comment…" required />
+      {error && <p role="alert">{error}</p>}
+      <div className="grp">
+        <button type="button" onClick={onClose}>Cancel</button>
+        <button type="submit" disabled={pending}>{pending ? "Saving…" : "Add Comment"}</button>
+      </div>
+    </form>
+  );
+}
+
 export function ProjectMap({
   visible,
   route,
   data,
-  pages,
   mode,
+  onToolChange,
+  onElementSelect,
   onOpen,
   onSyncAction,
   onFrameLoad,
@@ -273,8 +358,9 @@ export function ProjectMap({
   visible: boolean;
   route: string;
   data: FlowsData;
-  pages: string[];
   mode: ViewerMode;
+  onToolChange: (tool: "select" | "comment") => void;
+  onElementSelect: (element: BoardElement | null) => void;
   onOpen: (file: string) => void;
   onSyncAction: (action: "done" | "outdated" | "clear", file: string, note?: string) => void;
   onFrameLoad: (f: HTMLIFrameElement) => void;
@@ -283,6 +369,8 @@ export function ProjectMap({
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
+  const flowBodyRef = useRef<HTMLDivElement>(null);
+  const pickedFrame = useRef<HTMLIFrameElement | null>(null);
   const position = useRef({ x: 0, y: 0 });
   const cameras = useRef<Record<string, { x: number; y: number; zoom: number }>>({});
   const space = useRef(false);
@@ -291,24 +379,37 @@ export function ProjectMap({
   const [hand, setHand] = useState(false);
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [selection, setSelection] = useState<HTMLElement | null>(null);
+  const [comment, setComment] = useState<BoardElement | null>(null);
   const zoomRef = useRef(1);
   const obsRef = useRef<IntersectionObserver | null>(null);
   const iframesRef = useRef<Set<HTMLIFrameElement>>(new Set());
 
   const [device, setDevice] = useState<Device>(() => (ssGet("cd-map-device") === "desktop" ? "desktop" : "phone"));
-  const [layer, setLayer] = useState<Layer>(() => (ssGet("cd-layer") === "page" ? "page" : "wireframe"));
+  const [layerPreference, setLayer] = useState<Layer>(() => ssGet("cd-layer") === "page" ? "page" : "wireframe");
+  const legacyView = useRef({ device, layer: layerPreference });
   const [panelOpen, setPanelOpen] = useState(false);
   const [zoomPct, setZoomPct] = useState(100);
 
-  const cameraKey = `cd-map-camera:${route}`;
-  const isPages = route === "map:pages";
   const flowId = route.startsWith("flow:") ? route.slice(5) : null;
   const activeFlow = useMemo(
-    () => (isPages ? null : data.flows.find((f) => f.id === flowId) ?? data.flows[0] ?? null),
-    [isPages, data.flows, flowId]
+    () => data.flows.find((f) => f.id === flowId) ?? data.flows[0] ?? null,
+    [data.flows, flowId]
   );
+  const layer = !activeFlow || route === "map:pages" ? "page" : layerPreference;
+  const cameraKey = `cd-map-camera:${route}:${layer}:${device}`;
 
-  const itemOf = (file: string | null) => (file ? data.sync.find((i) => i.wireframe === file || i.page === file) : undefined);
+  const clearPick = useCallback(() => {
+    const frame = pickedFrame.current;
+    if (!frame) return;
+    frame.contentDocument?.dispatchEvent(new Event("cd-board-clear"));
+    pickedFrame.current = null;
+    onElementSelect(null);
+  }, [onElementSelect]);
+
+  const closeComment = useCallback(() => {
+    if (document.activeElement?.closest(".board-comment")) viewportRef.current?.focus({ preventScroll: true });
+    setComment(null);
+  }, []);
 
   const applyZoom = (z: number) => {
     zoomRef.current = z;
@@ -323,7 +424,7 @@ export function ProjectMap({
   const panTo = (x: number, y: number, save = true) => {
     position.current = { x, y };
     if (save) {
-      const camera = cameras.current[route] = { x, y, zoom: zoomRef.current };
+      const camera = cameras.current[cameraKey] = { x, y, zoom: zoomRef.current };
       lsSet(cameraKey, JSON.stringify(camera));
     }
     if (canvasRef.current?.parentElement) canvasRef.current.parentElement.style.translate = `${x}px ${y}px`;
@@ -340,14 +441,15 @@ export function ProjectMap({
     panTo(cx + (from.x - cx) * ratio + dx, cy + (from.y - cy) * ratio + dy);
   };
 
-  const fit = (target?: HTMLElement, save = true) => {
+  const fit = (target: HTMLElement | undefined = flowBodyRef.current ?? undefined, save = true) => {
     const viewport = viewportRef.current, canvas = canvasRef.current;
     if (!viewport || !canvas) return;
     const bounds = (target ?? canvas).getBoundingClientRect();
     const origin = canvas.getBoundingClientRect();
     const old = zoomRef.current;
     const width = Math.max(1, bounds.width / old), height = Math.max(1, bounds.height / old);
-    const z = Math.max(0.02, Math.min(target ? 16 : 1, (viewport.clientWidth - 32) / width,
+    const maxZoom = target === selection ? 16 : 1;
+    const z = Math.max(0.02, Math.min(maxZoom, (viewport.clientWidth - 32) / width,
       (viewport.clientHeight - 32) / height));
     applyZoom(z);
     panTo((viewport.clientWidth - width * z) / 2 - (bounds.left - origin.left) / old * z,
@@ -356,14 +458,16 @@ export function ProjectMap({
 
   useLayoutEffect(() => {
     if (!visible) return;
-    let saved = cameras.current[route];
-    const raw = lsGet(cameraKey);
+    let saved = cameras.current[cameraKey];
+    const legacyLayer = route === "map:pages" ? "page" : legacyView.current.layer;
+    const raw = lsGet(cameraKey) ?? (layer === legacyLayer && device === legacyView.current.device
+      ? lsGet(`cd-map-camera:${route}`) : null);
     if (!saved && raw) {
       try {
         const camera = JSON.parse(raw);
         if (Number.isFinite(camera?.x) && Number.isFinite(camera?.y) &&
           Number.isFinite(camera.zoom) && camera.zoom >= 0.02 && camera.zoom <= 16) {
-          saved = cameras.current[route] = camera;
+          saved = cameras.current[cameraKey] = camera;
         }
       } catch { /* Invalid saved views fall back to Fit. */ }
     }
@@ -373,11 +477,11 @@ export function ProjectMap({
     if (saved || !viewport) return;
     fit(undefined, false);
     const observer = new ResizeObserver(() => {
-      if (!cameras.current[route]) fit(undefined, false);
+      if (!cameras.current[cameraKey]) fit(undefined, false);
     });
     observer.observe(viewport);
     return () => observer.disconnect();
-  }, [visible, route, device, layer, data, pages]);
+  }, [visible, route, device, layer, data, cameraKey]);
 
   useEffect(() => {
     setSelection(null);
@@ -386,7 +490,14 @@ export function ProjectMap({
     dragged.current = false;
     space.current = false;
     setSpaceHeld(false);
-  }, [visible, route, device, layer, mode]);
+    closeComment();
+    clearPick();
+  }, [visible, route, device, layer, closeComment, clearPick]);
+
+  useEffect(() => {
+    setHand(false);
+    if (mode !== "comment") closeComment();
+  }, [mode, closeComment]);
 
   useEffect(() => {
     if (!visible || !viewportRef.current) return;
@@ -410,14 +521,18 @@ export function ProjectMap({
       obs.disconnect();
       obsRef.current = null;
     };
-  }, [visible, route, device, layer, data, pages]);
+  }, [visible, route, device, layer]);
 
-  const registerFrame = (el: HTMLIFrameElement | null) => {
+  const registerFrame = useCallback<React.RefCallback<HTMLIFrameElement>>((el) => {
     if (el) {
       iframesRef.current.add(el);
       if (obsRef.current && !el.src && el.dataset.src) obsRef.current.observe(el);
+      return () => {
+        obsRef.current?.unobserve(el);
+        iframesRef.current.delete(el);
+      };
     }
-  };
+  }, []);
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     const touch = e.pointerType === "touch";
@@ -462,6 +577,11 @@ export function ProjectMap({
     if (!pointers.current.size) e.currentTarget.classList.remove("panning");
   };
 
+  const chooseTool = useCallback((tool: "select" | "comment") => {
+    setHand(false);
+    onToolChange(tool);
+  }, [onToolChange]);
+
   useEffect(() => {
     const viewport = viewportRef.current;
     if (!visible || !viewport) return;
@@ -492,16 +612,22 @@ export function ProjectMap({
     const keyDown = (e: KeyboardEvent) => {
       const target = e.target;
       if (e.defaultPrevented || e.isComposing || e.altKey || document.querySelector("dialog[open]") ||
-        (target instanceof HTMLElement && (target.isContentEditable || target.closest("input,textarea,select,.sync-panel")))) return;
+        (target instanceof HTMLElement && (target.isContentEditable || target.closest("input,textarea,select,.sync-panel,.board-comment")))) return;
       const modified = e.ctrlKey || e.metaKey;
       const key = e.key.toLowerCase();
-      if (!modified && key === "escape" && selection && !mode) setSelection(null);
-      else if (!modified && e.code === "Space") {
+      if (!modified && key === "escape" && (selection || comment)) {
+        if (comment) closeComment();
+        else {
+          setSelection(null);
+          clearPick();
+        }
+      } else if (!modified && e.code === "Space") {
         if (target instanceof Element && target.closest("button,a")) return;
         space.current = true;
         setSpaceHeld(true);
       } else if (!modified && key === "h") setHand(true);
-      else if (!modified && key === "v") setHand(false);
+      else if (!modified && (key === "v" || key === "s")) chooseTool("select");
+      else if (!modified && key === "c") chooseTool("comment");
       else if (!modified && e.shiftKey && (e.code === "Digit1" || key === "!")) fit();
       else if (!modified && e.shiftKey && (e.code === "Digit2" || key === "@")) {
         if (selection && viewport.contains(selection)) fit(selection);
@@ -534,24 +660,51 @@ export function ProjectMap({
       window.removeEventListener("keyup", keyUp);
       window.removeEventListener("blur", releaseSpace);
     };
-  }, [visible, route, selection, mode]);
+  }, [visible, route, cameraKey, selection, comment, closeComment, clearPick, chooseTool]);
 
   useEffect(() => {
     selection?.classList.add("board-selected");
     return () => selection?.classList.remove("board-selected");
   }, [selection]);
 
-  const pageGroups = useMemo(() => {
-    const groups = new Map<string, string[]>();
-    for (const f of pages) {
-      const parts = f.slice("design/pages/".length).split("/");
-      const g = parts.length > 1 ? parts[0] : "";
-      const arr = groups.get(g) ?? [];
-      arr.push(f);
-      groups.set(g, arr);
+  const pickAt = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.detail > 0 && (dragged.current || hand || space.current)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
     }
-    return [...groups].sort(([a], [b]) => Number(a === "") - Number(b === "") || a.localeCompare(b));
-  }, [pages]);
+    const target = event.target as Element;
+    const card = target.closest<HTMLElement>("[data-screen]");
+    setSelection(card);
+    if (target.closest("button") || (mode === "comment" && comment)) return;
+    viewportRef.current?.focus({ preventScroll: true });
+
+    const frame = target.closest(".thumb")?.querySelector("iframe");
+    const preview = frame?.contentDocument;
+    if (preview && frame && event.detail > 0) {
+      const bounds = frame.getBoundingClientRect();
+      const x = (event.clientX - bounds.left) * frame.clientWidth / bounds.width;
+      const y = (event.clientY - bounds.top) * frame.clientHeight / bounds.height;
+      const element = preview.elementFromPoint(x, y)?.closest("[data-cd-id]");
+      if (element) {
+        let found = false;
+        element.dispatchEvent(new CustomEvent("cd-board-pick", {
+          bubbles: true,
+          detail: (value: BoardElement) => {
+            if (pickedFrame.current !== frame) {
+              pickedFrame.current?.contentDocument?.dispatchEvent(new Event("cd-board-clear"));
+            }
+            pickedFrame.current = frame;
+            onElementSelect(value);
+            if (mode === "comment") setComment(value);
+            found = true;
+          },
+        }));
+        if (found) return;
+      }
+    }
+    clearPick();
+  };
 
   const flowLayout = useMemo(
     () => (activeFlow ? layoutFlow(activeFlow, layer, device) : null),
@@ -579,63 +732,54 @@ export function ProjectMap({
       {visible && (
         <>
           <div className="map-head">
-            {isPages ? (
+            <h2>Flows</h2>
+            {data.flows.length > 0 && (
               <>
-                <h2>Pages</h2>
-                <small>Grouped by folder in design/pages</small>
-              </>
-            ) : (
-              <>
-                <h2>Flows</h2>
-                {data.flows.length > 0 && (
-                  <>
-                    <div className="chips" title={activeFlow?.description || undefined}>
-                      {data.flows.map((f) => (
-                        <button
-                          key={f.id}
-                          type="button"
-                          aria-pressed={f === activeFlow}
-                          className={f.errors.length ? "bad" : undefined}
-                          title={f.errors.length ? f.errors.join("\n") : undefined}
-                          onClick={() => onNavigateHash("flow:" + f.id)}
-                        >
-                          {f.title}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="seg">
-                      {(
-                        [
-                          ["wireframe", "Wireframes"],
-                          ["page", "Screens"],
-                        ] as const
-                      ).map(([v, t]) => (
-                        <button
-                          key={v}
-                          type="button"
-                          aria-pressed={layer === v}
-                          onClick={() => {
-                            ssSet("cd-layer", v);
-                            setLayer(v);
-                          }}
-                        >
-                          {t}
-                        </button>
-                      ))}
-                    </div>
+                <div className="chips" title={activeFlow?.description || undefined}>
+                  {data.flows.map((f) => (
                     <button
+                      key={f.id}
                       type="button"
-                      className={`sync-btn${marked ? " warn" : ""}`}
-                      title="What needs syncing between wireframes and pages"
-                      onClick={() => setPanelOpen((o) => !o)}
+                      aria-pressed={f === activeFlow}
+                      className={f.errors.length ? "bad" : undefined}
+                      title={f.errors.length ? f.errors.join("\n") : undefined}
+                      onClick={() => onNavigateHash("flow:" + f.id)}
                     >
-                      {marked ? `${marked} outdated` : drift ? `${drift} changed` : "Sync"}
+                      {f.title}
                     </button>
-                  </>
-                )}
+                  ))}
+                </div>
+                <div className="seg">
+                  {(
+                    [
+                      ["wireframe", "Wireframes"],
+                      ["page", "Screens & Components"],
+                    ] as const
+                  ).map(([v, t]) => (
+                    <button
+                      key={v}
+                      type="button"
+                      aria-pressed={layer === v}
+                      onClick={() => {
+                        if (route === "map:pages") onNavigateHash("map:flows");
+                        ssSet("cd-layer", v);
+                        setLayer(v);
+                      }}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className={`sync-btn${marked ? " warn" : ""}`}
+                  title="What needs syncing between wireframes and pages"
+                  onClick={() => setPanelOpen((o) => !o)}
+                >
+                  {marked ? `${marked} outdated` : drift ? `${drift} changed` : "Sync"}
+                </button>
               </>
             )}
-
             <div className="seg">
               {(
                 [
@@ -651,8 +795,6 @@ export function ProjectMap({
                   onClick={() => {
                     if (device === v) return;
                     ssSet("cd-map-device", v);
-                    delete cameras.current[route];
-                    lsSet(cameraKey, "");
                     setDevice(v);
                   }}
                 >
@@ -661,8 +803,12 @@ export function ProjectMap({
               ))}
             </div>
 
-            <div className="zoom grp">
+            <div className="seg" role="group" aria-label="Canvas tools">
+              <button type="button" aria-pressed={!hand && mode !== "comment"} title="Select (V or S)" onClick={() => chooseTool("select")}>Select</button>
+              <button type="button" aria-pressed={!hand && mode === "comment"} title="Comment (C)" onClick={() => chooseTool("comment")}>Comment</button>
               <button type="button" aria-pressed={hand} title="Hand tool (H) · Select (V)" onClick={() => setHand(!hand)}>Hand</button>
+            </div>
+            <div className="zoom grp" role="group" aria-label="Canvas zoom">
               <button type="button" aria-label="Zoom out" title="Zoom out" onClick={() => setZoomAt(zoomRef.current / 1.25)}>
                 −
               </button>
@@ -695,82 +841,22 @@ export function ProjectMap({
             onDoubleClickCapture={(e) => {
               if (dragged.current || hand || space.current) e.stopPropagation();
             }}
-            onClickCapture={(e) => {
-              if (e.detail > 0 && (dragged.current || hand || space.current)) {
-                e.preventDefault();
-                e.stopPropagation();
-              } else if (!mode) {
-                setSelection((e.target as Element).closest<HTMLElement>("[data-screen]"));
-              }
-            }}
+            tabIndex={-1}
+            role="region"
+            aria-label="Flow canvas"
+            onClickCapture={pickAt}
           >
             <div className="map-position">
-              <div className={`map-canvas${isPages ? " groups" : ""}`} ref={canvasRef}>
-                {isPages ? (
-                  !pages.length ? (
-                    <p className="empty-map">No pages in design/pages yet.</p>
-                  ) : (
-                    pageGroups.map(([g, files]) => {
-                      const hub = files.find((f) => baseName(f) === g) ?? files.find((f) => baseName(f) === "index") ?? files[0];
-                      const rest = files.filter((f) => f !== hub).sort();
-                      const [W, H] = MAP_DEVICE[device], GAP = 120, DOWN = 260;
-                      const rowW = Math.max(W, rest.length * W + Math.max(0, rest.length - 1) * GAP);
-                      const hx = (rowW - W) / 2;
-                      const paths = rest.map((_, i) => {
-                        const x = i * (W + GAP), y = H + DOWN;
-                        const sx = hx + W / 2, sy = H, tx = x + W / 2, ty = y - 8;
-                        return { d: `M${sx} ${sy} C${sx} ${sy + DOWN / 2},${tx} ${ty - DOWN / 2},${tx} ${ty}` };
-                      });
-                      return (
-                        <section key={g || "__root"} className="group">
-                          <h3>{g || "design/pages"}</h3>
-                          <div className="group-body" style={{ width: rowW, height: rest.length ? 2 * H + DOWN : H }}>
-                            <EdgeSvg paths={paths} />
-                            <ScreenCard
-                              file={hub}
-                              title={baseName(hub)}
-                              device={device}
-                              cls="hub"
-                              item={itemOf(hub)}
-                              style={{ left: hx, top: 0 }}
-                              mode={mode}
-                              onOpen={onOpen}
-                              onFrameLoad={onFrameLoad}
-                              registerFrame={registerFrame}
-                            />
-                            {rest.map((f, i) => (
-                              <ScreenCard
-                                key={f}
-                                file={f}
-                                title={baseName(f)}
-                                device={device}
-                                item={itemOf(f)}
-                                style={{ left: i * (W + GAP), top: H + DOWN }}
-                                mode={mode}
-                                onOpen={onOpen}
-                                onFrameLoad={onFrameLoad}
-                                registerFrame={registerFrame}
-                              />
-                            ))}
-                          </div>
-                        </section>
-                      );
-                    })
-                  )
-                ) : !activeFlow ? (
+              <div className="map-canvas" ref={canvasRef}>
+                {!activeFlow ? (
                   <div className="empty-map">
-                    <p>
-                      No flows yet. A flow is one file, <code>design/flows/&lt;id&gt;.json</code>, listing screens (wireframe + page) and decisions joined by labeled arrows.
-                    </p>
-                    <p>
-                      Ask your agent: <em>“create the flow for …”</em>, or run <code>cdesign flows new &lt;id&gt;</code>.
-                    </p>
+                    <p>Create a flow with <code>cdesign flows new &lt;id&gt;</code>.</p>
                   </div>
                 ) : (
                   <>
                     {activeFlow.errors.length > 0 && <div className="flow-errors">{activeFlow.errors.join("\n")}</div>}
                     {flowLayout && (
-                      <div className="flow-body" style={{ width: flowLayout.width, height: flowLayout.height }}>
+                      <div className="flow-body" ref={flowBodyRef} style={{ width: flowLayout.width, height: flowLayout.height }}>
                         <EdgeSvg paths={flowLayout.edges} />
                         {flowLayout.edges.map(
                           (e, i) =>
@@ -792,6 +878,9 @@ export function ProjectMap({
                               >
                                 <div className="dia" />
                                 <span>{s.decision}</span>
+                                {flowLayout.returns[s.id]?.map((r, i) => (
+                                  <small key={i} className="badge ret" title={`Returns to ${r.to}`}>↩ {r.label ?? r.to}</small>
+                                ))}
                               </div>
                             );
                           }
@@ -804,6 +893,7 @@ export function ProjectMap({
                               device={v.device}
                               cls={v.fallback ? "fallback" : ""}
                               sub={v.sub}
+                              returns={flowLayout.returns[s.id]}
                               item={data.sync.find((i) => i.wireframe === s.wireframe && i.page === s.page)}
                               style={{ left: p.x, top: p.y }}
                               mode={mode}
@@ -821,7 +911,10 @@ export function ProjectMap({
             </div>
           </div>
 
-          {panelOpen && !isPages && data.flows.length > 0 && (
+          {comment && <BoardComment element={comment} onClose={closeComment} />}
+
+
+          {panelOpen && data.flows.length > 0 && (
             <aside className="sync-panel" style={{ top: rootRef.current?.getBoundingClientRect().top ?? 0 }}>
               <button type="button" className="close ic" aria-label="Close" onClick={() => setPanelOpen(false)}>
                 ×

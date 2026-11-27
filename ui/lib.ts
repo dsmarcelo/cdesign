@@ -7,7 +7,15 @@ export const pageHash = () => {
 };
 
 export const pagePath = (file: string) => file.split("/").map(encodeURIComponent).join("/");
-export const previewPath = (file: string) => "/p/" + pagePath(file);
+/** A flow step's page may carry a URL state after "#" (`page.tsx#venda/cliente`): the page opens with that dialog or sheet showing. */
+export const splitState = (file: string): [string, string] => {
+  const i = file.indexOf("#");
+  return i === -1 ? [file, ""] : [file.slice(0, i), file.slice(i + 1)];
+};
+export const previewPath = (file: string) => {
+  const [base, state] = splitState(file);
+  return "/p/" + pagePath(base) + (state ? "#" + state : "");
+};
 export const baseName = (file: string) => file.split("/").pop()!.replace(/\.(tsx|html)$/, "");
 
 export const DEVICES: Record<string, [number, number]> = {
@@ -33,6 +41,16 @@ export const SYNC_STATE: Record<string, [string, string]> = {
 };
 
 export type ViewerMode = null | "select" | "comment";
+export type BoardElement = {
+  page: string;
+  file: string;
+  cdId: string;
+  uses: string[];
+  selector: string;
+  tag: string;
+  text: string;
+  size: string;
+};
 export type SidebarTab = "chat" | "files" | "comments";
 
 export type CommentItem = {

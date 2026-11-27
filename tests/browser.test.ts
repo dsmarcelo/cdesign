@@ -61,23 +61,42 @@ async function runBrowserChecks(mapsOnly = false) {
     };
     await cmd("Page.enable");
     if (mapsOnly) {
+      put("design/pages/Unassigned.html", "<main><h1>Unassigned page</h1></main>");
+      put("design/pages/AnotherFlow.html", "<main><h1>Another flow</h1></main>");
+      put("design/wireframe/Home.tsx", "export default function Home(){return <main>Home wireframe</main>}");
+      put("design/components/ui/FilterDialog.tsx", "export function Preview(){return <dialog open>Filters</dialog>}");
       put("design/flows/home.json", JSON.stringify({
         title: "Home",
-        steps: ["home", "next", "done", "option-one", "option-two"].map((id) => ({id, title: id, page: "design/pages/Home.tsx"})),
+        steps: ["home", "next", "done", "option-one", "option-two"].map((id) => ({
+          id, title: id, page: id === "option-one" ? "design/components/ui/FilterDialog.tsx" : "design/pages/Home.tsx",
+          wireframe: id === "home" ? "design/wireframe/Home.tsx" : undefined,
+        })),
         links: [
           {from: "home", to: "next"}, {from: "next", to: "done"},
           {from: "home", to: "option-one"}, {from: "option-one", to: "home"},
           {from: "home", to: "option-two"}, {from: "option-two", to: "home"},
         ],
       }));
+      put("design/flows/other.json", JSON.stringify({
+        title: "Other Flow",
+        steps: [{id: "start", page: "design/pages/AnotherFlow.html"}],
+      }));
       for (const route of ["map:pages", "flow:home"]) {
         await navigate("/#" + route, "#map .thumb");
+        expect(await ev("!!document.querySelector('#views [data-v=pages]')")).toBe(false);
+        expect(await ev("!!document.querySelector('.flow-body')")).toBe(true);
         if (route === "flow:home") {
-          const rows = await ev(`Array.from(document.querySelectorAll(".flow-body .screen"), node => node.offsetTop)`);
-          expect(rows.slice(0, 3)).toEqual([rows[0], rows[0], rows[0]]);
-          expect(rows[3]).toBeGreaterThan(rows[0]);
-          expect(rows[4]).toBe(rows[3]);
-          expect(await ev('document.querySelectorAll(".edges > path[stroke-dasharray]").length')).toBe(2);
+          // Tree growing right: home's destinations (next, option-one, option-two) stack in the next column, done follows next.
+          const [home, next, done, one, two] = await ev(`Array.from(document.querySelectorAll(".flow-body .screen"), n => ({x: n.offsetLeft, y: n.offsetTop}))`);
+          expect([one.x, two.x]).toEqual([next.x, next.x]);
+          expect(next.x).toBeGreaterThan(home.x);
+          expect(done.x).toBeGreaterThan(next.x);
+          expect(done.y).toBe(next.y);
+          expect(next.y < one.y && one.y < two.y).toBe(true);
+          expect(Math.abs(home.y - one.y)).toBeLessThan(2);
+          // Links back to the opener are ↩ badges, not dashed arrows.
+          expect(await ev('document.querySelectorAll(".edges > path[stroke-dasharray]").length')).toBe(0);
+          expect(await ev('document.querySelectorAll(".flow-body .badge.ret").length')).toBe(2);
         }
         const key = (key: string, code: string, shiftKey = false) => ev(`window.dispatchEvent(new KeyboardEvent("keydown", ${JSON.stringify({key, code, shiftKey, cancelable: true})}))`);
         const camera = () => ev("document.querySelector('.map-position').style.translate");
@@ -126,10 +145,11 @@ async function runBrowserChecks(mapsOnly = false) {
         expect(await ev(`document.elementFromPoint(${x}, ${y})?.closest('.map-viewport')?.className ?? document.elementFromPoint(${x}, ${y})?.outerHTML.slice(0, 100)`)).toBe("map-viewport hand");
         await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x, y});
         await cmd("Input.dispatchMouseEvent", {type: "mousePressed", x, y, button: "left", buttons: 1, clickCount: 1});
+        await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x: x + 20, y: y + 10, buttons: 1});
         await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", x: x + 45, y: y + 25, buttons: 1});
-        await until(async () => (await camera()) !== beforeDrag);
         await cmd("Input.dispatchMouseEvent", {type: "mouseReleased", x: x + 45, y: y + 25, button: "left", clickCount: 1});
         await cmd("Input.dispatchKeyEvent", {type: "keyUp", key: " ", code: "Space"});
+        await until(async () => (await camera()) !== beforeDrag);
         const beforeScroll = await camera();
         await cmd("Input.dispatchMouseEvent", {type: "mouseWheel", x, y, deltaX: 30, deltaY: 50});
         await until(async () => (await camera()) !== beforeScroll);
@@ -145,6 +165,69 @@ async function runBrowserChecks(mapsOnly = false) {
         expect(await camera()).toBe(savedPosition);
         expect(await zoom()).toBe(savedZoom);
       }
+
+      const firstScreen = ".flow-body .screen:first-of-type";
+      const fileOfFirstScreen = () => ev(`document.querySelector(${JSON.stringify(firstScreen)})?.dataset.screen`);
+      expect(await fileOfFirstScreen()).toBe("design/wireframe/Home.tsx");
+      await ev(`[...document.querySelectorAll(".map-head button")].find(b => b.textContent === "Screens & Components").click()`);
+      await until(async () => await fileOfFirstScreen() === "design/pages/Home.tsx");
+      const boardFiles = () => ev(`[...document.querySelectorAll("#map [data-screen]")].map(card => card.dataset.screen)`);
+      expect(await boardFiles()).toEqual([
+        "design/pages/Home.tsx", "design/pages/Home.tsx", "design/pages/Home.tsx",
+        "design/components/ui/FilterDialog.tsx", "design/pages/Home.tsx",
+      ]);
+
+      // Fit one frame so the element remains hit-testable at the board's scaled coordinates.
+      await ev(`document.querySelector(".flow-body .thumb").click()`);
+      await until(() => ev(`!!document.querySelector(".board-selected")`));
+      await ev(`window.dispatchEvent(new KeyboardEvent("keydown", {key:"@", code:"Digit2", shiftKey:true, cancelable:true}))`);
+      await until(() => ev(`!!document.querySelector(".flow-body iframe").contentDocument?.querySelector("button[data-cd-id]")`));
+      const point = await ev(`(() => {
+        const f = document.querySelector(".flow-body iframe");
+        const frame = f.getBoundingClientRect(), button = f.contentDocument.querySelector("button").getBoundingClientRect();
+        return {x: frame.left + frame.width * (button.left + button.width / 2) / f.clientWidth,
+          y: frame.top + frame.height * (button.top + button.height / 2) / f.clientHeight};
+      })()`);
+      expect(await ev(`document.elementFromPoint(${point.x}, ${point.y})?.matches(".flow-body .thumb")`)).toBe(true);
+      const clickElement = async () => {
+        await cmd("Input.dispatchMouseEvent", {type: "mouseMoved", ...point});
+        await cmd("Input.dispatchMouseEvent", {type: "mousePressed", ...point, button: "left", buttons: 1, clickCount: 1});
+        await cmd("Input.dispatchMouseEvent", {type: "mouseReleased", ...point, button: "left", clickCount: 1});
+      };
+      await clickElement();
+      const selection = await until(async () => (await (await fetch(base + "/__cd/page")).json() as any).selection);
+      expect(selection.file).toBe("design/components/ui/Button.tsx");
+      expect(selection.page).toBe("design/pages/Home.tsx");
+      expect(await ev(`document.querySelector(".flow-body iframe").contentDocument.querySelector("button.__cd-sel")?.textContent`)).toBe("Count 0");
+
+      await ev(`document.querySelector('.map-head button[title="Comment (C)"]').click()`);
+      await clickElement();
+      await until(() => ev(`!!document.querySelector(".board-comment textarea")`));
+      const beforeWheel = await ev(`document.querySelector(".map-canvas").style.zoom`);
+      await cmd("Input.dispatchMouseEvent", {type: "mouseWheel", ...point, deltaY: -50, deltaX: 0});
+      await until(() => ev(`document.querySelector(".map-canvas").style.zoom !== ${JSON.stringify(beforeWheel)}`));
+      await ev(`document.querySelector(".board-comment textarea").value = "Review this flow element";
+        document.querySelector(".board-comment").requestSubmit()`);
+      const comment = await until(async () => (await (await fetch(base + "/__cd/comments")).json() as any[])[0]);
+      expect(comment).toMatchObject({file: selection.file, cdId: selection.cdId, uses: selection.uses, status: "draft", text: "Review this flow element"});
+      await until(() => ev(`!!document.querySelector(".flow-body iframe").contentDocument.querySelector(".__cd-pin")`));
+      const position = () => ev(`document.querySelector(".map-position").style.translate`);
+      const beforeTouch = await position();
+      await cmd("Input.dispatchTouchEvent", {type: "touchStart", touchPoints: [{...point, id: 1}]});
+      await cmd("Input.dispatchTouchEvent", {type: "touchMove", touchPoints: [{x: point.x + 40, y: point.y + 35, id: 1}]});
+      await cmd("Input.dispatchTouchEvent", {type: "touchEnd", touchPoints: []});
+      await until(async () => (await position()) !== beforeTouch);
+      expect(await ev(`!!document.querySelector(".board-comment")`)).toBe(false);
+      const screenPosition = await position();
+      await ev(`[...document.querySelectorAll(".map-head button")].find(b => b.textContent === "Wireframes").click()`);
+      await until(async () => await fileOfFirstScreen() === "design/wireframe/Home.tsx");
+      expect(await position()).not.toBe(screenPosition);
+      await ev(`[...document.querySelectorAll(".map-head button")].find(b => b.textContent === "Screens & Components").click()`);
+      await until(async () => await fileOfFirstScreen() === "design/pages/Home.tsx");
+      expect(await position()).toBe(screenPosition);
+      await ev(`[...document.querySelectorAll(".map-head .chips button")].find(b => b.textContent === "Other Flow").click()`);
+      await until(async () => await fileOfFirstScreen() === "design/pages/AnotherFlow.html");
+      expect(await boardFiles()).toEqual(["design/pages/AnotherFlow.html"]);
       return;
     }
     await navigate("/p/design/pages/Home.tsx", "button");
@@ -326,7 +409,7 @@ async function runBrowserChecks(mapsOnly = false) {
     await until(() => ev("!document.querySelector('#update-dialog').open && document.querySelector('.viewer-bar .update-app:not([hidden])')?.offsetWidth > 0"));
     writeFileSync(runtimeCli, runtimeSource + "\n// reload browser fixture\n");
     await click(".viewer-bar .update-app");
-    await until(() => ev("window.beforeUpdate === undefined && location.hash === '#design/pages/Roundtrip.html' && !!document.querySelector('#fr').contentDocument?.querySelector('button')")).catch(async (error) => {
+    await until(() => ev("window.beforeUpdate === undefined && location.hash === '#design/pages/Roundtrip.html' && !!document.querySelector('#fr')?.contentDocument?.querySelector('button')")).catch(async (error) => {
       const state = await ev("({ beforeUpdate: window.beforeUpdate, url: location.href, message: document.querySelector('#update-message')?.textContent, frame: document.querySelector('#fr')?.src })");
       const daemonState = readFileSync(join(home, "daemon.json"), "utf8");
       const status = await fetch(base + "/__cd/update").then((r) => r.text()).catch(String);
@@ -343,5 +426,5 @@ async function runBrowserChecks(mapsOnly = false) {
   }
 }
 
-test.skipIf(!chrome)("browser: pan and zoom on Pages and Flows with mouse, keyboard, wheel and touch", () => runBrowserChecks(true), 60000);
+test.skipIf(!chrome)("browser: unified Flow canvas navigation, layers and element comments", () => runBrowserChecks(true), 60000);
 test.skipIf(!chrome)("browser: React hooks, styling, original source comments, reloads, errors, screenshots and conversion parity", () => runBrowserChecks(), 60000);
