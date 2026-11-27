@@ -2,6 +2,11 @@
 (() => {
   let mode = null, hover = null, tab = null, picked = null;
 
+  /** Previews are prototypes inside the viewer: a page's "unsaved changes" guard must not ask before the viewer
+   * swaps or unloads the frame. This capture listener runs before the page's own (bubble) listeners at the window. */
+  addEventListener("beforeunload", (e) => e.stopImmediatePropagation(), true);
+  try { Object.defineProperty(window, "onbeforeunload", { configurable: true, get: () => null, set() {} }); } catch {}
+
   const css = document.createElement("style");
   css.textContent = `
   @media (forced-colors:none){

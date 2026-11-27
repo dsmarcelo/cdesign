@@ -204,6 +204,15 @@ async function runBrowserChecks(mapsOnly = false) {
       await until(() => ev(`!!document.querySelector(".board-selected")`));
       await ev(`window.dispatchEvent(new KeyboardEvent("keydown", {key:"@", code:"Digit2", shiftKey:true, cancelable:true}))`);
       await until(() => ev(`!!document.querySelector(".flow-body iframe").contentDocument?.querySelector("button[data-cd-id]")`));
+      // A page's unsaved-changes guard is muted in previews, so the viewer can swap frames without a leave prompt.
+      expect(await ev(`(() => {
+        const w = document.querySelector(".flow-body iframe").contentWindow;
+        w.addEventListener("beforeunload", (e) => e.preventDefault());
+        w.onbeforeunload = () => "unsaved";
+        const e = new w.Event("beforeunload", {cancelable: true});
+        w.dispatchEvent(e);
+        return e.defaultPrevented || w.onbeforeunload !== null;
+      })()`)).toBe(false);
       const point = await ev(`(() => {
         const f = document.querySelector(".flow-body iframe");
         const frame = f.getBoundingClientRect(), button = f.contentDocument.querySelector("button").getBoundingClientRect();
